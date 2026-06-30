@@ -138,7 +138,7 @@ degrade. Two layers make this robust and visible.
 **Relief proxy (chat failover chain).** A profile-gated
 [LiteLLM](https://docs.litellm.ai) `litellm` service (in both compose files;
 `COMPOSE_PROFILES=relief`, or `make up-relief` for the standalone stack) fronts
-chat as an **ordered overflow chain** `L1 → L2 → L3`. Its config is **rendered
+chat as an **ordered failover chain** `L1 → L2 → L3`. Its config is **rendered
 from env** by `deploy/litellm/gen-config.py` at start: each layer
 (`TELA_LLM_{1,2,3}_URL/MODEL/KEY/PROVIDER`) is its own model group, wired with
 ordered `fallbacks`. A request hits L1; when L1 is **erroring / cooled-down /
@@ -146,13 +146,30 @@ times out**, LiteLLM cascades to L2, then L3 — so a layer going down never cut
 off service. tela calls the chain by L1's model name, so set `TELA_LLM_MODEL =
 TELA_LLM_1_MODEL` (and point `TELA_LLM_URL` at `http://litellm:4000/v1`).
 
-> [!IMPORTANT]
-> LiteLLM `fallbacks` are **failure-based, not load-based** — they trigger when a
-> layer errors/cools down, *not* when it's merely busy (load-balancing strategies
-> spread load but don't "fill L1 then spill"). The per-layer
-> `TELA_LLM_{i}_MAX_PARALLEL` / `_RPM` are an optional concurrency cap, not a
-> fill-then-overflow knob. In practice the local model handles concurrency fine;
-> the chain's job is resilience when a layer actually fails.
+**Overload spill is separate, and lives in the backend.** LiteLLM `fallbacks` are
+**failure-based, not load-based** — they trigger when a layer errors/cools down,
+*not* when L1 is healthy but merely **saturated**. So "L1 **down**" and "L1
+**overloaded**" are two different spills handled in two different places:
+
+- **Down → LiteLLM.** The chain's `fallbacks` cascade L1 → L2 → L3 on error.
+- **Overloaded → the backend's foreground gate.** `internal/llm` caps concurrent
+  **foreground** (ask/assist) completions at `TELA_LLM_MAX_INFLIGHT` (default
+  **20**, sized to a healthy local-model batch). The N+1th waits
+  `TELA_LLM_OVERFLOW_WAIT_MS` (default **12s**) for a slot; if none frees — genuine
+  sustained overload — it spills *that request* to `TELA_LLM_OVERFLOW_MODEL`, a
+  stable `tela-chat-overflow` alias `gen-config.py` auto-registers (→ L2, then
+  L3). Background work (summarize/agreement) bypasses the gate and **never**
+  spills — it rides L1 down so the (often paid) relief layer is reserved for live
+  users. Atlas self-limits separately (`ATLAS_LLM_CONCURRENCY`,
+  `TELA_ATLAS_MAX_CONCURRENT_RUNS`) and likewise stays on L1.
+
+> [!NOTE]
+> Size the gate to L1's real batch capacity, not to "1 request at a time."
+> Continuous-batching servers (mlx-lm, vLLM, Ollama) serve tens of concurrent
+> requests with low time-to-first-token — they degrade *throughput* gracefully,
+> they don't queue. A gate set too low spills to the paid layer under normal
+> multi-user load. The per-layer `TELA_LLM_{i}_MAX_PARALLEL` / `_RPM` remain an
+> optional hard cap, distinct from this fill-then-spill gate.
 
 A natural ladder: **L1** local model (free, fast), **L2** a subscription-backed
 Claude wrapper (free, OpenAI-shaped), **L3** an elastic cloud (e.g. Groq) as the

@@ -182,7 +182,8 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 			fmt.Fprintf(&b, "[%d] %s\n%s\n\n", i+1, n.Title, clamp(n.Body, maxTextChars))
 		}
 		b.WriteString("Classify each numbered page.")
-		out, err := s.llm.Complete(ctx, agreementSystem, b.String())
+		// Background work: bypass the foreground gate and never spill to the relief layer.
+		out, err := s.llm.Complete(llm.WithBackground(ctx), agreementSystem, b.String())
 		if err != nil {
 			s.recordFailure(ctx, pageID, err)
 			return fmt.Errorf("agreement page %d: %w", pageID, err)

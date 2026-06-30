@@ -156,7 +156,8 @@ func (s *Service) SummarizePage(ctx context.Context, pageID int64, force bool) (
 	}
 
 	user := "Title: " + title + "\n\n" + truncate(body, summarizeMaxBodyChars)
-	out, err := s.llm.Complete(ctx, summarySystem, user)
+	// Background work: bypass the foreground gate and never spill to the relief layer.
+	out, err := s.llm.Complete(llm.WithBackground(ctx), summarySystem, user)
 	if err == nil {
 		if out = sanitize(out); out == "" {
 			err = errors.New("llm returned an empty summary")

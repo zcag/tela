@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/zcag/tela/backend/internal/extract"
+	"github.com/zcag/tela/backend/internal/llm"
 )
 
 // summarize_file.go — the file half of auto-summary, sibling to summarize.go's
@@ -77,7 +78,8 @@ func (s *Service) SummarizeFile(ctx context.Context, fileID int64, force bool) (
 	}
 
 	user := "Filename: " + name + "\n\n" + truncate(text, summarizeMaxBodyChars)
-	out, err := s.llm.Complete(ctx, summaryFileSystem, user)
+	// Background work: bypass the foreground gate and never spill to the relief layer.
+	out, err := s.llm.Complete(llm.WithBackground(ctx), summaryFileSystem, user)
 	if err == nil {
 		if out = sanitize(out); out == "" {
 			err = errors.New("llm returned an empty summary")

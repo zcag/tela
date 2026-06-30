@@ -3,10 +3,16 @@
 
 CHAT is an ordered overflow/failover CHAIN. Layers L1..N are each their own
 LiteLLM model group, wired with ordered `fallbacks` (L1 -> L2 -> ... -> LN) and a
-per-layer concurrency / rpm CAP. A request hits L1; when L1 is at its cap (or
-erroring/cooled-down) LiteLLM spills to L2, then L3, and so on — so a burst of
-parallel chats overflows DOWN the chain instead of queueing on the primary. tela
-calls the chain by L1's model name, so set TELA_LLM_MODEL = TELA_LLM_1_MODEL.
+per-layer concurrency / rpm CAP. A request hits L1; when L1 is erroring/cooled-down LiteLLM
+fails over to L2, then L3, and so on. tela calls the chain by L1's model name, so
+set TELA_LLM_MODEL = TELA_LLM_1_MODEL.
+
+OVERLOAD (vs failure) is handled in the BACKEND, not here: tela's foreground
+ask/assist gate caps concurrency on L1 and, when saturated, calls a stable
+`tela-chat-overflow` alias this config registers (→ L2, then L3..). So "L1 down"
+spills via LiteLLM fallbacks; "L1 overloaded" spills via the backend calling the
+overflow alias. Both land on L2. The alias is registered automatically whenever
+≥2 layers exist; point the backend at it with TELA_LLM_OVERFLOW_MODEL.
 
   Per layer i (1-based, contiguous — enumeration stops at the first missing _URL):
     TELA_LLM_{i}_URL           OpenAI-compatible base (an mlx/Ollama /v1, a wrapper, a cloud)
@@ -26,7 +32,7 @@ Global:
     TELA_AI_NUM_RETRIES   (default 1)  same-layer retries before the next layer
     TELA_AI_ALLOWED_FAILS (default 2)  failures before a layer is cooled down
     TELA_AI_COOLDOWN      (default 30) seconds a cooled-down layer sits out
-    TELA_AI_TIMEOUT       (default 120) per-request timeout (seconds)
+    TELA_AI_TIMEOUT       (default 150) per-request timeout (seconds)
 
 Output is JSON (valid YAML) — no yaml dep, no quoting pitfalls.
 """
@@ -56,7 +62,7 @@ if not MASTER_KEY:
 NUM_RETRIES = envint("TELA_AI_NUM_RETRIES", 1)
 ALLOWED_FAILS = envint("TELA_AI_ALLOWED_FAILS", 2)
 COOLDOWN = envint("TELA_AI_COOLDOWN", 30)
-TIMEOUT = envint("TELA_AI_TIMEOUT", 120)
+TIMEOUT = envint("TELA_AI_TIMEOUT", 150)
 
 
 def deployment(model_name, url, model, key, provider, max_parallel=0, rpm=0):
@@ -96,7 +102,18 @@ if layers:
         model_list.append(deployment(name, L["url"], L["model"], L["key"],
                                      L["provider"], L["max_parallel"], L["rpm"]))
     if len(names) > 1:
-        fallbacks.append({base: names[1:]})  # ordered overflow chain
+        fallbacks.append({base: names[1:]})  # ordered failover chain (L1 down -> L2 -> ..)
+
+    # Stable overload-spill alias the backend calls when its foreground gate is
+    # full (L1 healthy but saturated). Targets L2 and fails over down the rest of
+    # the chain (L3..). Its name is fixed (independent of L1's model name), so the
+    # backend's TELA_LLM_OVERFLOW_MODEL doesn't change when L1's model does.
+    if len(layers) > 1:
+        l2 = layers[1]
+        model_list.append(deployment("tela-chat-overflow", l2["url"], l2["model"],
+                                      l2["key"], l2["provider"]))
+        if len(names) > 2:
+            fallbacks.append({"tela-chat-overflow": names[2:]})
 
 # --- embed: single ---
 embed_url = env("TELA_EMBED_URL", "TELA_EMBED_PRIMARY_URL")

@@ -13,9 +13,11 @@ package llm
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is the env-driven configuration. URL empty => feature disabled.
@@ -24,18 +26,35 @@ type Config struct {
 	Model     string // chat model, e.g. qwen2.5:7b
 	Token     string // optional bearer (a tela PAT) when URL is the managed cloud endpoint
 	MaxTokens int    // completion length cap (0 => provider default)
+	// MaxInflight bounds concurrent FOREGROUND (ask/assist) completions hitting the
+	// primary endpoint. The N+1th waits OverflowWait for a slot, then spills to
+	// OverflowModel (if set) instead of piling on — the primary degrades gracefully
+	// under load until genuine saturation, at which point the overflow is real
+	// failover, not load-balancing. 0 => no gate. Background callers (summarize /
+	// agreement, marked via WithBackground) bypass the gate entirely.
+	MaxInflight   int
+	OverflowModel string        // model name for the overload spill (the relief proxy's L2 alias); "" => no spill
+	OverflowWait  time.Duration // how long a foreground call waits for a primary slot before spilling
 }
 
 // ConfigFromEnv reads TELA_LLM_URL / _MODEL / _TOKEN / _MAX_TOKENS. _TOKEN is set
 // only when pointing URL at tela cloud's managed LLM endpoint. _MAX_TOKENS caps
 // answer length (default 1024) so a slow local model can't generate for minutes
 // and trip the request timeout; set 0 to disable the cap.
+//
+// _MAX_INFLIGHT / _OVERFLOW_MODEL / _OVERFLOW_WAIT_MS configure the foreground
+// concurrency gate (see Config.MaxInflight). The default gate (20) is sized to the
+// primary's healthy batch capacity; with _OVERFLOW_MODEL unset the gate still
+// bounds concurrency but a full gate just queues on the primary (no spill).
 func ConfigFromEnv() Config {
 	return Config{
-		URL:       os.Getenv("TELA_LLM_URL"),
-		Model:     getenv("TELA_LLM_MODEL", "qwen2.5:7b"),
-		Token:     os.Getenv("TELA_LLM_TOKEN"),
-		MaxTokens: atoiDefault(os.Getenv("TELA_LLM_MAX_TOKENS"), 1024),
+		URL:           os.Getenv("TELA_LLM_URL"),
+		Model:         getenv("TELA_LLM_MODEL", "qwen2.5:7b"),
+		Token:         os.Getenv("TELA_LLM_TOKEN"),
+		MaxTokens:     atoiDefault(os.Getenv("TELA_LLM_MAX_TOKENS"), 1024),
+		MaxInflight:   atoiDefault(os.Getenv("TELA_LLM_MAX_INFLIGHT"), 20),
+		OverflowModel: os.Getenv("TELA_LLM_OVERFLOW_MODEL"),
+		OverflowWait:  time.Duration(atoiDefault(os.Getenv("TELA_LLM_OVERFLOW_WAIT_MS"), 12000)) * time.Millisecond,
 	}
 }
 
@@ -69,10 +88,31 @@ func EstimateTokens(s string) int { return (len(s) + 3) / 4 }
 type Service struct {
 	cfg Config
 	cl  Completer
+	// overflow is the overload spill target (the relief proxy's L2 alias) used when
+	// the foreground gate stays full past cfg.OverflowWait. nil => spill disabled.
+	overflow Completer
+	// sem gates concurrent FOREGROUND completions on the primary; nil => no gate.
+	// wait is how long a foreground call waits for a slot before spilling.
+	sem  chan struct{}
+	wait time.Duration
 	// usage, when set, records token estimates for every completion — the single
 	// chokepoint for all chat usage regardless of which package calls Complete.
 	usage UsageRecorder
 }
+
+// bgKey marks a context as a low-priority background completion.
+type bgKey struct{}
+
+// WithBackground marks ctx as a background completion (summarize, agreement): it
+// bypasses the foreground concurrency gate and never spills to the overflow
+// target. Background work rides the primary endpoint down rather than burning the
+// (often paid) relief layer, and shouldn't compete with live ask/assist for gate
+// slots. Foreground ask/assist calls omit it.
+func WithBackground(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bgKey{}, true)
+}
+
+func isBackground(ctx context.Context) bool { v, _ := ctx.Value(bgKey{}).(bool); return v }
 
 // SetUsageRecorder installs the per-completion usage hook. Call once at wiring.
 func (s *Service) SetUsageRecorder(r UsageRecorder) {
@@ -81,22 +121,60 @@ func (s *Service) SetUsageRecorder(r UsageRecorder) {
 	}
 }
 
-func (s *Service) record(systemPrompt, userPrompt, output string) {
+func (s *Service) recordModel(model, systemPrompt, userPrompt, output string) {
 	if s.usage == nil {
 		return
 	}
-	s.usage(s.Model(), EstimateTokens(systemPrompt)+EstimateTokens(userPrompt), EstimateTokens(output))
+	s.usage(model, EstimateTokens(systemPrompt)+EstimateTokens(userPrompt), EstimateTokens(output))
 }
 
 // NewService builds the service from config. It never fails: with no URL the
 // service is constructed disabled so api.Server can hold a non-nil handle
 // unconditionally.
 func NewService(cfg Config) *Service {
-	s := &Service{cfg: cfg}
+	s := &Service{cfg: cfg, wait: cfg.OverflowWait}
 	if cfg.URL != "" {
 		s.cl = NewOpenAIClient(cfg.URL, cfg.Model, cfg.Token, cfg.MaxTokens)
+		// The overflow client shares the proxy URL/token; only the model alias
+		// differs, so the proxy routes the spill to L2 (and on past it). A model
+		// equal to the primary would be a no-op spill, so guard against it.
+		if cfg.OverflowModel != "" && cfg.OverflowModel != cfg.Model {
+			s.overflow = NewOpenAIClient(cfg.URL, cfg.OverflowModel, cfg.Token, cfg.MaxTokens)
+		}
+	}
+	if cfg.MaxInflight > 0 {
+		s.sem = make(chan struct{}, cfg.MaxInflight)
 	}
 	return s
+}
+
+// pick selects the client for one foreground completion and returns a release for
+// any gate slot it holds. Background calls and a no-gate config use the primary
+// directly. Otherwise it waits up to s.wait for a slot: acquired => primary (the
+// returned release frees the slot); timed out => the overflow client if one is
+// configured (no slot held — it targets a different layer), else the primary
+// best-effort, so a missing relief layer degrades to "queue on the primary"
+// rather than failing the request.
+func (s *Service) pick(ctx context.Context) (Completer, func()) {
+	noop := func() {}
+	if s.sem == nil || isBackground(ctx) {
+		return s.cl, noop
+	}
+	t := time.NewTimer(s.wait)
+	defer t.Stop()
+	select {
+	case s.sem <- struct{}{}:
+		return s.cl, func() { <-s.sem }
+	case <-ctx.Done():
+		return s.cl, noop // the completion below observes ctx.Err()
+	case <-t.C:
+		if s.overflow != nil {
+			slog.Warn("llm: foreground gate saturated, spilling to overflow",
+				"overflow_model", s.overflow.Model(), "gate", cap(s.sem), "waited", s.wait)
+			return s.overflow, noop
+		}
+		return s.cl, noop
+	}
 }
 
 // NewServiceWithCompleter injects a completer directly — used by tests with a
@@ -134,9 +212,11 @@ func (s *Service) Complete(ctx context.Context, systemPrompt, userPrompt string)
 	if !s.Enabled() {
 		return "", errLLMDisabled
 	}
-	out, err := s.cl.Complete(ctx, systemPrompt, userPrompt)
+	cl, release := s.pick(ctx)
+	defer release()
+	out, err := cl.Complete(ctx, systemPrompt, userPrompt)
 	if err == nil {
-		s.record(systemPrompt, userPrompt, out)
+		s.recordModel(cl.Model(), systemPrompt, userPrompt, out)
 	}
 	return out, err
 }
@@ -149,6 +229,8 @@ func (s *Service) CompleteStream(ctx context.Context, systemPrompt, userPrompt s
 	if !s.Enabled() {
 		return errLLMDisabled
 	}
+	cl, release := s.pick(ctx)
+	defer release()
 	// Count streamed output for the usage estimate without buffering the whole
 	// answer: tally bytes as they flow, record on success.
 	var outLen int
@@ -156,18 +238,18 @@ func (s *Service) CompleteStream(ctx context.Context, systemPrompt, userPrompt s
 		outLen += len(tok)
 		return onToken(tok)
 	}
-	if sc, ok := s.cl.(StreamCompleter); ok {
+	if sc, ok := cl.(StreamCompleter); ok {
 		err := sc.CompleteStream(ctx, systemPrompt, userPrompt, tally)
 		if err == nil && s.usage != nil {
-			s.usage(s.Model(), EstimateTokens(systemPrompt)+EstimateTokens(userPrompt), (outLen+3)/4)
+			s.usage(cl.Model(), EstimateTokens(systemPrompt)+EstimateTokens(userPrompt), (outLen+3)/4)
 		}
 		return err
 	}
-	out, err := s.cl.Complete(ctx, systemPrompt, userPrompt)
+	out, err := cl.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return err
 	}
-	s.record(systemPrompt, userPrompt, out)
+	s.recordModel(cl.Model(), systemPrompt, userPrompt, out)
 	if out == "" {
 		return nil
 	}
