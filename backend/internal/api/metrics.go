@@ -84,6 +84,17 @@ var (
 		[]string{"kind"},
 	)
 
+	// aiForegroundSpills counts foreground (ask/assist) completions spilled to the
+	// overflow target because the primary concurrency gate was saturated — i.e. L1
+	// is healthy but overloaded. Distinct from a down-failover (which LiteLLM
+	// handles and exports separately): any sustained increase here means live
+	// traffic is exceeding L1's capacity and bleeding onto the (often paid) relief
+	// layer — the alertable "lower the gate or add capacity" signal.
+	aiForegroundSpills = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "tela_llm_foreground_spill_total",
+		Help: "Foreground (ask/assist) completions spilled to the overflow target due to a saturated primary concurrency gate.",
+	})
+
 	// aiUp reports each backing AI service's reachability as seen by the
 	// background health prober: 1 = reachable, 0 = down, absent = not configured.
 	// service is "embed" or "chat". This is the alertable up/down signal (a
@@ -116,6 +127,7 @@ func init() {
 		httpDuration,
 		clientErrors,
 		aiTokens,
+		aiForegroundSpills,
 		aiUp,
 		aiProbeLatency,
 		atlasKills,

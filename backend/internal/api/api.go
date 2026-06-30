@@ -206,6 +206,7 @@ func New(db *sql.DB) *Server {
 	s.llm.SetUsageRecorder(func(model string, in, out int) {
 		s.recordAIUsage("chat", model, in, out, 0)
 	})
+	s.llm.SetSpillRecorder(func() { aiForegroundSpills.Inc() })
 	s.rag.SetUsageRecorder(func(model string, in int) {
 		s.recordAIUsage("embed", model, in, 0, 0)
 	})

@@ -41,6 +41,18 @@ type aiEndpointsOut struct {
 	ReliefProxy bool               `json:"relief_proxy"`
 	Services    []aiEndpointHealth `json:"services"`
 	GrafanaURL  string             `json:"grafana_url,omitempty"`
+	// Gate is the foreground (ask/assist) concurrency gate snapshot — present only
+	// when a gate is configured (limit > 0). Lets an admin see the cap, live
+	// in-flight count, and how often overload has spilled to the relief layer.
+	Gate *aiGateInfo `json:"gate,omitempty"`
+}
+
+// aiGateInfo mirrors llm.GateStats for the admin reliability card.
+type aiGateInfo struct {
+	Limit    int   `json:"limit"`
+	InFlight int   `json:"in_flight"`
+	Spills   int64 `json:"spills"`
+	Overflow bool  `json:"overflow"` // an overload spill target is configured
 }
 
 // AdminAIEndpoints serves the per-service AI reliability breakdown.
@@ -64,6 +76,9 @@ func (s *Server) AdminAIEndpoints(w http.ResponseWriter, r *http.Request) {
 			aiEndpointRow("embed", embedURL != "", embed, embedURL, embedModel, checked),
 			aiEndpointRow("chat", chatURL != "", chat, chatURL, chatModel, checked),
 		},
+	}
+	if g := s.llm.Stats(); g.Limit > 0 {
+		out.Gate = &aiGateInfo{Limit: g.Limit, InFlight: g.InFlight, Spills: g.Spills, Overflow: g.Overflow}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

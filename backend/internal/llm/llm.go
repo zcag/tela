@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -95,9 +96,43 @@ type Service struct {
 	// wait is how long a foreground call waits for a slot before spilling.
 	sem  chan struct{}
 	wait time.Duration
+	// spills counts foreground overload spills to the overflow target (atomic);
+	// onSpill, when set, fires on each spill (the api layer's Prometheus counter).
+	spills  int64
+	onSpill func()
 	// usage, when set, records token estimates for every completion — the single
 	// chokepoint for all chat usage regardless of which package calls Complete.
 	usage UsageRecorder
+}
+
+// GateStats is a point-in-time snapshot of the foreground concurrency gate, for
+// the admin reliability card and metrics.
+type GateStats struct {
+	Limit    int   // gate size (MaxInflight); 0 = no gate
+	InFlight int   // foreground completions currently holding a slot
+	Spills   int64 // cumulative overload spills to the overflow target
+	Overflow bool  // an overflow target is configured (a spill is possible)
+}
+
+// Stats returns the current gate snapshot. Safe on a nil/disabled service.
+func (s *Service) Stats() GateStats {
+	if s == nil {
+		return GateStats{}
+	}
+	g := GateStats{Overflow: s.overflow != nil, Spills: atomic.LoadInt64(&s.spills)}
+	if s.sem != nil {
+		g.Limit = cap(s.sem)
+		g.InFlight = len(s.sem)
+	}
+	return g
+}
+
+// SetSpillRecorder installs a hook fired once each time a foreground call spills
+// to the overflow target (genuine overload). Call once at wiring.
+func (s *Service) SetSpillRecorder(f func()) {
+	if s != nil {
+		s.onSpill = f
+	}
 }
 
 // bgKey marks a context as a low-priority background completion.
@@ -169,6 +204,10 @@ func (s *Service) pick(ctx context.Context) (Completer, func()) {
 		return s.cl, noop // the completion below observes ctx.Err()
 	case <-t.C:
 		if s.overflow != nil {
+			atomic.AddInt64(&s.spills, 1)
+			if s.onSpill != nil {
+				s.onSpill()
+			}
 			slog.Warn("llm: foreground gate saturated, spilling to overflow",
 				"overflow_model", s.overflow.Model(), "gate", cap(s.sem), "waited", s.wait)
 			return s.overflow, noop

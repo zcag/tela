@@ -57,6 +57,8 @@ func TestForegroundGateSpillsToOverflow(t *testing.T) {
 	prim := &blockingCompleter{name: "primary", release: make(chan struct{})}
 	over := &instantCompleter{name: "overflow"}
 	s := &Service{cl: prim, overflow: over, sem: make(chan struct{}, 2), wait: 40 * time.Millisecond}
+	var hookFires int64
+	s.SetSpillRecorder(func() { atomic.AddInt64(&hookFires, 1) })
 
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
@@ -64,6 +66,9 @@ func TestForegroundGateSpillsToOverflow(t *testing.T) {
 		go func() { defer wg.Done(); _, _ = s.Complete(context.Background(), "s", "u") }()
 	}
 	waitFor(t, func() bool { return atomic.LoadInt64(&prim.calls) == 2 }) // both slots held
+	if g := s.Stats(); g.Limit != 2 || g.InFlight != 2 || !g.Overflow {
+		t.Fatalf("gate stats while full: %+v, want Limit=2 InFlight=2 Overflow=true", g)
+	}
 
 	out, err := s.Complete(context.Background(), "s", "u") // can't get a slot in time
 	if err != nil {
@@ -74,6 +79,9 @@ func TestForegroundGateSpillsToOverflow(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(&over.calls); got != 1 {
 		t.Fatalf("overflow calls = %d, want 1", got)
+	}
+	if s.Stats().Spills != 1 || atomic.LoadInt64(&hookFires) != 1 {
+		t.Fatalf("spills=%d hookFires=%d, want 1/1", s.Stats().Spills, atomic.LoadInt64(&hookFires))
 	}
 
 	close(prim.release)

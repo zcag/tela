@@ -18,6 +18,16 @@ export interface AIEndpointHealth {
   since?: string
 }
 
+// Foreground (ask/assist) concurrency gate snapshot — present only when a gate
+// is configured. limit = cap, in_flight = live slots held, spills = cumulative
+// overload spills to the relief layer, overflow = a spill target is configured.
+export interface AIGate {
+  limit: number
+  in_flight: number
+  spills: number
+  overflow: boolean
+}
+
 export interface AIEndpoints {
   enabled: boolean
   probed: boolean
@@ -25,6 +35,7 @@ export interface AIEndpoints {
   relief_proxy: boolean // a failover proxy fronts the endpoints (TELA_AI_RELIEF)
   services: AIEndpointHealth[]
   grafana_url?: string
+  gate?: AIGate
 }
 
 export const aiEndpointsKeys = { endpoints: ['admin-ai-endpoints'] as const }

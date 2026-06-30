@@ -1,7 +1,7 @@
 import { ArrowDownRight, ArrowUpRight, ExternalLink, Info } from 'lucide-react'
 import { navigateToPage } from '../../lib/pageHitItem'
 import { useAIUsage } from '../../lib/queries/ai-usage'
-import { useAIEndpoints, type AIEndpointHealth } from '../../lib/queries/ai-endpoints'
+import { useAIEndpoints, type AIEndpointHealth, type AIGate } from '../../lib/queries/ai-endpoints'
 import {
   useAdminStats,
   type StatsSignup,
@@ -477,6 +477,7 @@ function AIReliabilitySection() {
           <EndpointCard key={s.service} s={s} probed={d.probed} relief={d.relief_proxy} />
         ))}
       </div>
+      {d.gate ? <GateStrip g={d.gate} /> : null}
       {d.grafana_url ? (
         <a
           href={d.grafana_url}
@@ -526,6 +527,33 @@ function EndpointCard({ s, probed, relief }: { s: AIEndpointHealth; probed: bool
       {probed && !s.healthy && s.reason ? (
         <p className="m-0 text-[length:var(--text-xs)] text-[var(--danger)] break-words">{s.reason}</p>
       ) : null}
+    </div>
+  )
+}
+
+// GateStrip — the foreground (ask/assist) concurrency gate: the cap before an
+// overloaded primary spills to the relief layer, the live in-flight count, and
+// how often it has spilled. Down-failover volume is NOT here (LiteLLM owns that —
+// see the Grafana link); this is purely the overload gate.
+function GateStrip({ g }: { g: AIGate }) {
+  return (
+    <div className="mt-[var(--space-3)] flex flex-col gap-[var(--space-2)] rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-1)] p-[var(--space-3)]">
+      <span className="text-[length:var(--text-sm)] font-medium text-[var(--text-primary)]">
+        Foreground concurrency gate
+      </span>
+      <dl className="m-0 grid grid-cols-3 gap-x-[var(--space-3)] gap-y-[var(--space-1)]">
+        <EndpointField label="Limit" value={String(g.limit)} />
+        <EndpointField label="In flight" value={String(g.in_flight)} />
+        <EndpointField
+          label="Spilled to relief"
+          value={g.overflow ? g.spills.toLocaleString() : 'no target'}
+        />
+      </dl>
+      <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+        {g.overflow
+          ? 'Ask/assist cap on the primary; the surplus spills to the relief layer when saturated.'
+          : 'Ask/assist cap on the primary; with no spill target a full gate queues rather than failing over.'}
+      </p>
     </div>
   )
 }
