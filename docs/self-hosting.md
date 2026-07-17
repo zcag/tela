@@ -76,6 +76,11 @@ link only appears in the server log, and login is blocked until the email is
 verified. For any multi-user instance, configure `TELA_SMTP_*`. The boot log
 warns when SMTP is unset.
 
+If you can't provide SMTP, ship with self-registration closed and create users
+from the admin UI instead — set `TELA_REGISTRATION_OPEN=false` to seed a closed
+default on first boot (a later admin toggle overrides it). Packaged deploys with
+no SMTP path (e.g. the Umbrel app) do exactly this.
+
 ## Semantic search (RAG) — optional
 
 Full-text search works out of the box. Semantic ("ask your docs") search needs

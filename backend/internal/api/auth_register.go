@@ -7,12 +7,38 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/zcag/tela/backend/internal/auth"
 	"github.com/zcag/tela/backend/internal/mailer"
+	"github.com/zcag/tela/backend/internal/settings"
 )
+
+// seedRegistrationDefault stamps the initial registration_open value from the
+// TELA_REGISTRATION_OPEN env on first boot, but only when no operator choice
+// exists yet. This lets a packaged deploy (e.g. the Umbrel app) ship
+// self-registration closed without changing tela's open-by-default behaviour
+// anywhere else. Once the key is present — including any later admin toggle in
+// the settings UI — the store is authoritative and the env is ignored, so the
+// toggle sticks across restarts. Absent both, registration stays open.
+func seedRegistrationDefault(ctx context.Context, st *settings.Store) {
+	if _, ok := st.Get("registration_open"); ok {
+		return
+	}
+	v := strings.TrimSpace(os.Getenv("TELA_REGISTRATION_OPEN"))
+	if v == "" {
+		return
+	}
+	open := "true"
+	if strings.EqualFold(v, "false") || v == "0" {
+		open = "false"
+	}
+	if err := st.Set(ctx, "registration_open", open, nil); err != nil {
+		slog.Warn("settings: seed registration_open from env", "err", err)
+	}
+}
 
 type registerRequest struct {
 	Email    string `json:"email"`
@@ -27,8 +53,10 @@ type registerRequest struct {
 // beats enumeration-resistance.
 func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 	// Instance toggle: an operator can close self-registration at runtime via the
-	// admin settings (registration_open=false). Absent/"true" = open (the
-	// default for an open team wiki). Admins can still create users directly.
+	// admin settings (registration_open=false), or seed the default at deploy
+	// time with TELA_REGISTRATION_OPEN (see seedRegistrationDefault). Absent/
+	// "true" = open (the default for an open team wiki). Admins can still create
+	// users directly.
 	if v, ok := s.settings.Get("registration_open"); ok && v == "false" {
 		writeError(w, http.StatusForbidden, "registration_closed", "self-registration is disabled on this instance")
 		return

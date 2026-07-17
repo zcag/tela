@@ -198,6 +198,9 @@ func New(db *sql.DB) *Server {
 		slog.Error("settings: init api-key secret", "err", err)
 		os.Exit(1)
 	}
+	// Seed the self-registration default from env on first boot (packaged
+	// deploys like Umbrel ship it closed); a later admin toggle overrides it.
+	seedRegistrationDefault(ctx, st)
 	s := &Server{
 		DB:                 db,
 		settings:           st,
