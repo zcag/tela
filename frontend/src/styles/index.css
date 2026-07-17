@@ -40,6 +40,36 @@
     }
   }
 
+  /* Tasteful, tokened scrollbars everywhere — replaces the chunky OS default
+     (esp. the 15px arrow'd GTK bar on Linux). Thin, pill thumb in the themed
+     border colour, transparent track, brighter on hover. Firefox/standards via
+     scrollbar-width/color (inherit down the tree); Chromium/WebKit via the
+     ::-webkit-scrollbar pseudo-elements (don't inherit, hence the bare
+     selectors). Touch already hides its overlay bars, so this is a no-op there. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--radius-full);
+    /* transparent border + padding-box clip = inset thumb floating in the track */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: padding-box;
+  }
+
   body {
     margin: 0;
     background: var(--surface-1);

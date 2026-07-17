@@ -42,6 +42,10 @@
     --radius-xs: calc(var(--radius-md) * 0.25);
     --radius-sm: calc(var(--radius-md) * 0.5);
     --radius-lg: calc(var(--radius-md) * 1.5);
+    --radius-full: 9999px;
+
+    /* Custom scrollbar geometry (see the scrollbar rules in index.css). */
+    --scrollbar-size: 0.625rem;
 
     --space-1: 0.25rem;
     --space-2: 0.5rem;
