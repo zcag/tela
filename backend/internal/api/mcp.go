@@ -56,9 +56,41 @@ func (s *Server) MCPHandler() http.Handler {
 	// JSON-RPC body (memory-exhaustion DoS). SSE GET streams carry no request
 	// body, so this only bounds the POST bodies.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A JSON-RPC POST with no bearer is the "connection went dark" signal — a
+		// host whose OAuth session expired (e.g. WorkOS inactivity timeout) stops
+		// sending a token and silently drops to unauthenticated. RequireBearerToken
+		// 401s it before mcpVerifier runs, so nothing else records who/when; log it.
+		if r.Method == http.MethodPost && !hasBearerToken(r) {
+			logMCPUnauthenticated(r)
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, mcpMaxRequestBytes)
 		authed.ServeHTTP(w, r)
 	})
+}
+
+// hasBearerToken reports whether r carries a non-empty `Authorization: Bearer …`
+// header (the same shape RequireBearerToken accepts).
+func hasBearerToken(r *http.Request) bool {
+	h := r.Header.Get("Authorization")
+	return len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") && strings.TrimSpace(h[7:]) != ""
+}
+
+// mcpNoBearerThrottle collapses bursts of unauthenticated /api/mcp hits from the
+// same client so the drop breadcrumb stays readable.
+var mcpNoBearerThrottle sync.Map // clientKey(string) -> time.Time
+
+// logMCPUnauthenticated records (throttled per client) a tokenless POST to
+// /api/mcp — the drop signal for a lapsed OAuth connection.
+func logMCPUnauthenticated(r *http.Request) {
+	ip := clientIPForRateLimit(r)
+	ua := safePrefix(r.UserAgent(), 60)
+	key := ip + "\x00" + ua
+	now := time.Now()
+	if last, ok := mcpNoBearerThrottle.Load(key); ok && now.Sub(last.(time.Time)) < 2*time.Minute {
+		return
+	}
+	mcpNoBearerThrottle.Store(key, now)
+	slog.Info("mcp: unauthenticated request (no bearer token)", "ip", ip, "ua", ua)
 }
 
 // mcpMaxRequestBytes bounds a single MCP HTTP request body. Generous enough for
@@ -142,6 +174,27 @@ func (s *Server) touchMCPSeen(userID int64) {
 		_, _ = s.DB.ExecContext(context.Background(),
 			`UPDATE users SET mcp_last_seen_at = tela_now() WHERE id = $1`, userID)
 	}()
+}
+
+// mcpOAuthLogThrottle limits the "token accepted" breadcrumb to ~once per user
+// per window: an active connector re-verifies its (short, ~5-min) access token on
+// every call, so logging each would flood — but a periodic record of liveness +
+// token expiry is what lets us reconstruct when/why a connection dropped.
+var mcpOAuthLogThrottle sync.Map // userID(int64) -> time.Time
+
+// logMCPTokenAccepted emits a throttled breadcrumb for a verified OAuth token,
+// carrying its expiry and remaining TTL so a drop ("connection expired") can be
+// dated against the last-seen live token instead of guessed.
+func logMCPTokenAccepted(userID int64, exp time.Time) {
+	now := time.Now()
+	if last, ok := mcpOAuthLogThrottle.Load(userID); ok && now.Sub(last.(time.Time)) < 10*time.Minute {
+		return
+	}
+	mcpOAuthLogThrottle.Store(userID, now)
+	slog.Info("mcp oauth: token accepted",
+		"user_id", userID,
+		"exp", exp.UTC().Format(time.RFC3339),
+		"ttl", time.Until(exp).Round(time.Second).String())
 }
 
 // verifyPAT resolves a tela PAT to a TokenInfo. UserID is set so the SDK's

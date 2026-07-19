@@ -120,7 +120,8 @@ func (o *mcpOAuth) resourceMetadataURL() string {
 // working until they re-authenticate.
 func (o *mcpOAuth) verifyJWT(token string) (jwt.MapClaims, error) {
 	audiences := append([]string{o.resource}, mcpResourceAliases...)
-	for _, aud := range audiences {
+	var primaryErr error // error from the canonical-audience attempt, for diagnosis
+	for i, aud := range audiences {
 		claims := jwt.MapClaims{}
 		tok, err := jwt.ParseWithClaims(token, claims, o.keyfunc.Keyfunc,
 			jwt.WithIssuer(o.issuer),
@@ -134,12 +135,43 @@ func (o *mcpOAuth) verifyJWT(token string) (jwt.MapClaims, error) {
 			}
 			return claims, nil
 		}
+		if i == 0 {
+			primaryErr = err
+		}
 	}
-	// All audiences failed; log what we can for diagnosis.
+	// All audiences failed; log the classified reason + expiry so a drop
+	// ("connection expired", the WorkOS inactivity/session case) is unambiguous
+	// rather than a generic verify failure.
 	diagClaims := jwt.MapClaims{}
 	jwt.ParseWithClaims(token, diagClaims, o.keyfunc.Keyfunc, jwt.WithValidMethods([]string{"RS256", "ES256"})) //nolint:errcheck
-	slog.Warn("mcp oauth: JWT verify failed", "aud", diagClaims["aud"], "iss", diagClaims["iss"], "sub", diagClaims["sub"], "token_prefix", safePrefix(token, 20))
+	slog.Warn("mcp oauth: JWT verify failed",
+		"reason", jwtFailReason(primaryErr),
+		"aud", diagClaims["aud"], "iss", diagClaims["iss"], "sub", diagClaims["sub"],
+		"exp", diagClaims["exp"], "token_prefix", safePrefix(token, 20))
 	return nil, sdkauth.ErrInvalidToken
+}
+
+// jwtFailReason maps a jwt/v5 validation error to a short, greppable reason so
+// verify failures are self-explaining in the logs (an expired access token — the
+// normal "reconnect me" case — reads differently from a bad signature or a
+// stale audience left over from a domain rename).
+func jwtFailReason(err error) string {
+	switch {
+	case err == nil:
+		return "unknown"
+	case errors.Is(err, jwt.ErrTokenExpired):
+		return "expired"
+	case errors.Is(err, jwt.ErrTokenNotValidYet):
+		return "not_yet_valid"
+	case errors.Is(err, jwt.ErrTokenInvalidAudience):
+		return "aud_mismatch"
+	case errors.Is(err, jwt.ErrTokenInvalidIssuer):
+		return "iss_mismatch"
+	case errors.Is(err, jwt.ErrTokenSignatureInvalid):
+		return "bad_signature"
+	default:
+		return "invalid"
+	}
 }
 
 // mcpResourceAliases lists historical resource URLs that are aliases for this
@@ -182,6 +214,7 @@ func (s *Server) verifyWorkOSToken(ctx context.Context, token string) (*sdkauth.
 	if e, ok := claims["exp"].(float64); ok {
 		exp = time.Unix(int64(e), 0)
 	}
+	logMCPTokenAccepted(uid, exp)
 	k := &auth.APIKey{UserID: uid, Scope: auth.ScopeWrite}
 	return &sdkauth.TokenInfo{
 		Scopes:     []string{k.Scope},
