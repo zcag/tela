@@ -37,9 +37,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog'
-import { Input } from '../ui/input'
 import { TextArea } from '../ui/textarea'
 import { Select } from '../ui/select'
+import { UserPicker } from './UserPicker'
+import type { MentionUser } from '../../lib/queries/users'
 import { cn } from '../../lib/utils'
 import { spaceOwnership } from '../../lib/space-owner'
 
@@ -382,22 +383,22 @@ function LeaveSpaceConfirmDialog({
 }
 
 function AddMemberForm({ spaceId }: { spaceId: number }) {
-  const [username, setUsername] = useState('')
+  const [user, setUser] = useState<MentionUser | null>(null)
   const [role, setRole] = useState<SpaceMember['role']>('viewer')
   const [error, setError] = useState<string | null>(null)
   const addMember = useAddSpaceMember()
+  const members = useSpaceMembers(spaceId)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const trimmed = username.trim()
-    if (!trimmed) {
-      setError('Username is required.')
+    if (!user) {
+      setError('Pick a user to add.')
       return
     }
     setError(null)
     try {
-      await addMember.mutateAsync({ spaceId, username: trimmed, role })
-      setUsername('')
+      await addMember.mutateAsync({ spaceId, username: user.username, role })
+      setUser(null)
       setRole('viewer')
     } catch (err) {
       setError(addMemberErrorMessage(err))
@@ -422,13 +423,15 @@ function AddMemberForm({ spaceId }: { spaceId: number }) {
       </label>
       <div className="flex items-start gap-[var(--space-2)]">
         <div className="flex-1 min-w-0">
-          <Input
+          <UserPicker
             id={`add-member-username-${spaceId}`}
-            placeholder="Username"
-            autoComplete="off"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            aria-invalid={error != null}
+            value={user}
+            onChange={(u) => {
+              setUser(u)
+              setError(null)
+            }}
+            invalid={error != null}
+            excludeIds={(members.data ?? []).map((m) => m.user_id)}
           />
         </div>
         <div className="w-[6.5rem] shrink-0">
@@ -446,7 +449,7 @@ function AddMemberForm({ spaceId }: { spaceId: number }) {
         <Button
           type="submit"
           variant="secondary"
-          disabled={addMember.isPending || username.trim() === ''}
+          disabled={addMember.isPending || user == null}
         >
           <UserPlus width={14} height={14} />
           <span>{addMember.isPending ? 'Adding…' : 'Add'}</span>

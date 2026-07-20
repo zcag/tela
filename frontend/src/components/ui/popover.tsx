@@ -16,20 +16,29 @@ export const PopoverAnchor = PopoverPrimitive.Anchor
 
 export const PopoverContent = forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
+  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content> & {
+    // Portal to `body` by default. Pass `portal={false}` when the popover lives
+    // inside a modal Dialog: a portaled sibling gets `aria-hidden`/inert by the
+    // dialog's focus scope, so its inputs can't take focus — rendering inline
+    // keeps it inside the dialog subtree and focusable.
+    portal?: boolean
+  }
 >(function PopoverContent(
-  { className, sideOffset = 6, align = 'start', ...props },
+  { className, sideOffset = 6, align = 'start', portal = true, ...props },
   ref,
 ) {
-  return (
-    <PopoverPrimitive.Portal>
-      <PopoverPrimitive.Content
-        ref={ref}
-        sideOffset={sideOffset}
-        align={align}
-        className={cn('tela-popover-content', className)}
-        {...props}
-      />
-    </PopoverPrimitive.Portal>
+  const content = (
+    <PopoverPrimitive.Content
+      ref={ref}
+      sideOffset={sideOffset}
+      align={align}
+      className={cn('tela-popover-content', className)}
+      {...props}
+    />
+  )
+  return portal ? (
+    <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>
+  ) : (
+    content
   )
 })

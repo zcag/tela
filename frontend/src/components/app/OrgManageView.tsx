@@ -81,6 +81,8 @@ import {
 } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
+import { UserPicker } from './UserPicker'
+import type { MentionUser } from '../../lib/queries/users'
 import { cn } from '../../lib/utils'
 
 // Dedicated per-org management page (route /settings/orgs/$orgId). Replaces the
@@ -446,22 +448,22 @@ function OrgMemberRow({ orgId, member }: { orgId: number; member: OrgMember }) {
 }
 
 function AddOrgMemberForm({ orgId }: { orgId: number }) {
-  const [identifier, setIdentifier] = useState('')
+  const [user, setUser] = useState<MentionUser | null>(null)
   const [role, setRole] = useState<OrgRole>('member')
   const [error, setError] = useState<string | null>(null)
   const addMember = useAddOrgMember()
+  const members = useOrgMembers(orgId)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const trimmed = identifier.trim()
-    if (!trimmed) {
-      setError('Email or username is required.')
+    if (!user) {
+      setError('Pick a user to add.')
       return
     }
     setError(null)
     try {
-      await addMember.mutateAsync({ orgId, identifier: trimmed, org_role: role })
-      setIdentifier('')
+      await addMember.mutateAsync({ orgId, identifier: user.username, org_role: role })
+      setUser(null)
       setRole('member')
     } catch (err) {
       setError(addOrgMemberErrorMessage(err))
@@ -486,13 +488,15 @@ function AddOrgMemberForm({ orgId }: { orgId: number }) {
       </label>
       <div className="flex items-start gap-[var(--space-2)]">
         <div className="flex-1 min-w-0">
-          <Input
+          <UserPicker
             id={`add-org-member-${orgId}`}
-            placeholder="Email or username"
-            autoComplete="off"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            aria-invalid={error != null}
+            value={user}
+            onChange={(u) => {
+              setUser(u)
+              setError(null)
+            }}
+            invalid={error != null}
+            excludeIds={(members.data ?? []).map((m) => m.user_id)}
           />
         </div>
         <div className="w-[6.5rem] shrink-0">
@@ -509,7 +513,7 @@ function AddOrgMemberForm({ orgId }: { orgId: number }) {
         <Button
           type="submit"
           variant="secondary"
-          disabled={addMember.isPending || identifier.trim() === ''}
+          disabled={addMember.isPending || user == null}
         >
           <UserPlus width={14} height={14} />
           <span>{addMember.isPending ? 'Adding…' : 'Add'}</span>
@@ -656,22 +660,22 @@ function GroupMembersDialog({
   onOpenChange: (next: boolean) => void
 }) {
   const members = useGroupMembers(open ? org.id : null, open ? group.id : null)
-  const [identifier, setIdentifier] = useState('')
+  const orgMembers = useOrgMembers(open ? org.id : null)
+  const [user, setUser] = useState<MentionUser | null>(null)
   const [error, setError] = useState<string | null>(null)
   const addMember = useAddGroupMember()
   const removeMember = useRemoveGroupMember()
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
-    const trimmed = identifier.trim()
-    if (!trimmed) {
-      setError('Email or username is required.')
+    if (!user) {
+      setError('Pick a user to add.')
       return
     }
     setError(null)
     try {
-      await addMember.mutateAsync({ orgId: org.id, groupId: group.id, identifier: trimmed })
-      setIdentifier('')
+      await addMember.mutateAsync({ orgId: org.id, groupId: group.id, identifier: user.username })
+      setUser(null)
     } catch (err) {
       if (err instanceof ApiError && err.code === 'not_org_member') {
         setError('Add them to the org first — group members must be org members.')
@@ -757,15 +761,19 @@ function GroupMembersDialog({
             className="flex items-start gap-[var(--space-2)] pt-[var(--space-3)] border-t border-[var(--border-subtle)]"
           >
             <div className="flex-1 min-w-0">
-              <Input
-                placeholder="Email or username (must be an org member)"
-                autoComplete="off"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                aria-invalid={error != null}
+              <UserPicker
+                placeholder="Search org members…"
+                value={user}
+                onChange={(u) => {
+                  setUser(u)
+                  setError(null)
+                }}
+                invalid={error != null}
+                restrictToIds={(orgMembers.data ?? []).map((m) => m.user_id)}
+                excludeIds={(members.data ?? []).map((m) => m.user_id)}
               />
             </div>
-            <Button type="submit" variant="secondary" disabled={addMember.isPending || identifier.trim() === ''}>
+            <Button type="submit" variant="secondary" disabled={addMember.isPending || user == null}>
               <UserPlus width={14} height={14} />
               <span>{addMember.isPending ? 'Adding…' : 'Add'}</span>
             </Button>
