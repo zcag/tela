@@ -36,6 +36,7 @@ import { buildWikilinkResolveIndex, pageSlug } from '../../lib/slug'
 import type { TelaProvider } from '../../lib/collab/tela-provider'
 import { captureAnchor, type CommentAnchor } from '../../lib/comments/anchor'
 import { scrollAndFlashPanelThread } from '../../lib/comments/coordination'
+import { useReaderCommentAnchor } from '../../lib/comments/useReaderCommentAnchor'
 import { useComments } from '../../lib/comments/use-comments'
 import { useMe } from '../../lib/queries/auth'
 import { useRevision } from '../../lib/queries/page-revisions'
@@ -344,10 +345,24 @@ function PageViewer({
   const [showResolvedComments, setShowResolvedComments] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  // Comments are read + reply in view (new-comment-from-selection is edit-only
-  // for now). The panel + inline highlights are gated to non-viewers, matching
-  // the editor.
+  // Read + reply + new-comment-from-selection all work in view now, matching the
+  // editor. The panel, inline highlights, and selection bridge are gated to
+  // non-viewers, same as the editor.
   const commentsEnabled = roleResolved && !isViewer
+  // Rendered-content root (from MarkdownView.onReady) that the selection bridge
+  // watches, and the snapshot of the reader's current passage to anchor to.
+  const [readerContentEl, setReaderContentEl] = useState<HTMLElement | null>(null)
+  const { selection: readerSelection, clear: clearReaderSelection } =
+    useReaderCommentAnchor(readerContentEl, commentsEnabled)
+  const handleCommentsOpenChange = useCallback(
+    (next: boolean) => {
+      setCommentsOpen(next)
+      // Drop the snapshot on close so the next session starts from a fresh
+      // selection instead of a stale "Commenting on …" preview.
+      if (!next) clearReaderSelection()
+    },
+    [clearReaderSelection],
+  )
   const commentsQuery = useComments({ pageId: page.id, enabled: commentsEnabled })
   const openThreadCount = useMemo(
     () => commentsQuery.data?.filter((t) => !t.root.resolved).length ?? null,
@@ -475,7 +490,7 @@ function PageViewer({
               aria-label="Graph"
               title="Graph — this page's connections"
               onClick={() => {
-                setCommentsOpen(false)
+                handleCommentsOpenChange(false)
                 setGraphOpen(true)
               }}
               className="h-[var(--space-8)] w-[var(--space-8)] p-0"
@@ -627,6 +642,9 @@ function PageViewer({
               setGraphOpen(false)
               setCommentsOpen(true)
             }}
+            // Hand the rendered root to the selection bridge so a passage the
+            // reader highlights can be anchored into a new comment.
+            onReady={commentsEnabled ? setReaderContentEl : undefined}
             className={EDITOR_MIN_H}
           />
         )}
@@ -666,13 +684,13 @@ function PageViewer({
         <CommentsPanel
           pageId={page.id}
           open={commentsOpen}
-          onOpenChange={setCommentsOpen}
-          // New-comment-from-selection is edit-only for now; the view composer
-          // stays disabled (no selection) but reading + replying work.
-          hasSelection={false}
-          captureAnchor={() => null}
-          anchorPreview={null}
-          canCompose={false}
+          onOpenChange={handleCommentsOpenChange}
+          // Selecting a passage in the reader snapshots its anchor; the composer
+          // then works exactly like the editor's.
+          hasSelection={readerSelection != null}
+          captureAnchor={() => readerSelection?.anchor ?? null}
+          anchorPreview={readerSelection?.preview ?? null}
+          canCompose
           me={{ id: me.data.id, username: me.data.username }}
           isSpaceOwner={isSpaceOwner}
           orphanIds={EMPTY_ORPHAN_IDS}

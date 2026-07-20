@@ -9,7 +9,7 @@
 // captureAnchor needs an EditorView so its sliceing path is exercised in #73
 // (anchor-decoration) and the live-verify pass, not here.
 
-import { resolveAnchor, type CommentAnchor } from './anchor'
+import { anchorFromText, resolveAnchor, type CommentAnchor } from './anchor'
 
 interface Case {
   name: string
@@ -86,7 +86,41 @@ for (const c of cases) {
   )
 }
 
-console.log(`\n${cases.length - failed}/${cases.length} cases passed.`)
+// anchorFromText (read-view capture) round-trips: a passage fingerprinted from
+// plain text must resolve back to the same [from, to) in that text. This is the
+// path the reader's selection bridge uses (lib/comments/view-anchor.ts).
+const roundTrips: { name: string; text: string; from: number; to: number }[] = [
+  {
+    name: 'R1: mid-document passage round-trips',
+    text: 'Hello world, this is a test document about anchors.',
+    from: 21,
+    to: 27, // 'a test'
+  },
+  {
+    name: 'R2: repeated exact — surrounding context disambiguates',
+    text: 'foo bar baz. The quick foo bar qux.',
+    from: 23,
+    to: 30, // the SECOND 'foo bar'
+  },
+  {
+    name: 'R3: end-of-document passage (empty suffix)',
+    text: 'Welcome to the page. The end.',
+    from: 15,
+    to: 29, // 'page. The end.'
+  },
+]
+for (const c of roundTrips) {
+  const anchor = anchorFromText(c.text, c.from, c.to)
+  const resolved = resolveAnchor(c.text, anchor)
+  const pass = sameResult(resolved, { from: c.from, to: c.to })
+  if (!pass) failed += 1
+  console.log(
+    `[${pass ? 'PASS' : 'FAIL'}] ${c.name}\n        expected={"from":${c.from},"to":${c.to}} actual=${JSON.stringify(resolved)}`,
+  )
+}
+
+const total = cases.length + roundTrips.length
+console.log(`\n${total - failed}/${total} cases passed.`)
 if (failed > 0) process.exit(1)
 
 function sameResult(

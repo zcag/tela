@@ -44,7 +44,7 @@ export function CommentComposer({
     }
     const anchor = captureAnchor()
     if (!anchor) {
-      setError('Select a passage in the editor before commenting.')
+      setError('Select a passage in the page before commenting.')
       return
     }
     setBusy(true)
@@ -96,7 +96,7 @@ export function CommentComposer({
             'text-[length:var(--text-xs)] text-[var(--text-muted)] font-[family-name:var(--font-sans)]',
           )}
         >
-          Select text in the editor to comment on a passage.
+          Select text in the page to comment on a passage.
         </p>
       ) : null}
       <TextArea

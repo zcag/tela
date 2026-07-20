@@ -1,5 +1,6 @@
 import { useEffect, type RefObject } from 'react'
 import { resolveAnchor } from './anchor'
+import { buildTextMap, rangeFor } from './view-anchor'
 import type { CommentThread } from './use-comments'
 
 // Paint comment-anchor highlights in the read-only view using the CSS Custom
@@ -14,50 +15,6 @@ import type { CommentThread } from './use-comments'
 // that thread simply isn't highlighted (it's still listed in the panel).
 
 const HIGHLIGHT_NAME = 'tela-comment-view'
-
-interface Seg {
-  node: Text
-  start: number
-  len: number
-}
-
-function buildTextMap(root: HTMLElement): { text: string; segs: Seg[] } {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  let text = ''
-  const segs: Seg[] = []
-  let n = walker.nextNode()
-  while (n) {
-    const v = (n as Text).nodeValue ?? ''
-    if (v.length) {
-      segs.push({ node: n as Text, start: text.length, len: v.length })
-      text += v
-    }
-    n = walker.nextNode()
-  }
-  return { text, segs }
-}
-
-function rangeFor(segs: Seg[], from: number, to: number): Range | null {
-  let start: { node: Text; offset: number } | null = null
-  let end: { node: Text; offset: number } | null = null
-  for (const s of segs) {
-    if (start == null && from >= s.start && from < s.start + s.len) {
-      start = { node: s.node, offset: from - s.start }
-    }
-    if (to > s.start && to <= s.start + s.len) {
-      end = { node: s.node, offset: to - s.start }
-    }
-  }
-  if (!start || !end) return null
-  try {
-    const r = document.createRange()
-    r.setStart(start.node, start.offset)
-    r.setEnd(end.node, end.offset)
-    return r
-  } catch {
-    return null
-  }
-}
 
 // Minimal typings for the CSS Custom Highlight API (not in all lib.dom yet).
 interface HighlightLike {
