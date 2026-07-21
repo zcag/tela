@@ -36,7 +36,7 @@ spec:
         registry: zcag
         repository: tela-backend
         tag: "0.7.0"
-      http_port: 8080
+      internal_ports: [8080]
       instance_size_slug: basic-xs
       instance_count: 1
       envs:
@@ -54,7 +54,7 @@ spec:
         registry: zcag
         repository: tela-frontend
         tag: "0.7.0"
-      http_port: 80
+      internal_ports: [80]
       instance_size_slug: basic-xxs
       instance_count: 1
 
@@ -64,7 +64,7 @@ spec:
         registry: zcag
         repository: tela-deck
         tag: "0.7.0"
-      http_port: 3344
+      internal_ports: [3344]
       instance_size_slug: basic-xs
       instance_count: 1
 
@@ -74,6 +74,6 @@ spec:
         registry: gotenberg
         repository: gotenberg
         tag: "8"
-      http_port: 3000
+      internal_ports: [3000]
       instance_size_slug: basic-xs
       instance_count: 1
