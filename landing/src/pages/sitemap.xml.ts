@@ -8,6 +8,11 @@ import { competitorSlugs } from '../data/compare';
 // Served at /sitemap.xml (referenced by robots.txt).
 const SITE = 'https://telawiki.com';
 
+// Routes that exist as pages but must never be submitted for indexing —
+// 404.astro is Astro's error page and answers with a 404, so listing it earns
+// a "Not found (404)" report in Search Console.
+const NOINDEX = new Set(['/404/']);
+
 // Per-route crawl hints, keyed by canonical path. Unlisted pages fall back.
 const HINTS: Record<string, { changefreq: string; priority: string }> = {
   '/': { changefreq: 'weekly', priority: '1.0' },
@@ -27,7 +32,7 @@ export const GET: APIRoute = () => {
     .map((p) => (p === 'index' ? '/' : `/${p.replace(/\/index$/, '')}/`));
   const comparePaths = competitorSlugs.map((s) => `/compare/${s}/`);
   const paths = [...staticPaths, ...comparePaths]
-    .filter((p, i, a) => a.indexOf(p) === i)
+    .filter((p, i, a) => a.indexOf(p) === i && !NOINDEX.has(p))
     .sort();
 
   const urls = paths.map((p) => {
