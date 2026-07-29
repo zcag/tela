@@ -58,18 +58,26 @@ export function transformCalloutsInMdast(node: MdastNode): void {
           const calloutType = match[1].toLowerCase() as CalloutType
           const stripped = firstText.value.slice(match[0].length)
           if (stripped.length === 0) {
-            // Marker took up the entire first paragraph (common shape from
-            // a re-parse of our own serializer's output, which emits the
-            // marker as its own paragraph followed by a blank `>` line and
-            // then the body paragraph). If there's a sibling paragraph
-            // after it, drop the marker-only paragraph entirely and let
-            // the next paragraph become the body root. Otherwise (truly
-            // empty callout like `> [!NOTE]` standalone) drop the text
-            // node but keep the empty paragraph so the schema's
-            // `content: 'block+'` content matcher stays satisfied.
-            if ((node.children?.length ?? 0) > 1) {
+            // The marker consumed this TEXT node — but not necessarily the
+            // whole paragraph. `> [!NOTE]\n> **bold** rest` parses as
+            // [text("[!NOTE]\n"), strong, text(" rest")]: the marker is spent
+            // while real body content continues in the sibling inline nodes.
+            // Dropping the paragraph here deleted that content outright (a
+            // multi-paragraph callout came back missing its first paragraph).
+            // So only fall through to paragraph-level removal when the marker
+            // text node really was the paragraph's sole child.
+            if (firstChild.children.length > 1) {
+              firstChild.children.shift()
+            } else if ((node.children?.length ?? 0) > 1) {
+              // Marker-only paragraph — the shape a re-parse of our own
+              // serializer's output produces (marker paragraph, blank `>`
+              // line, then the body). Drop it and let the next paragraph
+              // become the body root.
               node.children!.shift()
             } else {
+              // Truly empty callout (`> [!NOTE]` standalone): drop the text
+              // node but keep the empty paragraph so the schema's
+              // `content: 'block+'` matcher stays satisfied.
               firstChild.children.shift()
             }
           } else {
