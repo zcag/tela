@@ -16,10 +16,17 @@ import type { Awareness } from 'y-protocols/awareness'
 // Fall-back rules:
 //   - awareness is null (no collab session) → false. Callers gate the
 //     non-collab path differently (legacy single-author path is unconditional).
-//   - awareness map is empty (briefly during reconnect, or before local
-//     state has been seeded) → false. The rule is "fall back to NOT leader
-//     to avoid double-saves" — wait for the first non-empty snapshot
-//     before claiming leadership.
+//   - awareness map is empty → TRUE (claim leadership). The map always
+//     contains our own entry once the session seeds it (useCollabSession
+//     calls setLocalState({}) at construction), so "empty" does not mean
+//     "not ready" — it means our entry was REMOVED, which TelaProvider does
+//     on `pagehide`. y-protocols only re-pings a local state that still
+//     exists, so nothing ever puts it back on its own: the peer stayed a
+//     non-leader forever, silently stopped PATCHing pages.body, and every
+//     later keystroke lived only in the Yjs overlay until an agent write
+//     dropped it. Erring toward "not leader" trades a wasted duplicate save
+//     (harmless — last-write-wins on identical serialized markdown) for
+//     total data loss, so the fallback points the other way.
 //
 // Multi-tab note: until the awareness wire-bridge ships in #65, only this
 // peer's local state is in the map (the editor seeds it via
@@ -31,10 +38,10 @@ import type { Awareness } from 'y-protocols/awareness'
 // external observable, which handles the render/subscribe race React's
 // useEffect can't (an awareness 'change' that fires between render and
 // effect-mount would otherwise be lost).
-function computeIsLeader(awareness: Awareness | null): boolean {
+export function computeIsLeader(awareness: Awareness | null): boolean {
   if (!awareness) return false
   const states = awareness.getStates()
-  if (states.size === 0) return false
+  if (states.size === 0) return true
   let minId = Infinity
   for (const id of states.keys()) {
     if (id < minId) minId = id

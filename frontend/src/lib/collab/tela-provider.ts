@@ -67,6 +67,11 @@ export class TelaProvider {
   private reconnectTimer: number | null = null
   private destroyed = false
   private pageHideHandler: (() => void) | null = null
+  private pageShowHandler: (() => void) | null = null
+  // Local awareness state as it was just before `pagehide` removed it, so
+  // `pageshow` can put it back verbatim (user identity, editingDiagramId, …)
+  // rather than reviving a bare {} and dropping the presence avatar.
+  private localStateBeforeHide: Record<string, unknown> | null = null
 
   // Awareness wire-bridge (#65). The Awareness instance is constructed eagerly
   // so consumers can register on('change') listeners before the ws is open
@@ -89,10 +94,26 @@ export class TelaProvider {
     // page later restores from BFCache, the existing ws.onclose / reconnect
     // path re-opens and PageView's onStatus('connected') effect re-seeds the
     // local user state — no extra hook needed on the restore side.
+    //
+    // The removal MUST be paired with a restore. `pagehide` also fires when the
+    // page is merely backgrounded (app switch / tab hide on mobile), and if the
+    // ws survives that there is no reconnect and therefore no 'connected'
+    // transition to re-seed local presence. y-protocols only re-pings a local
+    // state that still exists, so our entry would stay gone for the rest of the
+    // session — leaving the awareness map empty, the peer permanently
+    // non-leader, and its edits never PATCHed back to pages.body.
     this.pageHideHandler = () => {
+      this.localStateBeforeHide = this.awareness.getLocalState()
       this.sendAwarenessRemoval()
     }
+    this.pageShowHandler = () => {
+      if (this.destroyed) return
+      if (this.awareness.getLocalState() != null) return
+      this.awareness.setLocalState(this.localStateBeforeHide ?? {})
+      this.localStateBeforeHide = null
+    }
     window.addEventListener('pagehide', this.pageHideHandler)
+    window.addEventListener('pageshow', this.pageShowHandler)
   }
 
   destroy(): void {
@@ -101,6 +122,10 @@ export class TelaProvider {
     if (this.pageHideHandler) {
       window.removeEventListener('pagehide', this.pageHideHandler)
       this.pageHideHandler = null
+    }
+    if (this.pageShowHandler) {
+      window.removeEventListener('pageshow', this.pageShowHandler)
+      this.pageShowHandler = null
     }
     if (this.reconnectTimer != null) {
       window.clearTimeout(this.reconnectTimer)
