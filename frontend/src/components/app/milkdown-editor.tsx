@@ -152,6 +152,7 @@ import { fileSchema } from './milkdown-file'
 import { createUrlUnfurlPlugin } from './milkdown-url-unfurl'
 import { createTableEdgeSelectPlugin } from './milkdown-table-select'
 import { createPlainPastePlugin } from './milkdown-plain-paste'
+import { createTableFixPlugin } from './milkdown-table-fix'
 import { useQueryClient } from '@tanstack/react-query'
 import { pageKeys } from '../../lib/queries/pages'
 import { navigateToPage } from '../../lib/pageHitItem'
@@ -625,6 +626,16 @@ function MilkdownEditorInner({
         if (wikilinkMode !== 'share' && !readOnly) {
           const tableEdgeSelect = createTableEdgeSelectPlugin()
           ctx.update(prosePluginsCtx, (existing) => [tableEdgeSelect, ...existing])
+        }
+
+        // Ragged-table repair. A GFM row may carry fewer cells than the header,
+        // which yields a table whose TableMap describes a grid the document
+        // doesn't have — prosemirror-tables then throws RangeError out of its
+        // own handlePaste. Runs for every editable surface, before a user can
+        // touch a table that arrived ragged from markdown.
+        if (wikilinkMode !== 'share' && !readOnly) {
+          const tableFix = createTableFixPlugin()
+          ctx.update(prosePluginsCtx, (existing) => [...existing, tableFix])
         }
 
         // Paste-as-plain-text (Cmd/Ctrl+Shift+V). Prepended last so its
