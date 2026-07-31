@@ -43,7 +43,7 @@ Concrete agent workflows, each grounded in the actual tools:
 | **Endpoint URL** | `https://telawiki.com/api/mcp` |
 | **Transport** | Streamable HTTP (current MCP transport; SSE not used) |
 | **Auth type** | OAuth 2.1 — WorkOS AuthKit, issuer `https://decisive-relation-32-staging.authkit.app`; PKCE S256 + Dynamic Client Registration. Personal Access Token bearer also accepted. |
-| **Read capabilities** | List/read spaces and pages, list backlinks and shares, read page chunks, full-text and semantic search, Atlas project listing and run status, deck guide/lint/preview, file listings, knowledge hygiene (related, overlaps, gaps), document fetch (Deep Research). |
+| **Read capabilities** | List/read spaces and pages, list backlinks and shares, read page chunks, full-text and semantic search, Atlas project listing and run status, deck guide/lint/preview, file listings, knowledge hygiene (related, overlaps, gaps), document fetch (fixed-shape `search`/`fetch` contract). |
 | **Write capabilities** | Create/update/patch/delete pages and spaces, move pages, add comments, share/revoke links, upload/delete files, trigger Atlas runs, author deck images, submit feedback. All write tools require editor+ scope on the target space; token permissions gate every call. |
 | **Allowed Link URIs** | `https://telawiki.com/*` (the app surfaces page/space deep links under this origin). `‹TODO: confirm whether the form wants this populated; otherwise leave blank›` |
 
@@ -80,7 +80,7 @@ Concrete agent workflows, each grounded in the actual tools:
 | `search` | Search | Keyword (full-text) lookup over title + body, snippet-highlighted. Always available (no embedder). |
 | `research` | Research wiki | Semantic, answer-oriented retrieval: assembled grounding (full relevant page bodies, cited `sources`, flagged `disagreements`, `low_confidence`). Requires a configured embedder. |
 | `read_chunk` | Read chunk | Fetch one chunk's full section text by `chunk_id` (from a `research` source). Spans pages and uploaded files. |
-| `fetch` | Fetch document | Fetch a page's full text by id. Paired with `search` for ChatGPT Deep Research. |
+| `fetch` | Fetch document | Fetch a page's full text by id (the id comes from a search result); the fixed-shape companion to `search`. |
 | `related_pages` | Related pages | Semantic nearest-neighbor lookup from a page's chunks. |
 | `suggest_links` | Suggest links | Pages whose content strongly overlaps a given page — link opportunities. |
 | `find_overlaps` | Find overlaps | Near-duplicate page detection across a space. |

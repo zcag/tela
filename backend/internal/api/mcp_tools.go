@@ -136,7 +136,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "fetch",
 		Title:       "Fetch document",
-		Description: "Fetch a tela page's full text by id — the fixed-shape ChatGPT Deep Research companion to `search` (the id comes from a search result). Read-only. Prefer get_page for normal use (same body plus richer metadata and trust signals); reach for `fetch` only when the Deep Research search/fetch contract requires it.",
+		Description: "Fetch a tela page's full text by id (the id comes from a search result) — the fixed-shape companion to `search`. Read-only. Prefer get_page for normal use (same body plus richer metadata and trust signals); reach for `fetch` only when the host requires the fixed search/fetch contract.",
 		Annotations: readOnly,
 	}, s.mcpFetch)
 
