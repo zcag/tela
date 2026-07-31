@@ -4,6 +4,13 @@
 > `https://docs.google.com/forms/u/0/d/e/1FAIpQLSeafJF2NDI7oYx1r8o0ycivCSVLNq92Mpc1FPxMKSw1CzDkqA/viewform?usp=form_confirm&edit2=2_ABaOnuc4rtQ9ONh-MS-RuwIxvBxgxKf9p-4TFUItkQp5sXVyK3kTrArftGpnJNvxW-x2TMw`
 > Surfaces attested: Claude.ai web + Claude Desktop + Claude Code. Contact/support: tela@telawiki.com. Review has no SLA; escalation mcp-review@anthropic.com.
 
+> 🔄 **REVIEW RESPONSE — 2026-07-29.** Anthropic replied (Intercom, `directory.workspace@platform-operations---anthropic.intercom-mail.com`): three changes before listing. Root cause for all three: **the form response has never been edited since 2026-06-06, while every other surface moved on.** The form was filed one day after the WorkOS 404 outage, so it describes a PAT-only, 20-tool, pre-deck tela. Nothing was misrepresented — it froze.
+> 1. **Auth** — "good news", OAuth is now advertised correctly, so the static Bearer/PAT path (still beta on their side, and the thing that would have held the listing) isn't needed. But the form still reads *"Auth: personal access token (PAT) from the tela profile."* → **must be edited to the OAuth-first framing** already used on `/mcp` (0fd75bb, 2026-06-30) and in `mcp-submission-chatgpt.md`.
+> 2. **`fetch` description** — was host-specific. ✅ **Fixed in code + docs (`d70acf8`, 2026-07-31)**; still needs the same edit in the form, and a deploy to go live.
+> 3. **Safety attestation** — says no AI media generation, but `generate_deck_image` exists. True when filed (deck tools postdate 2026-06-06); → correct the attestation.
+>
+> **Staging issuer:** they asked to confirm or repoint. **Decision 2026-07-31 — staging stays** (`decisive-relation-32-staging.authkit.app`); Cagdas explains in the reply. Not a blocker — their wording offers confirmation as a valid answer. Production AuthKit remains the eventual target (custom domain `auth.telawiki.com` is the real payoff; per WorkOS docs envs are fully separate, so the ~12 live MCP connections would need re-consent, but tela accounts are untouched because Standalone mode keeps tela as the identity source).
+
 
 Grounded in the **actual** submission surfaces + policies (researched 2026-06-05):
 - Claude form: the real 6-page Google Form behind `clau.de/mcp-directory-submission` (parsed from its own field data) + [Software Directory Policy](https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy) + [review criteria](https://claude.com/docs/connectors/building/review-criteria) + [auth](https://www.claude.com/docs/connectors/building/authentication) + [IP ranges](https://platform.claude.com/docs/en/api/ip-addresses).

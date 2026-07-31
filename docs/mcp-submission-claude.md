@@ -42,7 +42,7 @@ Concrete agent workflows, each grounded in the actual tools:
 |---|---|
 | **Endpoint URL** | `https://telawiki.com/api/mcp` |
 | **Transport** | Streamable HTTP (current MCP transport; SSE not used) |
-| **Auth type** | OAuth 2.1 — WorkOS AuthKit, issuer `https://decisive-relation-32-staging.authkit.app`; PKCE S256 + Dynamic Client Registration. Personal Access Token bearer also accepted. |
+| **Auth type** | OAuth 2.1 — WorkOS AuthKit, issuer `https://decisive-relation-32-staging.authkit.app`; PKCE S256 + Dynamic Client Registration. HTTP-transport hosts run the flow automatically; sign-in happens on first use, no token handling. A Personal Access Token bearer is also accepted, but only for stdio-only hosts via the `tela-mcp` npm proxy — the directory flow uses OAuth. |
 | **Read capabilities** | List/read spaces and pages, list backlinks and shares, read page chunks, full-text and semantic search, Atlas project listing and run status, deck guide/lint/preview, file listings, knowledge hygiene (related, overlaps, gaps), document fetch (fixed-shape `search`/`fetch` contract). |
 | **Write capabilities** | Create/update/patch/delete pages and spaces, move pages, add comments, share/revoke links, upload/delete files, trigger Atlas runs, author deck images, submit feedback. All write tools require editor+ scope on the target space; token permissions gate every call. |
 | **Allowed Link URIs** | `https://telawiki.com/*` (the app surfaces page/space deep links under this origin). `‹TODO: confirm whether the form wants this populated; otherwise leave blank›` |
