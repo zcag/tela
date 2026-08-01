@@ -415,6 +415,12 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/spaces/{id}/pin", srv.AddPinnedSpace)
 	mux.HandleFunc("DELETE /api/spaces/{id}/pin", srv.DeletePinnedSpace)
 
+	// Per-user hidden spaces (sidebar declutter — NOT access control; /spaces,
+	// search and the palette still list them). Same shape as the pins above.
+	mux.HandleFunc("GET /api/users/me/hidden-spaces", srv.ListHiddenSpaces)
+	mux.HandleFunc("PUT /api/spaces/{id}/hide", srv.AddHiddenSpace)
+	mux.HandleFunc("DELETE /api/spaces/{id}/hide", srv.DeleteHiddenSpace)
+
 	// Notifications inbox (caller-scoped). Emitted best-effort from event sources
 	// (today: page-body @-mentions); see docs/notifications.md.
 	mux.HandleFunc("GET /api/notifications", srv.ListNotifications)
