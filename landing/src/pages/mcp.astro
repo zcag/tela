@@ -1,7 +1,7 @@
 ---
 import Prose from '../layouts/Prose.astro';
 
-// Tool roster mirrors backend/internal/api/mcp_tools.go (41 tools). Keep in sync
+// Tool roster mirrors backend/internal/api/mcp_tools.go (43 tools). Keep in sync
 // when the tool surface changes. Note: the meaning/answer tool is `research`
 // (semantic, cited) and `search` is keyword full-text — there is no
 // `semantic_search`/`search_bodies` tool.
@@ -15,6 +15,7 @@ const readTools = [
   ['search', 'Keyword full-text search across pages (no embedder needed).'],
   ['research', 'Semantic, answer-oriented retrieval with cited sources.'],
   ['fetch', 'Fetch a page\'s full text by id; companion to search.'],
+  ['import_guide', 'The guide for bulk-importing a folder of documents into a space.'],
 ];
 const writeTools = [
   ['create_space', 'Create a new space.'],
@@ -41,6 +42,7 @@ const atlasTools = [
   ['atlas_run_status', 'Check a run — stage, status, and coverage.'],
 ];
 const sheetTools = [
+  ['edit_sheet', 'Edit a spreadsheet — set cells, add rows, apply formulas.'],
   ['sheet_authoring_guide', 'The guide for authoring tela spreadsheets — the table format, formulas, and styling.'],
 ];
 const deckTools = [
