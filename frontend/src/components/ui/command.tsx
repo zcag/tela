@@ -571,6 +571,11 @@ export interface CommandInlinePickerProps {
   // matching row each time the query changes.
   value?: string
   onValueChange?: (next: string) => void
+  // Controlled query text. Hosts that derive items FROM what was typed (e.g. the
+  // user picker offering "invite <typed email>") need to read it; omit both for
+  // the default self-managed input.
+  search?: string
+  onSearchChange?: (next: string) => void
 }
 
 // Non-modal inline-picker variant. Embedded inside other dialogs (M4.2 parent
@@ -588,6 +593,8 @@ export const CommandInlinePicker = forwardRef<
     autoFocus = true,
     value,
     onValueChange,
+    search,
+    onSearchChange,
   },
   ref,
 ) {
@@ -607,6 +614,8 @@ export const CommandInlinePicker = forwardRef<
           className="tela-command-input-icon"
         />
         <CmdkInput
+          value={search}
+          onValueChange={onSearchChange}
           placeholder={placeholder}
           className="tela-command-input"
           autoFocus={autoFocus}

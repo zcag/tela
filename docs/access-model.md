@@ -70,6 +70,38 @@ a verified address at this domain *is* part of this org." Therefore:
 - **Operator-curated only.** Never auto-join public providers (gmail.com, …);
   the UI warns and the instance-admin owns that judgement.
 
+## Email invitations — one mechanism, two targets
+
+You can be invited by email to an **org** (`org_invites`, migration `0060`) or to
+a single **space** (`space_invites`, migration `0069`). Both are the *same*
+mechanism, deliberately: one token shape, one public lookup, one accept endpoint,
+one auto-apply hook (`internal/api/invites.go`; the scope-specific create / list /
+revoke handlers live in `org_invites.go` and `space_invites.go`).
+
+- **Token.** 32 random bytes; only the SHA-256 **hash** is stored (mirrors
+  `email_tokens`). 14-day TTL. One outstanding invite per (scope, email) —
+  re-inviting refreshes that row (partial unique index on `accepted_at IS NULL`).
+- **Email-targeted.** Accepting requires the caller's own verified email to match
+  the invite, so forwarding the link can't enrol the wrong person
+  (`403 email_mismatch`).
+- **Public lookup.** `GET /api/invites/{token}` is on `auth.IsPublicPath` and
+  self-authenticates via the unguessable token — it renders the accept page for a
+  logged-out invitee. It returns a `kind` discriminator (`org` | `space`) plus the
+  scope name, the inviter and the invited address: exactly what the email already
+  said, nothing more. Accepting (`POST /api/me/accept-invite`) needs a session.
+- **Auto-apply on verify.** `applyPendingInvites` (called from `VerifyEmail`,
+  beside `applyAutoJoin`) enrols a freshly-verified address into every pending
+  org *and* space invite — so someone invited before they had an account finds it
+  waiting, with no second action from the inviter. Seat-blocked **org** invites
+  stay pending; space invites have no quota.
+- **Space share-by-email has two outcomes** (`POST /api/spaces/{id}/invites`,
+  owner-gated like `AddSpaceMember`): when a verified account already owns the
+  address, it writes the `space_members` row **immediately** and fires the normal
+  `space_added` notification (in-app + email) — nothing to accept, response
+  `{member}`. Otherwise it parks a `space_invites` row and mails the invitation —
+  response `{invite}`. An account with an *unconfirmed* email takes the invite
+  path; it lands when they verify.
+
 ## Who can do what (authority matrix)
 
 | Action | Who |
@@ -80,6 +112,7 @@ a verified address at this domain *is* part of this org." Therefore:
 | Map / unmap auto-join domains | Instance-admin |
 | Create a space | Any user (becomes its owner) |
 | Manage direct space members | Space **owner** |
+| Invite someone to a space by email | Space **owner** |
 | Share a space with an org/group (grant) | Space **owner** (role ≤ editor) |
 | Edit pages / comment | Effective `editor`+ on the space |
 | View pages | Effective `viewer`+ on the space |

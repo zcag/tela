@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Building2, Globe, Lock, Trash2, UserPlus, Users } from 'lucide-react'
+import { Building2, Globe, Lock, Mail, Trash2, UserPlus, Users } from 'lucide-react'
 import { ApiError } from '../../lib/api'
 import { useMe } from '../../lib/queries/auth'
 import {
@@ -11,6 +11,11 @@ import {
 } from '../../lib/queries/members'
 import { useSpaceRole, useTransferSpace, useUpdateSpace } from '../../lib/queries/spaces'
 import { useOrgs } from '../../lib/queries/orgs'
+import {
+  useRevokeSpaceInvite,
+  useShareSpaceByEmail,
+  useSpaceInvites,
+} from '../../lib/queries/invites'
 import { useMyGroups } from '../../lib/queries/groups'
 import {
   useAddSpaceGrant,
@@ -112,7 +117,10 @@ export function ShareSpaceDialog({
           ) : null}
 
           {iAmOwner ? (
-            <AddMemberForm spaceId={space.id} />
+            <>
+              <AddMemberForm spaceId={space.id} />
+              {open ? <PendingInvites spaceId={space.id} /> : null}
+            </>
           ) : null}
           </div>
 
@@ -382,24 +390,50 @@ function LeaveSpaceConfirmDialog({
   )
 }
 
+// One control, two ways in: pick someone who already has an account, or type
+// an email address for someone who doesn't. Typing a full address the directory
+// doesn't know offers an "invite" row in the same picker (see UserPicker), so
+// this reads as a single "share with a person" action — the backend then either
+// grants access straight away (the address has an account) or emails an
+// invitation that lands the moment they sign up.
 function AddMemberForm({ spaceId }: { spaceId: number }) {
   const [user, setUser] = useState<MentionUser | null>(null)
+  const [email, setEmail] = useState<string | null>(null)
   const [role, setRole] = useState<SpaceMember['role']>('viewer')
   const [error, setError] = useState<string | null>(null)
+  const [outcome, setOutcome] = useState<string | null>(null)
   const addMember = useAddSpaceMember()
+  const shareByEmail = useShareSpaceByEmail(spaceId)
   const members = useSpaceMembers(spaceId)
+  const busy = addMember.isPending || shareByEmail.isPending
+
+  function reset() {
+    setUser(null)
+    setEmail(null)
+    setRole('viewer')
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!user) {
-      setError('Pick a user to add.')
+    if (!user && !email) {
+      setError('Pick someone, or type an email address to invite.')
       return
     }
     setError(null)
+    setOutcome(null)
     try {
-      await addMember.mutateAsync({ spaceId, username: user.username, role })
-      setUser(null)
-      setRole('viewer')
+      if (email) {
+        const res = await shareByEmail.mutateAsync({ email, role })
+        setOutcome(
+          res.member
+            ? `Shared with ${res.member.username} — they have access now.`
+            : `Invitation sent to ${email}.`,
+        )
+      } else if (user) {
+        await addMember.mutateAsync({ spaceId, username: user.username, role })
+        setOutcome(`Shared with ${user.username}.`)
+      }
+      reset()
     } catch (err) {
       setError(addMemberErrorMessage(err))
     }
@@ -419,17 +453,26 @@ function AddMemberForm({ spaceId }: { spaceId: number }) {
         htmlFor={`add-member-username-${spaceId}`}
         className="text-[length:var(--text-xs)] uppercase tracking-wider text-[var(--text-muted)] font-[family-name:var(--font-sans)]"
       >
-        Add a member
+        Share with a person
       </label>
       <div className="flex items-start gap-[var(--space-2)]">
         <div className="flex-1 min-w-0">
           <UserPicker
             id={`add-member-username-${spaceId}`}
+            placeholder="Search people, or type an email…"
             value={user}
             onChange={(u) => {
               setUser(u)
+              setEmail(null)
               setError(null)
             }}
+            emailValue={email}
+            onInviteEmail={(addr) => {
+              setEmail(addr)
+              setUser(null)
+              setError(null)
+            }}
+            inviteHint="Invite by email"
             invalid={error != null}
             excludeIds={(members.data ?? []).map((m) => m.user_id)}
           />
@@ -449,12 +492,30 @@ function AddMemberForm({ spaceId }: { spaceId: number }) {
         <Button
           type="submit"
           variant="secondary"
-          disabled={addMember.isPending || user == null}
+          disabled={busy || (user == null && email == null)}
         >
-          <UserPlus width={14} height={14} />
-          <span>{addMember.isPending ? 'Adding…' : 'Add'}</span>
+          {email ? (
+            <Mail width={14} height={14} />
+          ) : (
+            <UserPlus width={14} height={14} />
+          )}
+          <span>
+            {busy ? 'Sharing…' : email ? 'Invite' : 'Add'}
+          </span>
         </Button>
       </div>
+      <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+        No account yet? Type their email — they'll get an invitation and this
+        space the moment they sign up.
+      </p>
+      {outcome ? (
+        <p
+          role="status"
+          className="m-0 text-[length:var(--text-xs)] text-[var(--accent)]"
+        >
+          {outcome}
+        </p>
+      ) : null}
       {error ? (
         <p
           role="alert"
@@ -464,6 +525,80 @@ function AddMemberForm({ spaceId }: { spaceId: number }) {
         </p>
       ) : null}
     </form>
+  )
+}
+
+// Invitations sent to addresses that have no tela account yet — they're not
+// members until they sign up, so they'd otherwise be invisible. Owner-only
+// (the endpoint is too).
+function PendingInvites({ spaceId }: { spaceId: number }) {
+  const invites = useSpaceInvites(spaceId)
+  const revoke = useRevokeSpaceInvite(spaceId)
+  const [error, setError] = useState<string | null>(null)
+
+  const list = invites.data ?? []
+  if (list.length === 0) return null
+
+  async function handleRevoke(id: number) {
+    setError(null)
+    try {
+      await revoke.mutateAsync(id)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to revoke.')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-[var(--space-2)] pt-[var(--space-3)]">
+      <span className="text-[length:var(--text-xs)] uppercase tracking-wider text-[var(--text-muted)] font-[family-name:var(--font-sans)]">
+        Pending invitations
+      </span>
+      <ul className="m-0 p-0 list-none flex flex-col gap-[var(--space-1)]">
+        {list.map((inv) => (
+          <li
+            key={inv.id}
+            className={cn(
+              'm-0 list-none flex items-center gap-[var(--space-3)]',
+              'px-[var(--space-3)] py-[var(--space-2)]',
+              'rounded-[var(--radius-sm)]',
+              'border border-dashed border-[var(--border-subtle)]',
+            )}
+          >
+            <Mail
+              width={13}
+              height={13}
+              aria-hidden
+              className="shrink-0 text-[var(--text-muted)]"
+            />
+            <div className="flex-1 min-w-0 flex flex-col gap-[1px]">
+              <span className="truncate text-[length:var(--text-sm)] text-[var(--text-primary)] font-[family-name:var(--font-sans)]">
+                {inv.email}
+              </span>
+              <span className="truncate text-[length:var(--text-xs)] text-[var(--text-muted)]">
+                Invited — joins as {ROLE_LABEL[inv.role].toLowerCase()} when they
+                sign up
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Revoke invitation to ${inv.email}`}
+              onClick={() => void handleRevoke(inv.id)}
+              disabled={revoke.isPending}
+              className="text-[var(--text-muted)] hover:text-[var(--danger)]"
+            >
+              <Trash2 width={14} height={14} />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {error ? (
+        <p role="alert" className="m-0 text-[length:var(--text-xs)] text-[var(--danger)]">
+          {error}
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -807,11 +942,11 @@ function memberErrorMessage(err: unknown): string {
 function addMemberErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 404) return 'User not found.'
-    if (err.status === 409) return 'Already a member.'
+    if (err.status === 409) return 'That person already has access.'
     if (err.code === 'bad_request') return err.message
     return err.message
   }
-  return 'Failed to add member.'
+  return 'Failed to share.'
 }
 
 // PublicAccessSection — the Axis-2 space-level "publish to the web" control. A

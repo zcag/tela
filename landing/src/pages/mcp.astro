@@ -1,7 +1,7 @@
 ---
 import Prose from '../layouts/Prose.astro';
 
-// Tool roster mirrors backend/internal/api/mcp_tools.go (39 tools). Keep in sync
+// Tool roster mirrors backend/internal/api/mcp_tools.go (41 tools). Keep in sync
 // when the tool surface changes. Note: the meaning/answer tool is `research`
 // (semantic, cited) and `search` is keyword full-text — there is no
 // `semantic_search`/`search_bodies` tool.
@@ -26,6 +26,7 @@ const writeTools = [
   ['move_page', 'Re-parent or reorder a page.'],
   ['delete_page', 'Delete a page.'],
   ['add_comment', 'Comment on a page.'],
+  ['invite_to_space', 'Give someone access to a space by email — grants it if they have an account, otherwise sends an invitation.'],
   ['submit_feedback', 'Send feedback to the maintainers.'],
 ];
 const knowledgeTools = [

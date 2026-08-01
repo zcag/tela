@@ -117,7 +117,8 @@ func TestMCP_SpikeListSpaces(t *testing.T) {
 		"list_spaces", "get_space", "list_pages", "get_page", "list_backlinks",
 		"search", "research", "read_chunk", "fetch",
 		"create_page", "update_page", "delete_page", "move_page", "add_comment",
-		"create_space", "update_space", "delete_space", "submit_feedback",
+		"create_space", "update_space", "delete_space", "invite_to_space",
+		"submit_feedback",
 		"list_attachments", "upload_attachment", "delete_attachment",
 		"request_attachment_upload", "confirm_attachment_upload",
 	} {
@@ -884,5 +885,82 @@ func TestMCP_ResearchFiles(t *testing.T) {
 	}
 	if rout.Chunk.DownloadURL == "" {
 		t.Errorf("read_chunk file result missing download_url")
+	}
+}
+
+// TestMCP_InviteToSpace exercises invite_to_space over the transport: both
+// branches (an address that already has an account vs one that doesn't), the
+// owner gate, and the write-scope gate.
+func TestMCP_InviteToSpace(t *testing.T) {
+	ts, d := newWiredServer(t)
+	alice := seedUser(t, d, "alice", "alicepw12", false)
+	space := seedSpace(t, d, "Docs", "docs", alice)
+	bob := seedUser(t, d, "bob", "bobpw1234", false)
+	setUserEmail(t, d, bob, "bob@acme.com")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	sess := mcpSession(t, ctx, ts, seedReadKey(t, d, alice, auth.ScopeWrite))
+
+	// Existing account → immediate grant, {member} envelope, no invite row.
+	var got inviteToSpaceOut
+	raw, _ := mcpCallRawJSON(t, ctx, sess, "invite_to_space", map[string]any{
+		"space_id": space, "email": "bob@acme.com", "role": "editor",
+	})
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode invite_to_space output %s: %v", raw, err)
+	}
+	if got.Member == nil || got.Invite != nil || got.Member.Username != "bob" || got.Member.Role != "editor" {
+		t.Fatalf("existing-account branch: %s", raw)
+	}
+	var members int
+	mustQueryRow(t, d, `SELECT COUNT(*) FROM space_members WHERE space_id=$1 AND user_id=$2`, &members, space, bob)
+	if members != 1 {
+		t.Fatalf("bob should be a member, got %d", members)
+	}
+
+	// Unknown address → pending invite + emailed invitation, {invite} envelope.
+	got = inviteToSpaceOut{}
+	raw, _ = mcpCallRawJSON(t, ctx, sess, "invite_to_space", map[string]any{
+		"space_id": space, "email": "stranger@acme.com",
+	})
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode invite_to_space output %s: %v", raw, err)
+	}
+	if got.Invite == nil || got.Member != nil || got.Invite.Email != "stranger@acme.com" || got.Invite.Role != "viewer" {
+		t.Fatalf("unknown-address branch: %s", raw)
+	}
+	var pending int
+	mustQueryRow(t, d, `SELECT COUNT(*) FROM space_invites WHERE space_id=$1 AND accepted_at IS NULL`, &pending, space)
+	if pending != 1 {
+		t.Fatalf("expected 1 pending invite, got %d", pending)
+	}
+	// Auditable: inviting a third party by mail leaves a trail.
+	var audits int
+	mustQueryRow(t, d, `SELECT COUNT(*) FROM access_audit WHERE action='space_invite.create' AND target_id=$1`, &audits, space)
+	if audits != 1 {
+		t.Fatalf("expected an audit row for the invite, got %d", audits)
+	}
+
+	// A non-owner (editor) with a write key can't invite.
+	carol := seedUser(t, d, "carol", "carolpw12", false)
+	seedMember(t, d, space, carol, "editor")
+	csess := mcpSession(t, ctx, ts, seedReadKey(t, d, carol, auth.ScopeWrite))
+	if res, err := csess.CallTool(ctx, &mcp.CallToolParams{Name: "invite_to_space", Arguments: map[string]any{
+		"space_id": space, "email": "someone@acme.com",
+	}}); err != nil {
+		t.Fatalf("call invite_to_space as editor: %v", err)
+	} else if !res.IsError {
+		t.Fatalf("expected a non-owner to be refused at invite_to_space")
+	}
+
+	// A read-scope key of the owner is refused too (mcpRequireWrite).
+	rsess := mcpSession(t, ctx, ts, seedReadKey(t, d, alice, auth.ScopeRead))
+	if res, err := rsess.CallTool(ctx, &mcp.CallToolParams{Name: "invite_to_space", Arguments: map[string]any{
+		"space_id": space, "email": "someone@acme.com",
+	}}); err != nil {
+		t.Fatalf("call invite_to_space with read key: %v", err)
+	} else if !res.IsError {
+		t.Fatalf("expected a read-scope key to be denied at invite_to_space")
 	}
 }

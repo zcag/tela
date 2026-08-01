@@ -476,6 +476,14 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/spaces/{id}/members/{user_id}", srv.PatchSpaceMember)
 	mux.HandleFunc("DELETE /api/spaces/{id}/members/{user_id}", srv.DeleteSpaceMember)
 
+	// Share a space by email (space_invites.go). POST resolves to an immediate
+	// member grant when the address already has an account, otherwise to a pending
+	// token invite delivered by mail; the invitee accepts via the shared
+	// /invite/{token} flow below (or auto-joins on email verify). Owner-gated.
+	mux.HandleFunc("GET /api/spaces/{id}/invites", srv.ListSpaceInvites)
+	mux.HandleFunc("POST /api/spaces/{id}/invites", srv.CreateSpaceInvite)
+	mux.HandleFunc("DELETE /api/spaces/{id}/invites/{inviteId}", srv.RevokeSpaceInvite)
+
 	// #153 Organizations. A space can be shared with a whole org (grantable
 	// principal); access resolves through the space_access view. Org CRUD is
 	// instance-admin gated; membership is org-admin gated; auto-join domains are
@@ -549,6 +557,7 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	// the invitee accepts via POST /api/me/accept-invite (session) or auto-joins
 	// on email verify. GET /api/invites/{token} is public (self-auth via token,
 	// for the logged-out accept page) — see org_invites.go + auth.IsPublicPath.
+	// The token lookup + accept serve BOTH org and space invites (invites.go).
 	mux.HandleFunc("GET /api/orgs/{id}/invites", srv.ListOrgInvites)
 	mux.HandleFunc("POST /api/orgs/{id}/invites", srv.CreateOrgInvite)
 	mux.HandleFunc("DELETE /api/orgs/{id}/invites/{inviteId}", srv.RevokeOrgInvite)

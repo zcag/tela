@@ -34,6 +34,7 @@ Middleware bypasses `/api/health`, `/api/version`, `/api/auth/`, `/p/{id}`, `/sh
 - `POST /api/spaces` — create (creator becomes owner).
 - `GET|PATCH|DELETE /api/spaces/{id}`.
 - `GET|POST|PATCH|DELETE` space members under the space (owner-gated; `last_owner` guard). These are **direct user** grants (`space_members`).
+- `GET|POST|DELETE /api/spaces/{id}/invites[/{inviteId}]` — share a space **by email** (owner-gated). `POST {email, role}` answers `{member}` when a verified account already owns that address (access granted immediately + `space_added` notification) or `{invite}` when it doesn't (a pending, email-targeted invitation is mailed). The invitee accepts via the shared `/invite/{token}` flow below, or gets the space automatically when they verify a signup with that address. See [`access-model.md`](access-model.md) → *Email invitations*.
 
 ## Organizations (#153)
 An org is a *grantable principal*: share a space with an org and every member gains the granted role. Access resolves through the `space_access` view = direct user grants ∪ org grants. Slot reserved for future `group` principals (same view, same routes).
@@ -47,6 +48,9 @@ An org is a *grantable principal*: share a space with an org and every member ga
 - `GET|POST|PATCH|DELETE /api/spaces/{id}/grants[/{grant_id}]` — share a space with a **principal** (`{principal_kind: "org"|"group", principal_id, role}`). **Space owner only**; role limited to `editor`/`viewer` (`owner` reserved for direct users so the last-owner guard stays sound; also enforced by a DB trigger). Grant rows are principal-generic (`principal_name`, `context_name` = parent org for groups).
 - `GET /api/spaces/{id}/access` — resolved access list (any member): each user with their **effective role** (max over sources) + **sources** (`direct` / `via <org>`). The authoritative "who can see this, and why".
 - `GET|POST|DELETE /api/admin/org-domains[/{domain}]` — auto-join email-domain → org mappings. **Instance-admin only.** Member-only (no per-domain role). A user whose verified email domain matches is enrolled into the org on verify/login (idempotent, best-effort, non-discretionary).
+- `GET|POST|DELETE /api/orgs/{id}/invites[/{inviteId}]` — pending email invitations to the org (org-admin gated). Seat quota is enforced at accept time, not at create.
+- `GET /api/invites/{token}` — **public** (on `IsPublicPath`, self-authenticates via the token): renders the accept page for a possibly-logged-out invitee. Returns `{valid, kind: "org"|"space", org_name|space_name, inviter, email}`.
+- `POST /api/me/accept-invite {token}` — accept, session required. Serves **both** invite kinds; the caller's verified email must match the invited address (`403 email_mismatch`).
 - `GET /api/admin/access-audit?limit` — access-control change log (org/membership/grant/auto-join/domain). **Instance-admin only.**
 
 See [`access-model.md`](access-model.md) for the canonical principal/grant/role model, precedence, and the group (sub-team) design.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -12,8 +13,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zcag/tela/backend/internal/models"
-	"github.com/zcag/tela/backend/internal/sheetproj"
 	"github.com/zcag/tela/backend/internal/rag"
+	"github.com/zcag/tela/backend/internal/sheetproj"
 )
 
 // retrievalGuideMarkdown is the "how to find things" preamble carried in the
@@ -270,6 +271,13 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 		Description: "Patch a space's name and/or slug (editor+); idempotent — pass only the field(s) you want to change. Changing the slug updates the space's URL path (existing page ids and links still resolve). To create a space use create_space, to read it use get_space, to remove it use delete_space.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: &no, IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.mcpUpdateSpace)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "invite_to_space",
+		Title:       "Invite to space (by email)",
+		Description: "Give a person access to a space by EMAIL ADDRESS — space owner only, write scope. Two outcomes, and the response tells you which happened: if a tela account already uses that address they are added right away and returns `{member}`; if nobody has that address yet, tela SENDS THEM AN EMAIL INVITATION (an outward action reaching a third party) and returns `{invite}` — they get the space automatically when they sign up with that address. Role is owner|editor|viewer (default viewer). Use this to onboard someone who has no tela account; to add an existing user you already know by username, or to change/remove access, use the app's space sharing UI.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: &no, DestructiveHint: &no, OpenWorldHint: &no},
+	}, s.mcpInviteToSpace)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "delete_space",
@@ -1288,6 +1296,42 @@ func (s *Server) mcpDeleteSpace(ctx context.Context, req *mcp.CallToolRequest, i
 		return mcpErr(ae), okOut{}, nil
 	}
 	return nil, okOut{OK: true}, nil
+}
+
+// ---- invite_to_space -----------------------------------------------------
+
+type inviteToSpaceIn struct {
+	SpaceID int64  `json:"space_id" jsonschema:"space to share (caller must be its owner)"`
+	Email   string `json:"email" jsonschema:"the person's email address"`
+	Role    string `json:"role,omitempty" jsonschema:"owner | editor | viewer (default viewer)"`
+}
+
+// inviteToSpaceOut carries exactly one of member (access granted immediately)
+// or invite (an invitation email was sent), so the calling agent can tell the
+// two branches apart without guessing.
+type inviteToSpaceOut struct {
+	Member *spaceMemberDTO `json:"member,omitempty"`
+	Invite *spaceInviteDTO `json:"invite,omitempty"`
+}
+
+func (s *Server) mcpInviteToSpace(ctx context.Context, req *mcp.CallToolRequest, in inviteToSpaceIn) (*mcp.CallToolResult, inviteToSpaceOut, error) {
+	u, k := mcpIdentity(req)
+	if u == nil {
+		return mcpUnauthErr(), inviteToSpaceOut{}, nil
+	}
+	if ae := mcpRequireWrite(k); ae != nil {
+		return mcpErr(ae), inviteToSpaceOut{}, nil
+	}
+	// Same core as POST /api/spaces/{id}/invites — owner gate, both branches, the
+	// mail and the audit rows are identical. The invite link is space-derived
+	// (the owning org's custom domain when it has one) since there is no request
+	// host to follow here.
+	origin := cmp.Or(s.shareOrigin(ctx, in.SpaceID), devBaseURL)
+	res, ae := s.shareSpaceByEmailCore(ctx, u, k, in.SpaceID, in.Email, in.Role, origin)
+	if ae != nil {
+		return mcpErr(ae), inviteToSpaceOut{}, nil
+	}
+	return nil, inviteToSpaceOut{Member: res.Member, Invite: res.Invite}, nil
 }
 
 // ---- submit_feedback (any scope, no mcpRequireWrite) ---------------------

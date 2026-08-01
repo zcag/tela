@@ -439,6 +439,36 @@ func OrgInvite(to, orgName, inviter, inviteURL string, brand Brand) Message {
 	return Message{To: to, Subject: "You're invited to " + orgName + " on " + name, HTML: renderHTML(v), Text: renderText(v)}
 }
 
+// SpaceInvite builds the "someone shared a space with you" message for an
+// address that has no account yet — the space twin of OrgInvite. inviteURL
+// carries the raw token to the same /invite/{token} accept page; following it
+// and signing up with this address grants the space automatically.
+func SpaceInvite(to, spaceName, inviter, inviteURL string, brand Brand) Message {
+	name := cmp.Or(strings.TrimSpace(brand.Name), "tela")
+	by := strings.TrimSpace(inviter)
+	intro := fmt.Sprintf("You've been invited to the **%s** space on %s", spaceName, name)
+	if by != "" {
+		intro = fmt.Sprintf("%s invited you to the **%s** space on %s", by, spaceName, name)
+	}
+	intro += ". Create your account to start reading and writing with the team — the space will be waiting for you."
+	v := emailView{
+		LogoOrigin: originOf(inviteURL),
+		Eyebrow:    "Invitation",
+		Heading:    "Join " + spaceName,
+		Intro:      intro,
+		CTALabel:   "Accept invitation",
+		CTAURL:     inviteURL,
+		ShowPaste:  true,
+		Footer:     "This invitation expires in 14 days. If you weren't expecting it, you can ignore this email.",
+	}
+	v.applyBrand(brand)
+	subject := "You're invited to " + spaceName + " on " + name
+	if by != "" {
+		subject = by + " invited you to " + spaceName + " on " + name
+	}
+	return Message{To: to, Subject: subject, HTML: renderHTML(v), Text: renderText(v)}
+}
+
 // SelfHostLicense builds the "here's your self-host Enterprise license key"
 // delivery email. token is the signed key the buyer pastes into their own
 // instance (Settings → License); seats/expires describe it; manageURL links back

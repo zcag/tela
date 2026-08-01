@@ -234,10 +234,11 @@ func IsPublicPath(p string) bool {
 	if strings.HasPrefix(p, "/api/digest/unsubscribe") {
 		return true
 	}
-	// Org invitation lookup (api/org_invites.go). GET /api/invites/{token} renders
-	// the accept page for a possibly-logged-out invitee, self-authenticating via
-	// the unguessable token. Accepting (POST /api/me/accept-invite) is NOT here —
-	// it requires a session. No write route lives under /api/invites/.
+	// Invitation lookup (api/invites.go — org AND space invites share one link
+	// shape). GET /api/invites/{token} renders the accept page for a possibly-
+	// logged-out invitee, self-authenticating via the unguessable token.
+	// Accepting (POST /api/me/accept-invite) is NOT here — it requires a
+	// session. No write route lives under /api/invites/.
 	if strings.HasPrefix(p, "/api/invites/") {
 		return true
 	}

@@ -29,6 +29,10 @@ function Shell({
   )
 }
 
+// One page for both invite kinds — an organization (self-serve teams) and a
+// single space (share-by-email). The backend's `kind` discriminator decides the
+// wording; the flows (accept while signed in, sign up and auto-join on verify,
+// wrong-account) are identical.
 export function InvitePage() {
   const { token } = useParams({ from: '/invite/$token' })
   const invite = useInvite(token)
@@ -54,7 +58,13 @@ export function InvitePage() {
     )
   }
 
-  const org = data.org_name ?? 'the team'
+  const isSpace = data.kind === 'space'
+  // What you're joining, and the noun for it.
+  const target = (isSpace ? data.space_name : data.org_name) ?? (isSpace ? 'a space' : 'the team')
+  const what = isSpace ? `the "${target}" space` : target
+  const invitedBy = data.inviter
+    ? `${data.inviter} invited you to ${what} on tela.`
+    : `You've been invited to ${what} on tela.`
   const invEmail = (data.email ?? '').toLowerCase()
   const user = me.data
   const myEmail = (user?.email ?? '').toLowerCase()
@@ -72,10 +82,10 @@ export function InvitePage() {
   // Signed in with the invited address → one-click join.
   if (user && myEmail === invEmail) {
     return (
-      <Shell title={`Join ${org}`} description={`You've been invited to ${org}.`}>
+      <Shell title={`Join ${target}`} description={invitedBy}>
         <div className="flex flex-col items-center gap-[var(--space-3)]">
           <Button variant="primary" size="lg" disabled={accept.isPending} onClick={onAccept}>
-            {accept.isPending ? 'Joining…' : `Join ${org}`}
+            {accept.isPending ? 'Joining…' : `Join ${target}`}
           </Button>
           {error ? (
             <p className="m-0 text-[length:var(--text-sm)] text-[var(--danger)]">{error}</p>
@@ -104,8 +114,8 @@ export function InvitePage() {
   // Logged out — sign up (auto-joins on email verify) or sign in.
   return (
     <Shell
-      title={`Join ${org} on tela`}
-      description={`You've been invited to ${org} as ${data.email}. Create an account or sign in to accept.`}
+      title={`Join ${target} on tela`}
+      description={`${invitedBy} Create an account with ${data.email} or sign in to accept.`}
     >
       <div className="flex flex-col items-stretch gap-[var(--space-2)]">
         <Button asChild variant="primary" size="lg">
