@@ -39,6 +39,7 @@ const INFRA = new Set([
   'milkdown-placeholder', // empty-editor placeholder text (no node)
   'milkdown-plain-paste', // Cmd/Ctrl+Shift+V paste-as-plain-text keymap (no node)
   'milkdown-slash', // the slash menu itself
+  'milkdown-table-fix', // repairs ragged tables so table ops don't throw (no node)
   'milkdown-table-select', // table cell-selection behavior (no node)
   'milkdown-upload-placeholder', // transient upload placeholder decoration (no node)
   'milkdown-templates', // composed snippets, not a block type
@@ -127,7 +128,12 @@ function checkCoverage(blocks) {
 
   // Every milkdown-* plugin must be classified (block or infra).
   const plugins = readdirSync(PLUGIN_DIR)
-    .filter((f) => /^milkdown-.*\.tsx?$/.test(f) && !f.endsWith('.stories.tsx'))
+    .filter(
+      (f) =>
+        /^milkdown-.*\.tsx?$/.test(f) &&
+        !f.endsWith('.stories.tsx') &&
+        !/\.test\.tsx?$/.test(f),
+    )
     .map((f) => f.replace(/\.tsx?$/, ''))
   for (const p of plugins) {
     if (!INFRA.has(p) && !(p in PLUGIN_BLOCKS)) {
