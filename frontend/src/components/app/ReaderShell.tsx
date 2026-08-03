@@ -350,14 +350,23 @@ export function ReaderShell({
   useEffect(() => {
     const sc = scrollRef.current
     if (!sc) return
-    // On touch the inner frame is released to document scroll (so a pinch-zoomed
-    // page can be panned — see reader.css), so read progress from whatever
-    // actually scrolls: the document on coarse pointers, the frame otherwise.
-    const coarse = window.matchMedia('(pointer: coarse)').matches
-    const metrics = coarse
-      ? document.scrollingElement ?? document.documentElement
-      : sc
-    const scrollTarget: Window | HTMLElement = coarse ? window : sc
+    // Read progress from whatever actually scrolls. On touch the inner frame is
+    // released (so a pinch-zoomed page can be panned — see reader.css), and what
+    // takes over depends on where the reader is mounted: the document on
+    // /share, but the fixed ?view=read overlay in the app. Resolve it by walking
+    // up rather than assuming — a wrong guess silently freezes the progress bar
+    // and the TOC scroll-spy.
+    const findScroller = (from: HTMLElement): HTMLElement | null => {
+      for (let el: HTMLElement | null = from; el; el = el.parentElement) {
+        const oy = window.getComputedStyle(el).overflowY
+        if (oy === 'auto' || oy === 'scroll') return el
+      }
+      return null
+    }
+    const scroller = findScroller(sc)
+    const metrics =
+      scroller ?? document.scrollingElement ?? document.documentElement
+    const scrollTarget: Window | HTMLElement = scroller ?? window
     let raf = 0
     const update = () => {
       raf = 0

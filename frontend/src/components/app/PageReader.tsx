@@ -119,7 +119,16 @@ function ReadModeView({ spaceId, pageId, title, summary, body, updatedAt }: Read
       onNavigateWikilink={onNavigateWikilink}
       onEscape={onEscape}
       attachmentStrip={<AttachmentStrip pageId={pageId} />}
-      topbarTrailing={<DownloadPdfButton url={`/api/pages/${pageId}/pdf`} themed />}
+      // Phone: the "Download PDF" label ate the bar and squeezed the title down
+      // to an ellipsis. Icon-only there — aria-label still names it, and the
+      // spinner icon still reports the (slow) render.
+      topbarTrailing={
+        <DownloadPdfButton
+          url={`/api/pages/${pageId}/pdf`}
+          themed
+          className="max-sm:w-[var(--space-8)] max-sm:px-0 max-sm:[&>span]:hidden"
+        />
+      }
       topbarLeading={
         <Button
           asChild

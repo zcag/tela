@@ -122,11 +122,21 @@
     overflow-x: clip;
     overscroll-behavior: contain;
   }
-  /* Touch: release the reader's inner scroll frame to document scroll so a
-     pinch-zoomed page can be panned sideways (see index.css coarse note). */
+  /* Touch: release the reader's inner scroll frame so a pinch-zoomed page can be
+     panned sideways (see index.css coarse note) — the released content scrolls
+     whatever encloses the reader instead. Height must go with it: pinned at
+     100dvh the released content just overflows a fixed-size box, which the
+     *document* still scrolls (the /share route) but a `position: fixed` overlay
+     does not — that's the authed ?view=read shape, where it left the reader
+     literally unscrollable past the first screenful. The overlay opts into being
+     that scroller (pointer-coarse:overflow-y-auto in PageView). */
   @media (pointer: coarse) {
     .reader-scroll {
       overflow: visible;
+    }
+    .tela-reader {
+      height: auto;
+      min-height: 100dvh;
     }
   }
 
@@ -423,6 +433,14 @@
     /* Touch: no hover, so keep it faintly visible rather than unreachable. */
     .tela-reader .reader-anchor {
       opacity: 0.4;
+    }
+  }
+  @media (max-width: 40rem) {
+    /* …except on a phone, where there is no left gutter to hold it: the anchor
+       sits in the page margin against the screen edge and every heading reads
+       as "# Heading". Page-level "Copy link" covers the intent there. */
+    .tela-reader .reader-anchor {
+      display: none;
     }
   }
 

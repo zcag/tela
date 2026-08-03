@@ -12,6 +12,7 @@ import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   BookOpen,
+  ChevronLeft,
   ChevronRight,
   FileDown,
   FileQuestion,
@@ -27,6 +28,7 @@ import {
   Share2,
   Trash2,
   TriangleAlert,
+  Users,
 } from 'lucide-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ApiError } from '../../lib/api'
@@ -140,6 +142,24 @@ const MilkdownEditor = lazy(() =>
 )
 
 const EDITOR_MIN_H = 'min-h-[calc(var(--space-8)*8)]'
+
+// Shared by the read and edit headers so the two stay pixel-identical across
+// the edit toggle. `sticky` is load-bearing on touch: the app shell releases to
+// document scroll on coarse pointers (see router.tsx), so an ordinary header
+// scrolls away and takes Edit / Done with it — unreachable without scrolling
+// all the way back up. On desktop the flex shell already pins it and sticky is
+// a no-op. The opaque background is what makes it safe to overlap content.
+const PAGE_HEADER_CLASS = cn(
+  'sticky top-0 z-20 shrink-0 flex items-center justify-between',
+  'gap-[var(--space-2)] md:gap-[var(--space-4)]',
+  'px-[var(--space-4)] md:px-[var(--space-6)] py-[var(--space-2)] md:py-[var(--space-3)]',
+  'border-b border-[var(--border-subtle)] bg-[var(--surface-1)]',
+)
+
+// The reading column's own gutter. 2rem a side is 16% of a 390px phone, so it
+// tightens to 1rem below sm and the prose gets its measure back.
+const PAGE_CONTENT_CLASS =
+  'flex flex-col gap-[var(--space-4)] p-[var(--space-4)] sm:p-[var(--space-7)] max-w-[56rem] w-full mx-auto'
 
 function EditorFallback() {
   return (
@@ -292,7 +312,10 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
   // it never uses this overlay.
   if (view === 'read' && !isDeck && !isSheet) {
     return (
-      <div className="fixed inset-0 z-50 bg-[var(--surface-1)]">
+      // A fixed overlay can't hand its overflow to the document, so on touch —
+      // where the reader releases its own inner scroll frame (reader.css) — this
+      // box has to be the scroller or nothing scrolls at all.
+      <div className="fixed inset-0 z-50 bg-[var(--surface-1)] pointer-coarse:overflow-y-auto pointer-coarse:overflow-x-clip pointer-coarse:overscroll-contain">
         <Suspense fallback={null}>
           <PageReader spaceId={spaceId} pageId={page.data.id} />
         </Suspense>
@@ -369,6 +392,28 @@ function PageViewer({
     [commentsQuery.data],
   )
   const commentThreads = commentsQuery.data ?? null
+
+  // The two side panels are mutually exclusive. Named so the header bar and the
+  // compact "•••" menu can share one handler instead of duplicating the pairing.
+  const openComments = useCallback(() => {
+    setGraphOpen(false)
+    setCommentsOpen(true)
+  }, [])
+  const openGraph = useCallback(() => {
+    handleCommentsOpenChange(false)
+    setGraphOpen(true)
+  }, [handleCommentsOpenChange])
+  const openReadMode = useCallback(() => {
+    if (isDeck) {
+      openDeckPresent(page.id)
+      return
+    }
+    void navigate({
+      to: '/spaces/$spaceId/pages/$pageId/{-$slug}',
+      params: { spaceId, pageId: page.id, slug: pageSlug(page.title) || undefined },
+      search: (prev) => ({ ...prev, view: 'read' }),
+    })
+  }, [isDeck, navigate, spaceId, page.id, page.title])
 
   // Wikilink resolution (slug → id), space-scoped, like the editor builds it.
   const allPagesQuery = useAllPages()
@@ -453,58 +498,63 @@ function PageViewer({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <header className="flex items-center justify-between gap-[var(--space-4)] px-[var(--space-6)] py-[var(--space-3)] border-b border-[var(--border-subtle)] shrink-0">
+      <header className={PAGE_HEADER_CLASS}>
         <Breadcrumb spaceId={spaceId} pageId={page.id} />
-        <div className="flex items-center gap-[var(--space-3)] min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {roleResolved ? <FavoriteStar pageId={page.id} /> : null}
-          {roleResolved ? <FollowButton id={page.id} /> : null}
+        {/* Secondary actions live here on desktop and fold into the "•••" menu
+            below md — a phone can't show nine controls, and the old
+            overflow-x-auto row silently pushed Edit off-screen entirely. */}
+        <div className="flex items-center gap-[var(--space-1)] md:gap-[var(--space-3)] shrink-0">
+          {/* Properties stays on the bar at every width: it self-hides unless the
+              page actually has frontmatter, so it costs nothing on the pages
+              that don't have any, and it has no sensible menu-row form. */}
           <PageProperties props={page.props} />
+          <div className="hidden md:flex items-center gap-[var(--space-3)]">
+            {roleResolved ? <FavoriteStar pageId={page.id} /> : null}
+            {roleResolved ? <FollowButton id={page.id} /> : null}
+            {commentsEnabled ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Comments"
+                onClick={openComments}
+                className="h-[var(--space-8)] px-[var(--space-3)]"
+              >
+                <MessageSquare width={16} height={16} />
+                {openThreadCount != null ? (
+                  <span>Comments ({openThreadCount})</span>
+                ) : (
+                  <span>Comments</span>
+                )}
+              </Button>
+            ) : null}
+            {roleResolved ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Graph"
+                title="Graph — this page's connections"
+                onClick={openGraph}
+                className="h-[var(--space-8)] w-[var(--space-8)] p-0"
+              >
+                <Share2 width={16} height={16} />
+              </Button>
+            ) : null}
+            {roleResolved ? (
+              <VisibilityBadge
+                state={page.exposure?.state ?? 'private'}
+                inherited={page.exposure?.inherited ?? false}
+              />
+            ) : null}
+          </div>
+          {/* Sheets have no read mode; their export menu stays on the bar. */}
           {isSheet ? (
             <SheetExportMenu body={page.body} title={page.title} activeSheet={activeSheet} />
           ) : null}
-          {commentsEnabled ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="Comments"
-              onClick={() => {
-                setGraphOpen(false)
-                setCommentsOpen(true)
-              }}
-              className="h-[var(--space-8)] px-[var(--space-3)]"
-            >
-              <MessageSquare width={16} height={16} />
-              {openThreadCount != null ? (
-                <span>Comments ({openThreadCount})</span>
-              ) : (
-                <span>Comments</span>
-              )}
-            </Button>
-          ) : null}
-          {roleResolved ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="Graph"
-              title="Graph — this page's connections"
-              onClick={() => {
-                handleCommentsOpenChange(false)
-                setGraphOpen(true)
-              }}
-              className="h-[var(--space-8)] w-[var(--space-8)] p-0"
-            >
-              <Share2 width={16} height={16} />
-            </Button>
-          ) : null}
-          {roleResolved ? (
-            <VisibilityBadge
-              state={page.exposure?.state ?? 'private'}
-              inherited={page.exposure?.inherited ?? false}
-            />
-          ) : null}
-          {roleResolved ? (
+          {/* Sheets have no reading view (the ?view=read route excludes them), so
+              don't offer a button that lands back on the same screen. */}
+          {roleResolved && !isSheet ? (
             <Button
               type="button"
               variant={isDeck ? 'primary' : 'ghost'}
@@ -515,22 +565,15 @@ function PageViewer({
                   ? 'Present — full-screen slides'
                   : 'Read mode — distraction-free reading view'
               }
-              onClick={() => {
-                if (isDeck) {
-                  openDeckPresent(page.id)
-                  return
-                }
-                void navigate({
-                  to: '/spaces/$spaceId/pages/$pageId/{-$slug}',
-                  params: {
-                    spaceId,
-                    pageId: page.id,
-                    slug: pageSlug(page.title) || undefined,
-                  },
-                  search: (prev) => ({ ...prev, view: 'read' }),
-                })
-              }}
-              className="h-[var(--space-8)] px-[var(--space-3)]"
+              onClick={openReadMode}
+              // A phone bar should carry one labelled action, not two: an
+              // unlabelled book icon next to Edit is exactly the guesswork this
+              // sweep is removing, so Read mode drops into "•••" below md. A
+              // deck's Present is its primary action and stays, labelled.
+              className={cn(
+                'h-[var(--space-8)] px-[var(--space-3)]',
+                !isDeck && 'hidden md:inline-flex',
+              )}
             >
               {isDeck ? (
                 <Presentation width={16} height={16} />
@@ -563,6 +606,28 @@ function PageViewer({
               title={page.title}
               isViewer={isViewer}
               onDelete={() => setDeleteOpen(true)}
+              compactActions={
+                <>
+                  {!isDeck && !isSheet ? (
+                    <DropdownMenuItem onSelect={openReadMode}>
+                      <BookOpen width={14} height={14} /> Read mode
+                    </DropdownMenuItem>
+                  ) : null}
+                  {commentsEnabled ? (
+                    <DropdownMenuItem onSelect={openComments}>
+                      <MessageSquare width={14} height={14} />
+                      {openThreadCount != null
+                        ? `Comments (${openThreadCount})`
+                        : 'Comments'}
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem onSelect={openGraph}>
+                    <Share2 width={14} height={14} /> Page connections
+                  </DropdownMenuItem>
+                  <FavoriteStar pageId={page.id} asMenuItem />
+                  <FollowButton id={page.id} asMenuItem />
+                </>
+              }
             />
           ) : null}
         </div>
@@ -597,7 +662,7 @@ function PageViewer({
            touch so a pinch-zoomed page pans; see the app shell in router.tsx. */
         className="flex-1 overflow-y-auto overflow-x-clip min-h-0 pointer-coarse:overflow-visible"
       >
-        <div className="flex flex-col gap-[var(--space-4)] p-[var(--space-7)] max-w-[56rem] w-full mx-auto">
+        <div className={PAGE_CONTENT_CLASS}>
         <WikilinkHoverPreview containerRef={contentRef} />
         <SummaryTitle
           summary={summary}
@@ -710,18 +775,23 @@ const EMPTY_ORPHAN_IDS: Set<number> = new Set()
 // link" (bare /p/{id}) is present but deliberately demoted so people don't grab
 // the opaque one by default. Links are built off window.location.origin and
 // resolve via the canonical id, surviving rename.
+// `compactActions` are header controls that don't fit below md — the caller
+// hands them in as menu items and they show only there, so the phone bar can
+// stay down to Edit + "•••" without any action becoming unreachable.
 function PageActionsMenu({
   spaceId,
   pageId,
   title,
   isViewer,
   onDelete,
+  compactActions,
 }: {
   spaceId: number
   pageId: number
   title: string
   isViewer: boolean
   onDelete: () => void
+  compactActions?: React.ReactNode
 }) {
   const navigate = useNavigate()
   // /pdf is page-type aware on the backend: a deck renders to a real per-slide
@@ -781,6 +851,12 @@ function PageActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[12rem]">
+        {compactActions ? (
+          <div className="md:hidden">
+            {compactActions}
+            <DropdownMenuSeparator />
+          </div>
+        ) : null}
         <DropdownMenuItem onSelect={() => copy(pretty)}>
           <Link2 width={14} height={14} /> Copy link
         </DropdownMenuItem>
@@ -953,6 +1029,16 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
   const [selectionPreview, setSelectionPreview] = useState('')
   const handleViewReady = useCallback((view: EditorView | null) => {
     editorViewRef.current = view
+  }, [])
+  // The side panels are mutually exclusive; one handler each, shared by the
+  // header bar and the compact "•••" menu (mirrors PageViewer).
+  const openComments = useCallback(() => {
+    setGraphOpen(false)
+    setCommentsOpen(true)
+  }, [])
+  const openGraph = useCallback(() => {
+    setCommentsOpen(false)
+    setGraphOpen(true)
   }, [])
   const handleSelectionChange = useCallback(
     ({ isEmpty, text }: { isEmpty: boolean; text: string }) => {
@@ -1328,7 +1414,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <header className="flex items-center justify-between gap-[var(--space-4)] px-[var(--space-6)] py-[var(--space-3)] border-b border-[var(--border-subtle)] shrink-0">
+      <header className={PAGE_HEADER_CLASS}>
         <Breadcrumb
           spaceId={spaceId}
           pageId={page.id}
@@ -1338,7 +1424,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
               : undefined
           }
         />
-        <div className="flex items-center gap-[var(--space-3)] min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex items-center gap-[var(--space-1)] md:gap-[var(--space-3)] shrink-0">
           {isDraftMode ? (
             <>
               <Button
@@ -1396,71 +1482,69 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
               ) : null}
               <PresenceAvatars awareness={provider?.awareness ?? null} />
               <SaveIndicator status={status} />
-              {roleResolved ? <FavoriteStar pageId={page.id} /> : null}
-              {roleResolved ? <FollowButton id={page.id} /> : null}
-              <PageProperties props={page.props} />
               {/* Frequent actions stay on the bar; the rest live in the "•••"
-                  menu (PageActionsMenu) to keep the header uncluttered. */}
-              {roleResolved && !isViewer ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Comments"
-                  onClick={() => {
-                    setGraphOpen(false)
-                    setCommentsOpen(true)
-                  }}
-                  className="h-[var(--space-8)] px-[var(--space-3)]"
-                >
-                  <MessageSquare width={16} height={16} />
-                  {openThreadCount != null ? (
-                    <span>Comments ({openThreadCount})</span>
-                  ) : (
-                    <span>Comments</span>
-                  )}
-                </Button>
-              ) : null}
-              {roleResolved ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Graph"
-                  title="Graph — this page's connections"
-                  onClick={() => {
-                    setCommentsOpen(false)
-                    setGraphOpen(true)
-                  }}
-                  className="h-[var(--space-8)] w-[var(--space-8)] p-0"
-                >
-                  <Share2 width={16} height={16} />
-                </Button>
-              ) : null}
-              {/* Visibility pill — ambient exposure indicator; editors click to
-                  manage sharing, viewers see a static status chip. */}
-              {roleResolved && !isViewer ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Manage sharing"
-                  onClick={() => setShareOpen(true)}
-                  className="h-[var(--space-8)] px-[var(--space-2)]"
-                >
+                  menu (PageActionsMenu) to keep the header uncluttered. Below md
+                  the whole strip folds into that menu — see the read header. */}
+              {/* Self-hides without frontmatter — see the read header. */}
+              <PageProperties props={page.props} />
+              <div className="hidden md:flex items-center gap-[var(--space-3)]">
+                {roleResolved ? <FavoriteStar pageId={page.id} /> : null}
+                {roleResolved ? <FollowButton id={page.id} /> : null}
+                {roleResolved && !isViewer ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Comments"
+                    onClick={openComments}
+                    className="h-[var(--space-8)] px-[var(--space-3)]"
+                  >
+                    <MessageSquare width={16} height={16} />
+                    {openThreadCount != null ? (
+                      <span>Comments ({openThreadCount})</span>
+                    ) : (
+                      <span>Comments</span>
+                    )}
+                  </Button>
+                ) : null}
+                {roleResolved ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Graph"
+                    title="Graph — this page's connections"
+                    onClick={openGraph}
+                    className="h-[var(--space-8)] w-[var(--space-8)] p-0"
+                  >
+                    <Share2 width={16} height={16} />
+                  </Button>
+                ) : null}
+                {/* Visibility pill — ambient exposure indicator; editors click to
+                    manage sharing, viewers see a static status chip. */}
+                {roleResolved && !isViewer ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Manage sharing"
+                    onClick={() => setShareOpen(true)}
+                    className="h-[var(--space-8)] px-[var(--space-2)]"
+                  >
+                    <VisibilityBadge
+                      state={page.exposure?.state ?? 'private'}
+                      inherited={page.exposure?.inherited ?? false}
+                    />
+                  </Button>
+                ) : null}
+                {roleResolved && isViewer ? (
                   <VisibilityBadge
                     state={page.exposure?.state ?? 'private'}
                     inherited={page.exposure?.inherited ?? false}
+                    className="ml-[var(--space-1)]"
                   />
-                </Button>
-              ) : null}
-              {roleResolved && isViewer ? (
-                <VisibilityBadge
-                  state={page.exposure?.state ?? 'private'}
-                  inherited={page.exposure?.inherited ?? false}
-                  className="ml-[var(--space-1)]"
-                />
-              ) : null}
+                ) : null}
+              </div>
               {roleResolved ? (
                 <PageActionsMenu
                   spaceId={spaceId}
@@ -1468,6 +1552,28 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
                   title={page.title}
                   isViewer={isViewer}
                   onDelete={() => setDeleteOpen(true)}
+                  compactActions={
+                    <>
+                      {roleResolved && !isViewer ? (
+                        <DropdownMenuItem onSelect={openComments}>
+                          <MessageSquare width={14} height={14} />
+                          {openThreadCount != null
+                            ? `Comments (${openThreadCount})`
+                            : 'Comments'}
+                        </DropdownMenuItem>
+                      ) : null}
+                      <DropdownMenuItem onSelect={openGraph}>
+                        <Share2 width={14} height={14} /> Page connections
+                      </DropdownMenuItem>
+                      {!isViewer ? (
+                        <DropdownMenuItem onSelect={() => setShareOpen(true)}>
+                          <Users width={14} height={14} /> Sharing &amp; access
+                        </DropdownMenuItem>
+                      ) : null}
+                      <FavoriteStar pageId={page.id} asMenuItem />
+                      <FollowButton id={page.id} asMenuItem />
+                    </>
+                  }
                 />
               ) : null}
             </>
@@ -1509,7 +1615,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
            touch so a pinch-zoomed page pans. See the app shell in router.tsx. */
         className="flex-1 overflow-y-auto overflow-x-clip min-h-0 pointer-coarse:overflow-visible"
       >
-        <div className="flex flex-col gap-[var(--space-4)] p-[var(--space-7)] max-w-[56rem] w-full mx-auto min-h-full">
+        <div className={cn(PAGE_CONTENT_CLASS, 'min-h-full')}>
         <WikilinkHoverPreview containerRef={contentRef} />
         {isDraftMode ? (
           <div
@@ -1876,12 +1982,61 @@ function Breadcrumb({
   const tree = usePages({ spaceId, tree: true })
   const nodes = (tree.data as PageTreeNode[] | undefined) ?? []
   const chain = findAncestorChain(nodes, pageId) ?? []
+  const current = chain[chain.length - 1]
+  const parent = chain[chain.length - 2]
 
   return (
     <nav
       aria-label="Breadcrumb"
       className="flex items-center min-w-0 text-[length:var(--text-sm)] text-[var(--text-muted)] font-[family-name:var(--font-sans)]"
     >
+      {/* Phone: the full chain never fits — it truncated to "P… › D…", which
+          named neither the space nor the page. One level up as a back
+          affordance plus this page's title instead; the title also keeps the
+          sticky header meaningful once the H1 has scrolled past. */}
+      <div className="flex md:hidden items-center min-w-0 gap-[var(--space-1)]">
+        {parent ? (
+          <Link
+            to="/spaces/$spaceId/pages/$pageId/{-$slug}"
+            params={{ spaceId, pageId: parent.id, slug: undefined }}
+            aria-label={`Up to ${parent.title || 'Untitled'}`}
+            className="shrink-0 -ml-[var(--space-2)] inline-flex h-[var(--space-8)] w-[var(--space-8)] items-center justify-center rounded-[var(--radius-xs)] hover:text-[var(--text-primary)]"
+          >
+            <ChevronLeft width={18} height={18} aria-hidden />
+          </Link>
+        ) : (
+          <Link
+            to="/spaces/$spaceId"
+            params={{ spaceId }}
+            aria-label={`Up to ${space.data?.name ?? 'space'}`}
+            className="shrink-0 -ml-[var(--space-2)] inline-flex h-[var(--space-8)] w-[var(--space-8)] items-center justify-center rounded-[var(--radius-xs)] hover:text-[var(--text-primary)]"
+          >
+            <ChevronLeft width={18} height={18} aria-hidden />
+          </Link>
+        )}
+        {titleEditor ? (
+          <input
+            value={titleEditor.value}
+            onChange={(e) => titleEditor.onChange(e.target.value)}
+            onBlur={titleEditor.onBlur}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                e.currentTarget.blur()
+              }
+            }}
+            placeholder="Untitled sheet"
+            aria-label="Sheet title"
+            className="min-w-0 flex-1 rounded-[var(--radius-sm)] border border-transparent bg-transparent px-[var(--space-1)] text-[var(--text-primary)] outline-none focus-visible:border-[var(--border-subtle)]"
+          />
+        ) : (
+          <span className="truncate font-medium text-[var(--text-primary)]">
+            {current?.title || space.data?.name || 'Untitled'}
+          </span>
+        )}
+      </div>
+
+      <span className="hidden md:flex items-center min-w-0">
       <Link
         to="/spaces/$spaceId"
         params={{ spaceId }}
@@ -1936,13 +2091,14 @@ function Breadcrumb({
           </span>
         )
       })}
+      </span>
     </nav>
   )
 }
 
 function PageLoading() {
   return (
-    <div className="flex-1 flex flex-col gap-[var(--space-4)] p-[var(--space-7)] max-w-[56rem] w-full self-center">
+    <div className={cn(PAGE_CONTENT_CLASS, 'flex-1 self-center')}>
       <div className="h-[calc(var(--space-8)+var(--space-3))] w-2/3 rounded-[var(--radius-sm)] bg-[var(--surface-2)]" />
       <div className="flex-1 min-h-[calc(var(--space-8)*4)] rounded-[var(--radius-md)] bg-[var(--surface-2)]" />
     </div>
