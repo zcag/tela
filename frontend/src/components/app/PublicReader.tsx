@@ -257,11 +257,15 @@ export function PublicReaderView({
           <a
             href={telaHome}
             aria-label="tela home"
-            className="inline-block rounded-[var(--radius-xs)] font-[family-name:var(--font-sans)] text-[length:var(--text-base)] font-medium text-[var(--text-primary)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            // shrink-0: a flex child shrinks below its content by default, so on
+            // a phone the wordmark was squeezed until its text spilled out of its
+            // own box and collided with the trailing controls. The space name
+            // (truncate, below) is what should absorb the shrink instead.
+            className="inline-block shrink-0 rounded-[var(--radius-xs)] font-[family-name:var(--font-sans)] text-[length:var(--text-base)] font-medium text-[var(--text-primary)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             tela
           </a>
-          <span aria-hidden className="text-[var(--text-muted)]">
+          <span aria-hidden className="shrink-0 text-[var(--text-muted)]">
             /
           </span>
           {/* Back to the space's front page (its blog index). */}
@@ -277,7 +281,7 @@ export function PublicReaderView({
       sourceLabel={space.name}
       topbarTrailing={
         <>
-          <DownloadPdfButton url={`${window.location.pathname}.pdf`} themed />
+          <DownloadPdfButton url={`${window.location.pathname}.pdf`} themed compact />
           <Button asChild variant="ghost" size="sm">
             <a href="/login">Sign in</a>
           </Button>

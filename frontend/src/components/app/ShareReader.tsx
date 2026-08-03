@@ -87,7 +87,9 @@ export function ShareReaderView({
         <a
           href={telaHome}
           aria-label="tela home"
-          className="inline-block rounded-[var(--radius-xs)] font-[family-name:var(--font-sans)] text-[length:var(--text-base)] font-medium text-[var(--text-primary)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          // shrink-0 so a narrow bar truncates the title beside it rather than
+          // squeezing the wordmark's text out of its own box (see PublicReader).
+          className="inline-block shrink-0 rounded-[var(--radius-xs)] font-[family-name:var(--font-sans)] text-[length:var(--text-base)] font-medium text-[var(--text-primary)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           tela
         </a>
@@ -97,7 +99,7 @@ export function ShareReaderView({
         <>
           {/* The ".pdf on a share URL" trick: append .pdf to the page the
               viewer is on. credentials are irrelevant for a public share. */}
-          <DownloadPdfButton url={`${window.location.pathname}.pdf`} themed />
+          <DownloadPdfButton url={`${window.location.pathname}.pdf`} themed compact />
           {/* Plain <a> rather than the router Link: a full page reload on sign-in
               is intentional so the post-login app boots cleanly outside the
               share-mode shell. */}
