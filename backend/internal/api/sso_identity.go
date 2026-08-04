@@ -39,8 +39,9 @@ var errSSOEmailTaken = errors.New("sso: email already registered to another acco
 
 // signInSSO maps a resolved external identity onto a tela user and signs them
 // in: it reuses the exact provisioning chain the email-verify flow uses
-// (EnsurePersonalSpace → applyAutoJoin → CreateSession + cookie). Returns the
-// user id on success; writes nothing on success (the caller redirects).
+// (EnsurePersonalSpace → applyAutoJoin → applyPendingInvites → CreateSession +
+// cookie). Returns the user id on success; writes nothing on success (the
+// caller redirects).
 func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentity) (int64, error) {
 	id.email = normalizeEmail(id.email)
 	ctx := r.Context()
@@ -66,6 +67,11 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 	}
 	if id.email != "" {
 		applyAutoJoin(ctx, s.DB, userID, id.email)
+		// An SSO signup arrives already email-verified, so it must redeem pending
+		// invites exactly like VerifyEmail does. Omitting this stranded someone
+		// invited to a space who then signed up with Google: the invite stayed
+		// pending, every read 403'd, and the UI called it a server error.
+		s.applyPendingInvites(ctx, userID, id.email)
 	}
 
 	sid, err := auth.CreateSession(ctx, s.DB, userID, r.UserAgent())

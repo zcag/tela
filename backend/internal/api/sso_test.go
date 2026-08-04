@@ -406,6 +406,51 @@ func resolveInTx(t *testing.T, d *sql.DB, id ssoIdentity) {
 	}
 }
 
+// TestSSO_AppliesPendingInvites — an SSO signup arrives already email-verified,
+// so it must redeem pending invites just like VerifyEmail does. It didn't: a
+// real user invited to a space, who then signed up with Google, kept 403'ing on
+// every page in it. Drives signInSSO (not applyPendingInvites directly) —
+// the helper was always correct, the wiring to this path was what was missing.
+func TestSSO_AppliesPendingInvites(t *testing.T) {
+	d := newAPITestDB(t)
+	srv := New(d)
+	ctx := context.Background()
+
+	ownerID := seedUser(t, d, "alice", "alicepw12", false)
+	space := seedSpace(t, d, "Job Search", "job-search", ownerID)
+	org := seedOrg(t, d, "Acme", "acme")
+	mustExec(t, d, `INSERT INTO space_invites (space_id, email, role, token_hash, expires_at)
+		VALUES ($1, 'carol@acme.com', 'editor', 'sso-space-hash', to_char((now() AT TIME ZONE 'UTC') + interval '7 days', 'YYYY-MM-DD HH24:MI:SS'))`, space)
+	mustExec(t, d, `INSERT INTO org_invites (org_id, email, org_role, token_hash, expires_at)
+		VALUES ($1, 'carol@acme.com', 'member', 'sso-org-hash', to_char((now() AT TIME ZONE 'UTC') + interval '7 days', 'YYYY-MM-DD HH24:MI:SS'))`, org)
+
+	// Mixed case on the claim: invite matching is case-insensitive on email.
+	id := ssoIdentity{
+		provider:    "google",
+		subject:     "ext-carol",
+		email:       "Carol@acme.com",
+		displayName: "Carol Danvers",
+		linkTrusted: true,
+	}
+	userID, err := srv.signInSSO(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/auth/sso/google/callback", nil), id)
+	if err != nil {
+		t.Fatalf("signInSSO: %v", err)
+	}
+
+	var role string
+	if err := d.QueryRowContext(ctx, `SELECT role FROM space_members WHERE space_id=$1 AND user_id=$2`, space, userID).Scan(&role); err != nil || role != "editor" {
+		t.Fatalf("SSO signup should have joined the invited space as editor, role=%q err=%v", role, err)
+	}
+	if err := d.QueryRowContext(ctx, `SELECT org_role FROM org_members WHERE org_id=$1 AND user_id=$2`, org, userID).Scan(&role); err != nil {
+		t.Fatalf("SSO signup should have joined the invited org: %v", err)
+	}
+	var pending int
+	mustQueryRow(t, d, `SELECT COUNT(*) FROM space_invites WHERE space_id=$1 AND accepted_at IS NULL`, &pending, space)
+	if pending != 0 {
+		t.Fatalf("space invite should be marked accepted, %d still pending", pending)
+	}
+}
+
 func displayNameOf(t *testing.T, d *sql.DB, userID int64) string {
 	t.Helper()
 	var name string

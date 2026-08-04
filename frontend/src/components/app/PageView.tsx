@@ -20,6 +20,7 @@ import {
   Hash,
   History,
   Link2,
+  Lock,
   MessageSquare,
   MoreHorizontal,
   Pencil,
@@ -32,6 +33,7 @@ import {
 } from 'lucide-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ApiError } from '../../lib/api'
+import { reportClientError } from '../../lib/client-errors'
 import { pushRecentPage } from '../../lib/recentPages'
 import { recordPageView } from '../../lib/recordPageView'
 import { buildWikilinkResolveIndex, pageSlug } from '../../lib/slug'
@@ -194,6 +196,9 @@ interface PageViewProps {
 export function PageView({ spaceId, pageId }: PageViewProps) {
   const page = usePage(pageId)
   const navigate = useNavigate()
+  // Cache read (the shell already fetched it) — only used to name the signed-in
+  // account in the no-access state, where "wrong account" is the usual cause.
+  const me = useMe()
   // M9.3 — soft-draft mode is opted into via `?draft=$revId`. The param is
   // typed by the route's validateSearch in router.tsx.
   const { draft: draftRevId, edit: editParam, view } = useSearch({
@@ -255,10 +260,35 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
   // after navigating to a different page (fresh page always opens at the top).
   const scrollRef = useRef({ pageId, top: 0 })
 
-  // 404 / wrong-space handling
+  // queryClient's reporting policy drops every non-401 4xx as "handled by the
+  // UI" — right in general, but a 403 here is NOT handled: it's a dead end the
+  // user can't act on, and it stayed invisible while a real user sat on it.
+  // Reported from the one place that knows it terminated in an error state.
+  // The server fingerprint normalizes digits, so every page folds into one issue.
+  // MUST stay above the early returns — a hook after a conditional return
+  // changes the hook count between renders (React #310).
+  const forbiddenPageId =
+    page.isError && page.error instanceof ApiError && page.error.status === 403
+      ? pageId
+      : null
+  useEffect(() => {
+    if (forbiddenPageId == null) return
+    reportClientError({
+      kind: 'query',
+      message: `403 forbidden reading page ${forbiddenPageId}`,
+      component: 'PageView',
+      pageId: forbiddenPageId,
+    })
+  }, [forbiddenPageId])
+
+  // 403 / 404 / wrong-space handling
   if (page.isError) {
     const status = page.error instanceof ApiError ? page.error.status : null
     if (status === 404) return <PageNotFound spaceId={spaceId} />
+    // A permission denial is not a server failure: saying "something went wrong,
+    // try again" sent a locked-out user chasing a non-existent outage, and Retry
+    // can never succeed.
+    if (status === 403) return <PageForbidden username={me.data?.username} />
     return <PageError onRetry={() => void page.refetch()} />
   }
 
@@ -2115,6 +2145,30 @@ function PageError({ onRetry }: { onRetry: () => void }) {
       actions={
         <Button variant="secondary" onClick={onRetry}>
           Retry
+        </Button>
+      }
+    />
+  )
+}
+
+// The page exists but this account isn't a member of its space. Distinct from
+// both PageError (a real outage — retryable) and PageNotFound (nothing there):
+// the only thing that resolves it is someone granting access, so say so, and
+// name the signed-in account since arriving on the wrong one is the usual cause.
+// "Back to space" is deliberately absent — that space 403s too.
+function PageForbidden({ username }: { username?: string }) {
+  return (
+    <EmptyState
+      icon={Lock}
+      title="You don't have access to this page"
+      description={
+        username
+          ? `Ask an owner of this space to share it with you. You're signed in as ${username}.`
+          : 'Ask an owner of this space to share it with you.'
+      }
+      actions={
+        <Button asChild variant="secondary">
+          <Link to="/">Your spaces</Link>
         </Button>
       }
     />
