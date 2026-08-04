@@ -41,10 +41,17 @@ export function CollapsibleSection({
 
   const handleToggle = (e: React.SyntheticEvent<HTMLDetailsElement>) => {
     const next = e.currentTarget.open
+    // `toggle` is NOT a click event: React sets the `open` attribute after
+    // creating the <details>, which the browser counts as opening it, so a
+    // section persisted open re-fires this on every mount. Only a real user
+    // toggle can outrun the state — on mount the two already agree. Without
+    // this, `persistKey` turned "I left Connections open" into "every page I
+    // open scrolls itself to the bottom", on every page, until I closed it.
+    const userToggled = next !== open
     setOpen(next)
     if (next) setHasOpened(true)
     if (persistKey) window.localStorage.setItem(persistKey, next ? '1' : '0')
-    if (next) {
+    if (next && userToggled) {
       // These sections sit at the bottom of the page, so the body usually
       // expands below the fold. Scroll the section fully into view once the
       // body has mounted (double rAF: mountOnOpen children render next frame).

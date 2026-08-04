@@ -260,6 +260,19 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
   // after navigating to a different page (fresh page always opens at the top).
   const scrollRef = useRef({ pageId, top: 0 })
 
+  // Drop the stored offset when we leave for a different page. PageView owns
+  // the ref and does NOT remount on navigation, so the offset outlived the swap
+  // it was written for: a page you once hit Edit on halfway down then reopened
+  // halfway down every later time you clicked it in the sidebar. Keyed on
+  // pageId — the edit↔read toggle doesn't change it, so the handoff survives,
+  // and clearing is idempotent (unlike consuming it on read, which StrictMode's
+  // double-invoked effects would swallow before the other view could read it).
+  useEffect(() => {
+    return () => {
+      scrollRef.current = { pageId: -1, top: 0 }
+    }
+  }, [pageId])
+
   // queryClient's reporting policy drops every non-401 4xx as "handled by the
   // UI" — right in general, but a 403 here is NOT handled: it's a dead end the
   // user can't act on, and it stayed invisible while a real user sat on it.
