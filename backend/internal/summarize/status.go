@@ -124,6 +124,26 @@ func (s *Service) SpacePageSummaries(ctx context.Context, userID, spaceID int64)
 	return out, rows.Err()
 }
 
+// PageStatus is SpacePageSummaries for exactly one page — same row shape, same
+// statusExpr, no access join (the caller has already resolved access).
+// Regeneration is async, so props.summary can lag the body it describes by a
+// worker hop, and a stale summary is indistinguishable from a current one to
+// whatever consumes it — search, RAG grounding, an LLM answering from it. This
+// is how a reader (the MCP epistemic block) can tell. GeneratedAt is "" when no
+// summary was ever machine-written, which is what separates real drift from a
+// hand-authored props.summary that never had a generation to drift from.
+func (s *Service) PageStatus(ctx context.Context, pageID int64) (PageSummary, error) {
+	var f PageSummary
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.id, p.title, `+statusExpr+` AS status,`+generatedCols+`,
+		       coalesce(ps.last_error, ''), p.updated_at
+		  FROM pages p
+		  LEFT JOIN page_summaries ps ON ps.page_id = p.id
+		 WHERE p.id = $1 AND p.deleted_at IS NULL`, pageID,
+	).Scan(&f.PageID, &f.Title, &f.Status, &f.GeneratedAt, &f.Model, &f.LastError, &f.UpdatedAt)
+	return f, err
+}
+
 // QueueStaleSpace enqueues every page in spaceID that needs (re)generation —
 // stale, missing, or failed — and returns how many it queued. Backs
 // POST /api/spaces/{id}/summarize; auth is the caller's job.

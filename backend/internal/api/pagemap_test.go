@@ -59,29 +59,104 @@ func TestApplyPatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out, sec, err := applyPatch(samplePage, c.target, c.op, c.content)
+			res, err := applyPatch(samplePage, c.target, c.op, c.content)
 			if err != nil {
 				t.Fatalf("applyPatch: %v", err)
 			}
-			if sec == nil {
+			if res.Section == nil {
 				t.Fatalf("no section matched")
 			}
-			if c.wantContains != "" && !strings.Contains(out, c.wantContains) {
-				t.Fatalf("output missing %q:\n%s", c.wantContains, out)
+			if c.wantContains != "" && !strings.Contains(res.Body, c.wantContains) {
+				t.Fatalf("output missing %q:\n%s", c.wantContains, res.Body)
 			}
-			if c.wantAbsent != "" && strings.Contains(out, c.wantAbsent) {
-				t.Fatalf("output should have dropped %q:\n%s", c.wantAbsent, out)
+			if c.wantAbsent != "" && strings.Contains(res.Body, c.wantAbsent) {
+				t.Fatalf("output should have dropped %q:\n%s", c.wantAbsent, res.Body)
 			}
 			// The fence content must survive every patch (never treated as a heading).
-			if !strings.Contains(out, "## not a heading") {
-				t.Fatalf("fenced text was lost / misparsed:\n%s", out)
+			if !strings.Contains(res.Body, "## not a heading") {
+				t.Fatalf("fenced text was lost / misparsed:\n%s", res.Body)
 			}
 		})
 	}
 }
 
+// Replacing a section takes its sub-sections with it — the standard span
+// definition, but destructive in a way append/prepend are not. The loss has to
+// come back in the result, or a caller can't notice it happened.
+func TestApplyPatchReportsRemovedSubsections(t *testing.T) {
+	res, err := applyPatch(samplePage, "Setup", "replace", "New setup steps.")
+	if err != nil {
+		t.Fatalf("applyPatch: %v", err)
+	}
+	if strings.Contains(res.Body, "### Linux") {
+		t.Fatalf("replace should span the subtree:\n%s", res.Body)
+	}
+	if len(res.Removed) != 1 || res.Removed[0] != "Setup > Linux" {
+		t.Fatalf("removed = %v, want [Setup > Linux]", res.Removed)
+	}
+	// A leaf section removes nothing, so a caller isn't warned about non-losses.
+	res, err = applyPatch(samplePage, "Setup > Linux", "replace", "Use the new installer.")
+	if err != nil {
+		t.Fatalf("applyPatch leaf: %v", err)
+	}
+	if len(res.Removed) != 0 {
+		t.Fatalf("leaf replace reported removals: %v", res.Removed)
+	}
+}
+
+// The "do this now" callout is both the most-edited block on a page and, until
+// the outline learned about blockquotes, the only one that needed a whole-page
+// rewrite to touch.
+const calloutPage = `## Where we are
+
+Some prose.
+
+> [!IMPORTANT]
+> ### One thing to do right now
+>
+> Read the brief.
+
+After the callout.
+
+## Next
+`
+
+func TestCalloutHeadingIsPatchable(t *testing.T) {
+	secs := pageOutline(calloutPage)
+	var quoted *pageSection
+	for i := range secs {
+		if secs[i].Heading == "One thing to do right now" {
+			quoted = &secs[i]
+		}
+	}
+	if quoted == nil {
+		t.Fatalf("callout heading not in outline: %v", sectionPaths(secs))
+	}
+	if !quoted.InQuote {
+		t.Fatal("callout heading not marked in_quote")
+	}
+
+	res, err := applyPatch(calloutPage, "One thing to do right now", "replace", "Read the OTHER brief.")
+	if err != nil {
+		t.Fatalf("applyPatch: %v", err)
+	}
+	// The new content must stay INSIDE the blockquote, and the section must stop
+	// at the end of the quote rather than swallowing the prose after it.
+	if !strings.Contains(res.Body, "> Read the OTHER brief.") {
+		t.Fatalf("patched content broke out of the callout:\n%s", res.Body)
+	}
+	if strings.Contains(res.Body, "Read the brief.") {
+		t.Fatalf("old callout body survived:\n%s", res.Body)
+	}
+	for _, keep := range []string{"> [!IMPORTANT]", "After the callout.", "## Next"} {
+		if !strings.Contains(res.Body, keep) {
+			t.Fatalf("patch ate %q:\n%s", keep, res.Body)
+		}
+	}
+}
+
 func TestApplyPatchUnknownTarget(t *testing.T) {
-	if _, _, err := applyPatch(samplePage, "Nonexistent", "append", "x"); err == nil {
+	if _, err := applyPatch(samplePage, "Nonexistent", "append", "x"); err == nil {
 		t.Fatal("expected error for unknown target")
 	}
 }

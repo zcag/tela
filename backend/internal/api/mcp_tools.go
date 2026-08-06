@@ -1006,38 +1006,57 @@ func (s *Server) mcpUpdatePage(ctx context.Context, req *mcp.CallToolRequest, in
 type patchPageIn struct {
 	ID             int64  `json:"id" jsonschema:"page id to patch"`
 	Target         string `json:"target" jsonschema:"the section to edit, by its heading path from get_page format:\"map\" (e.g. 'Setup' or 'Deploy > Production'); the bare heading text also resolves"`
-	Operation      string `json:"operation" jsonschema:"append (add to the end of the section's body), prepend (add right under the heading), replace (swap the section's body, heading kept), or delete (remove the heading and its body)"`
+	Operation      string `json:"operation" jsonschema:"append (add to the end of the section's body), prepend (add right under the heading), replace (swap the section's body, heading kept), or delete (remove the heading and its body). A section means the heading AND EVERYTHING NESTED UNDER IT until the next same-or-higher heading — so replace/delete on a '##' also removes its '###' sub-sections (they come back in the response as removed_subsections), and append lands after the last of them. To edit only the prose under a heading that has sub-sections, target the sub-section instead."`
 	Content        string `json:"content,omitempty" jsonschema:"markdown to insert; omit for delete"`
 	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional client-generated key; a retry with the same key returns the original result instead of re-applying the patch"`
 }
 
-func (s *Server) mcpPatchPage(ctx context.Context, req *mcp.CallToolRequest, in patchPageIn) (*mcp.CallToolResult, getPageOut, error) {
+// patchPageOut is get_page's envelope plus the accounting for what the patch
+// took with it: a section spans its subtree, so replace/delete can drop nested
+// sub-sections the caller never named. Reporting them is what lets an agent (or
+// the human reading its transcript) notice the loss while it's still cheap to
+// undo — silence was the actual bug, more than the span semantics.
+type patchPageOut struct {
+	Page               mcpPage  `json:"page"`
+	RemovedSubsections []string `json:"removed_subsections,omitempty"`
+	Warning            string   `json:"warning,omitempty"`
+}
+
+func (s *Server) mcpPatchPage(ctx context.Context, req *mcp.CallToolRequest, in patchPageIn) (*mcp.CallToolResult, patchPageOut, error) {
 	u, k := mcpIdentity(req)
 	if u == nil {
-		return mcpUnauthErr(), getPageOut{}, nil
+		return mcpUnauthErr(), patchPageOut{}, nil
 	}
 	if ae := mcpRequireWrite(k); ae != nil {
-		return mcpErr(ae), getPageOut{}, nil
+		return mcpErr(ae), patchPageOut{}, nil
 	}
-	return mcpIdempotent(ctx, s.DB, u.ID, in.IdempotencyKey, "patch_page", func() (*mcp.CallToolResult, getPageOut, error) {
+	return mcpIdempotent(ctx, s.DB, u.ID, in.IdempotencyKey, "patch_page", func() (*mcp.CallToolResult, patchPageOut, error) {
 		p, ae := s.getPageCore(ctx, u, k, in.ID)
 		if ae != nil {
-			return mcpErr(ae), getPageOut{}, nil
+			return mcpErr(ae), patchPageOut{}, nil
 		}
-		newBody, _, err := applyPatch(p.Body, in.Target, in.Operation, in.Content)
+		patch, err := applyPatch(p.Body, in.Target, in.Operation, in.Content)
 		if err != nil {
-			return mcpErr(&apiErr{Status: 400, Code: "bad_request", Message: err.Error()}), getPageOut{}, nil
+			return mcpErr(&apiErr{Status: 400, Code: "bad_request", Message: err.Error()}), patchPageOut{}, nil
 		}
 		// Write through the normal update path (agentWrite=true) so the revision,
 		// reindex, agreement and provenance all fire exactly as for any edit.
-		up, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Body: &newBody}, true)
+		up, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Body: &patch.Body}, true)
 		if ae != nil {
-			return mcpErr(ae), getPageOut{}, nil
+			return mcpErr(ae), patchPageOut{}, nil
 		}
 		epi := s.pageEpistemic(ctx, up)
 		body, whole := mcpCapBody(up.Body)
 		up.Body = body
-		return nil, getPageOut{Page: mcpPage{Page: up, URL: s.mcpPageURL(ctx, up), Truncated: !whole, Epistemic: epi}}, nil
+		out := patchPageOut{
+			Page:               mcpPage{Page: up, URL: s.mcpPageURL(ctx, up), Truncated: !whole, Epistemic: epi},
+			RemovedSubsections: patch.Removed,
+		}
+		if len(patch.Removed) > 0 {
+			out.Warning = fmt.Sprintf("%s on %q also removed %d nested sub-section(s): %s — restore from revisions if that wasn't intended.",
+				in.Operation, patch.Section.Path, len(patch.Removed), strings.Join(patch.Removed, ", "))
+		}
+		return nil, out, nil
 	})
 }
 

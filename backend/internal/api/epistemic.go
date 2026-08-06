@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/zcag/tela/backend/internal/agreement"
@@ -25,6 +26,12 @@ type EpistemicStatus struct {
 	Corroborate   int                 `json:"corroborate"` // same-space pages that agree
 	Dispute       int                 `json:"dispute"`     // …that contradict
 	Disputes      []agreement.Dispute `json:"disputes,omitempty"`
+	// SummaryStale marks props.summary as describing an OLDER body than the one
+	// returned here — the auto-summary regenerates asynchronously after an edit,
+	// so a fresh read right after a write hands back the previous one. Without
+	// this flag a stale summary is indistinguishable from a current one, which
+	// matters most in the case that produces it: an edit that corrects the page.
+	SummaryStale bool `json:"summary_stale,omitempty"`
 }
 
 // epistemicStaleDays: past this with no declared cadence, a page reads as stale.
@@ -72,6 +79,13 @@ func (s *Server) pageEpistemic(ctx context.Context, p models.Page) *EpistemicSta
 		 WHERE page_id = $1 AND last_error = ''`, p.ID,
 	).Scan(&es.Corroborate, &es.Dispute, &disputesRaw); err == nil {
 		_ = json.Unmarshal([]byte(disputesRaw), &es.Disputes)
+	}
+
+	// Summary drift — only meaningful when there IS a stored summary to mistrust.
+	if sum, _ := p.Props["summary"].(string); strings.TrimSpace(sum) != "" {
+		if st, err := s.summarize.PageStatus(ctx, p.ID); err == nil {
+			es.SummaryStale = st.Status == "stale" && st.GeneratedAt != ""
+		}
 	}
 	return es
 }
