@@ -90,10 +90,35 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 	})
 }
 
+// EmbedMany embeds a whole batch in ONE upstream request — the OpenAI
+// /embeddings shape takes an `input` array and answers with one data row per
+// input, and LiteLLM passes that through. See embedMany for the fallback
+// contract.
+func (e *OpenAIEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, int, error) {
+	return embedMany(texts,
+		func(in []string) ([][]float32, error) {
+			rows, _, err := e.post(ctx, in, len(in))
+			return rows, err
+		},
+		func(text string) ([]float32, error) { return e.Embed(ctx, text) },
+	)
+}
+
 // embedOnce does a single embed request. overflow is true when the upstream
 // rejected the input for exceeding the model's context window (the retryable
 // case). The OpenAI embeddings response is {"data":[{"embedding":[...]}]}.
 func (e *OpenAIEmbedder) embedOnce(ctx context.Context, input string) (vec []float32, overflow bool, err error) {
+	rows, over, err := e.post(ctx, input, 1)
+	if err != nil {
+		return nil, over, err
+	}
+	return rows[0], false, nil
+}
+
+// post sends {model, input} to /embeddings and returns one vector row per input.
+// input is either a single string or a []string batch; want is how many rows the
+// caller expects.
+func (e *OpenAIEmbedder) post(ctx context.Context, input any, want int) (rows [][]float32, overflow bool, err error) {
 	body, _ := json.Marshal(map[string]any{"model": e.model, "input": input})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.base+"/embeddings", bytes.NewReader(body))
 	if err != nil {
@@ -134,8 +159,12 @@ func (e *OpenAIEmbedder) embedOnce(ctx context.Context, input string) (vec []flo
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, false, fmt.Errorf("openai embed decode: %w", err)
 	}
-	if len(out.Data) == 0 || len(out.Data[0].Embedding) == 0 {
-		return nil, false, fmt.Errorf("openai embed: empty embedding for model %q", e.model)
+	if len(out.Data) != want || len(out.Data[0].Embedding) == 0 {
+		return nil, false, fmt.Errorf("openai embed: got %d vectors for %d inputs (model %q)", len(out.Data), want, e.model)
 	}
-	return out.Data[0].Embedding, false, nil
+	rows = make([][]float32, len(out.Data))
+	for i := range out.Data {
+		rows[i] = out.Data[i].Embedding
+	}
+	return rows, false, nil
 }

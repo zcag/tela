@@ -121,6 +121,24 @@ func (e recordingEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 	return v, err
 }
 
+// EmbedMany keeps the batch path visible THROUGH the decorator. Without it the
+// batchEmbedder assertion in Service.EmbedMany would fail on the wrapper and
+// every batch would silently degrade to one request per item — which is exactly
+// the bug this seam existed to hide.
+func (e recordingEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, int, error) {
+	inner, ok := e.inner.(batchEmbedder)
+	if !ok {
+		return embedMany(texts, nil, func(t string) ([]float32, error) { return e.Embed(ctx, t) })
+	}
+	vecs, requests, err := inner.EmbedMany(ctx, texts)
+	if err == nil {
+		for _, t := range texts {
+			e.rec(e.inner.Model(), (len(t)+3)/4)
+		}
+	}
+	return vecs, requests, err
+}
+
 func (e recordingEmbedder) Model() string { return e.inner.Model() }
 
 func (s *Service) isPaused() bool { return s.paused != nil && s.paused() }
@@ -153,6 +171,30 @@ func (s *Service) Embed(ctx context.Context, text string) ([]float32, error) {
 		return nil, errEmbedderDisabled
 	}
 	return s.emb.Embed(ctx, text)
+}
+
+// batchEmbedder is the optional batch transport an Embedder can expose: one
+// upstream request for N inputs instead of N requests. Both built-in embedders
+// implement it; a fake or a future provider that doesn't just falls back to
+// per-item, so it stays out of the required Embedder contract.
+type batchEmbedder interface {
+	EmbedMany(ctx context.Context, texts []string) (vecs [][]float32, requests int, err error)
+}
+
+// EmbedMany embeds a slice of passages, using the embedder's batch transport
+// when it has one. This is the bulk-ingest path (atlas runs a repo through it a
+// batch at a time): a 20k-chunk source is ~1.2k requests here versus ~20k
+// one-at-a-time, and the shared embed GPU is the scarce resource — flooding it
+// starves the chat model that lives on the same card. Returns one vector per
+// text in order, plus how many upstream requests it actually cost.
+func (s *Service) EmbedMany(ctx context.Context, texts []string) (vecs [][]float32, requests int, err error) {
+	if !s.Enabled() {
+		return nil, 0, errEmbedderDisabled
+	}
+	if b, ok := s.emb.(batchEmbedder); ok {
+		return b.EmbedMany(ctx, texts)
+	}
+	return embedMany(texts, nil, func(t string) ([]float32, error) { return s.emb.Embed(ctx, t) })
 }
 
 // EmbedModel returns the active model name (for the managed proxy response).

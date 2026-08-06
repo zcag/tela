@@ -183,6 +183,23 @@ native Ollama one — LiteLLM speaks OpenAI, not Ollama's `/api/embed`. There's 
 embed chain: a relief embedder would have to be the **same 1024-d model** on a
 second host (different-dim vectors aren't interchangeable in `page_chunks`).
 
+> [!WARNING]
+> **Bulk embedding must batch, and the embed gate must actually be in the path.**
+> Embed and chat typically share one GPU, so an unbatched bulk ingest starves
+> live chat — the failure looks like a *chat* incident (spill to the paid relief
+> layer) with no chat cause. That is exactly what happened on 2026-08-06: a
+> 3,519-file repo ingest issued ~20,000 single-input embed requests in 35
+> minutes, L1 cooled down, and chat failed over to L2. Two bugs, both invisible:
+> `atlasManager.embedBatch` looped `rag.Embed` per input, so atlas's 16-chunk
+> batches became 16 requests each; and `atlasllm.Client`'s concurrency gate was
+> acquired in `embedOnce`, which the `EmbedFunc` delegate path never reaches —
+> so inside tela it gated nothing. Both fixed (`rag.EmbedMany` + the gate lifted
+> into `Client.Embed`). Two traps to keep in mind if you touch this: a metering
+> or tracing decorator over `Embedder` must carry `EmbedMany` through or batching
+> silently degrades to per-item again, and `Usage.EmbedCalls` counts **upstream
+> requests**, not caller batches — reporting batches understated real load 16×
+> and made the run look cheap.
+
 **Per-service health + the admin breakdown.** A background prober
 (`internal/api/ai_health.go`) pings the chat and embed endpoints separately every
 30s (cheap metadata calls, never inference), tracking up/down, probe latency, and

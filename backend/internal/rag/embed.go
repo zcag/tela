@@ -144,6 +144,49 @@ func shrinkToFit(text string, once func(string) ([]float32, bool, error)) ([]flo
 	}
 }
 
+// embedMany is the shared batch path for every Embedder: it sends the whole
+// slice as ONE upstream request and, if that request fails for ANY reason, falls
+// back to embedding each item on its own. The fallback is what makes batching
+// safe to attempt blindly — a batch 400 can't say WHICH input overflowed, and an
+// endpoint that only speaks the single-input shape (tela cloud's managed embed
+// proxy) rejects the array outright. Per-item retry re-runs shrinkToFit, so the
+// slow path behaves exactly as it did before batching existed.
+//
+// Callers get one vector per text, in order. batch receives inputs pre-clamped
+// to maxEmbedChars (the same first-pass guard shrinkToFit applies) so a routine
+// over-long chunk doesn't cost a whole wasted batch round trip. A nil batch
+// (embedder with no batch transport) goes straight to the per-item path.
+//
+// requests is how many upstream calls this actually cost, so metering reports
+// real load on the embedder rather than the caller's batch count. A shrink-retry
+// inside one() is not counted — it's rare, and counting it would mean threading
+// a tally through shrinkToFit for a number nobody acts on.
+func embedMany(texts []string, batch func([]string) ([][]float32, error), one func(string) ([]float32, error)) (vecs [][]float32, requests int, err error) {
+	if len(texts) == 0 {
+		return nil, 0, nil
+	}
+	if len(texts) > 1 && batch != nil {
+		clamped := make([]string, len(texts))
+		for i, t := range texts {
+			clamped[i] = clampRunes(t, maxEmbedChars)
+		}
+		if v, err := batch(clamped); err == nil {
+			return v, 1, nil
+		}
+		requests = 1 // the failed attempt still hit the embedder
+	}
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		v, err := one(t)
+		requests++
+		if err != nil {
+			return nil, requests, err
+		}
+		out[i] = v
+	}
+	return out, requests, nil
+}
+
 // queryInstruct wraps a search query with the asymmetric instruction prefix per
 // the Qwen3-Embedding model card ("Instruct: {task}\nQuery:{q}"); a blank
 // instruction returns the query unchanged. Shared by both embedders' EmbedQuery.
@@ -154,9 +197,37 @@ func queryInstruct(instruct, query string) string {
 	return "Instruct: " + instruct + "\nQuery:" + query
 }
 
+// EmbedMany embeds a whole batch in ONE upstream request (Ollama's /api/embed
+// takes an `input` array and answers with one row per input). See embedMany for
+// the fallback contract.
+func (e *OllamaEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, int, error) {
+	return embedMany(texts,
+		func(in []string) ([][]float32, error) {
+			rows, _, err := e.post(ctx, in, len(in))
+			return rows, err
+		},
+		func(text string) ([]float32, error) { return e.Embed(ctx, text) },
+	)
+}
+
 // embedOnce does a single embed request. overflow is true when the model
 // rejected the input for exceeding its context window (the retryable case).
 func (e *OllamaEmbedder) embedOnce(ctx context.Context, input string) (vec []float32, overflow bool, err error) {
+	// A bare string, not a 1-element array: tela cloud's managed embed proxy
+	// (api.CloudEmbed) decodes `input` as a string, so the single-item shape
+	// must stay exactly as it was. Batching is the array shape below.
+	rows, over, err := e.post(ctx, input, 1)
+	if err != nil {
+		return nil, over, err
+	}
+	return rows[0], false, nil
+}
+
+// post sends {model, input} to /api/embed and returns one vector row per input.
+// input is either a single string or a []string batch; want is how many rows the
+// caller expects. overflow is true when the model rejected the input for
+// exceeding its context window (the retryable case).
+func (e *OllamaEmbedder) post(ctx context.Context, input any, want int) (rows [][]float32, overflow bool, err error) {
 	body, _ := json.Marshal(map[string]any{"model": e.model, "input": input})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.base+"/api/embed", bytes.NewReader(body))
 	if err != nil {
@@ -192,10 +263,10 @@ func (e *OllamaEmbedder) embedOnce(ctx context.Context, input string) (vec []flo
 	if out.Error != "" {
 		return nil, false, fmt.Errorf("ollama embed: %s", out.Error)
 	}
-	if len(out.Embeddings) == 0 || len(out.Embeddings[0]) == 0 {
-		return nil, false, fmt.Errorf("ollama embed: empty embedding for model %q", e.model)
+	if len(out.Embeddings) != want || len(out.Embeddings[0]) == 0 {
+		return nil, false, fmt.Errorf("ollama embed: got %d vectors for %d inputs (model %q)", len(out.Embeddings), want, e.model)
 	}
-	return out.Embeddings[0], false, nil
+	return out.Embeddings, false, nil
 }
 
 // vecLiteral formats a float32 slice as a pgvector text literal ("[0.1,0.2]").

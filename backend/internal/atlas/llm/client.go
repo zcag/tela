@@ -40,10 +40,11 @@ type Client struct {
 	// Inside tela the executor injects a delegate to tela's rag.Embedder (the
 	// Ollama-native /api/embed path) so generation embeds via the SAME instance
 	// embedder + model tela's own RAG uses — identical vectors, no second
-	// endpoint to configure. Same contract as Embed: one vector per input, and
-	// the int is how many inputs fell back to a zero vector. nil ⇒ the original
-	// /embeddings HTTP path (preserved verbatim for standalone use).
-	EmbedFunc func(ctx context.Context, inputs []string) ([][]float32, int, error)
+	// endpoint to configure. Contract: one vector per input, how many inputs fell
+	// back to a zero vector, and how many upstream REQUESTS it cost — the
+	// delegate is free to batch, so the caller can't infer that. nil ⇒ the
+	// original /embeddings HTTP path (preserved verbatim for standalone use).
+	EmbedFunc func(ctx context.Context, inputs []string) (vecs [][]float32, zeroed int, requests int, err error)
 
 	mu    sync.Mutex
 	usage core.Usage // token + call tally, accumulated across this run
@@ -99,9 +100,12 @@ func (c *Client) addChat(prompt, completion int) {
 	c.mu.Unlock()
 }
 
-func (c *Client) addEmbed(tokens int) {
+// addEmbed tallies one embed step. requests is how many UPSTREAM calls it cost,
+// not how many batches the caller made — EmbedCalls is a load figure, and
+// reporting batches understated a repo ingest by the batch size (16×).
+func (c *Client) addEmbed(tokens, requests int) {
 	c.mu.Lock()
-	c.usage.EmbedCalls++
+	c.usage.EmbedCalls += requests
 	c.usage.EmbedTokens += int64(tokens)
 	c.mu.Unlock()
 }
@@ -141,8 +145,18 @@ type embedResp struct {
 // (it just won't be dense-retrievable). Real transport errors still propagate.
 // The returned int is how many inputs hit the zero-vector fallback.
 func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, int, error) {
+	// The gate lives HERE, not in embedOnce, so it covers the EmbedFunc delegate
+	// too. It used to sit in embedOnce only — which the delegate path never
+	// reaches — so inside tela (where EmbedFunc is always wired) the concurrency
+	// cap was dead code and nothing bounded embed load on the shared GPU.
+	release, err := c.acquire(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer release()
+
 	if c.EmbedFunc != nil {
-		vecs, zeroed, err := c.EmbedFunc(ctx, inputs)
+		vecs, zeroed, requests, err := c.EmbedFunc(ctx, inputs)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -153,7 +167,7 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, int, 
 		for _, s := range inputs {
 			toks += (len(s) + 3) / 4
 		}
-		c.addEmbed(toks)
+		c.addEmbed(toks, requests)
 		return vecs, zeroed, nil
 	}
 	trimmed := make([]string, len(inputs))
@@ -223,14 +237,9 @@ func isContextOverflow(err error) bool {
 const embedMaxChars = 6000
 
 func (c *Client) embedOnce(ctx context.Context, inputs []string) ([][]float32, error) {
-	// One embed HTTP request = one slot of the global gate. embedOnce is the sole
-	// embed transport point (Embed → embedOnce, and the fallback embedItem →
-	// embedOnce), so gating here counts every embed request exactly once.
-	release, err := c.acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
+	// No gate here: Embed already holds a slot for the whole call (including the
+	// per-item embedItem fallback loop, which would otherwise re-acquire a slot
+	// it already owns and deadlock against its own fanout).
 	var resp embedResp
 	if err := c.post(ctx, c.cfg.EmbedBase(), "/embeddings", embedReq{Model: c.cfg.EmbedModel, Input: inputs}, &resp, embedTimeout); err != nil {
 		return nil, err
@@ -249,7 +258,7 @@ func (c *Client) embedOnce(ctx context.Context, inputs []string) ([][]float32, e
 	if tok == 0 {
 		tok = resp.Usage.PromptTokens
 	}
-	c.addEmbed(tok)
+	c.addEmbed(tok, 1) // built-in transport: this func is exactly one request
 	return out, nil
 }
 

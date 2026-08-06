@@ -114,29 +114,36 @@ func (m *atlasManager) newLLMClient() *atlasllm.Client {
 	return c
 }
 
-// embedBatch is the EmbedFunc seam: it embeds each input through tela's
+// embedBatch is the EmbedFunc seam: it embeds a batch through tela's
 // rag.Embedder. Same contract as the client's built-in Embed — one vector per
-// input, and the int is how many fell back to a zero vector. atlas's draft/embed
-// stages drive this with bounded parallelism, so the shared Ollama stays calm.
-// A per-item embed error degrades to a zero vector (the chunk just won't be
+// input, how many fell back to a zero vector, and how many UPSTREAM REQUESTS it
+// took (the run's embed_calls, so the stats report real load rather than the
+// caller's batch count).
+//
+// The whole batch goes in one rag.EmbedMany call. It used to loop rag.Embed
+// per input, which quietly turned atlas's 16-chunk batches into 16 HTTP requests
+// each — a 3.5k-file repo then hit the shared embed GPU ~20k times in half an
+// hour and starved the chat model sharing that card.
+//
+// An embed error degrades to zero vectors (those chunks just won't be
 // dense-retrievable) rather than failing the whole run — mirroring atlas's
 // last-resort. ctx cancellation propagates as a hard error.
-func (m *atlasManager) embedBatch(ctx context.Context, inputs []string) ([][]float32, int, error) {
-	out := make([][]float32, len(inputs))
-	zeroed := 0
-	for i, text := range inputs {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
-		v, err := m.s.rag.Embed(ctx, text)
-		if err != nil {
-			out[i] = make([]float32, atlasEmbedDim)
-			zeroed++
-			continue
-		}
-		out[i] = v
+func (m *atlasManager) embedBatch(ctx context.Context, inputs []string) ([][]float32, int, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, 0, err
 	}
-	return out, zeroed, nil
+	vecs, requests, err := m.s.rag.EmbedMany(ctx, inputs)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, 0, requests, ctxErr
+		}
+		out := make([][]float32, len(inputs))
+		for i := range out {
+			out[i] = make([]float32, atlasEmbedDim)
+		}
+		return out, len(inputs), requests, nil
+	}
+	return vecs, 0, requests, nil
 }
 
 // atlasOwnerManageErr gates MANAGEMENT of an owner-scoped atlas resource (a
