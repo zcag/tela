@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import remarkDirective from 'remark-directive'
 import type { Root } from 'mdast'
+import { MATH_OPTIONS } from './math-options'
 import { calloutsRemark } from './transforms/callouts'
 import { collapsiblesRemark } from './transforms/collapsibles'
 import { highlightRemark } from './transforms/highlight'
@@ -27,7 +28,7 @@ function getProcessor() {
     processor = unified()
       .use(remarkParse)
       .use(remarkGfm)
-      .use(remarkMath)
+      .use(remarkMath, MATH_OPTIONS)
       .use(remarkDirective)
       .use(calloutsRemark)
       .use(collapsiblesRemark)

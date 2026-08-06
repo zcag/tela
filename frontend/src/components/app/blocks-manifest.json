@@ -282,9 +282,9 @@
       "slash": false,
       "agent": true,
       "keywords": [],
-      "syntax": "Euler's identity $e^{i\\pi}+1=0$ is elegant.",
+      "syntax": "Euler's identity $$e^{i\\pi}+1=0$$ is elegant.",
       "when": "Inline LaTeX within a sentence.",
-      "note": "No space directly inside the $…$ delimiters."
+      "note": "Inline math uses DOUBLE dollars, and no space directly inside the $$…$$ delimiters. A single $ is never math, so prices ($3,500) are safe to write as-is."
     },
     {
       "id": "divider",

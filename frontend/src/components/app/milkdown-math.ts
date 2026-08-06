@@ -8,11 +8,14 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import katex from 'katex'
 import remarkMath from 'remark-math'
 import { insertBlock } from '../../lib/milkdown/insert-block'
+import { MATH_OPTIONS } from '../../lib/markdown/math-options'
 
-// Math / LaTeX. `$inline$` and `$$block$$` round-trip as canonical markdown:
+// Math / LaTeX. `$$inline$$` and `$$block$$` round-trip as canonical markdown:
 // remark-math parses them into mdast `inlineMath` / `math` nodes (and its
 // mdast-util-math companion serializes back), so the only thing tela adds is
-// the PM schema + KaTeX rendering. (The official @milkdown/plugin-math is
+// the PM schema + KaTeX rendering. Single-`$` inline math is OFF — see
+// `lib/markdown/math-options.ts` for why, and note the option must stay shared
+// with the view stack or read and edit disagree about the same body. (The official @milkdown/plugin-math is
 // abandoned at 7.5.x vs our kit 7.21 — this hand-build mirrors how callouts /
 // excalidraw are wired.) KaTeX's stylesheet is imported once in main.tsx.
 //
@@ -34,7 +37,7 @@ interface MdastMath {
   value?: string
 }
 
-export const mathRemarkPlugin = $remark('telaMath', () => remarkMath)
+export const mathRemarkPlugin = $remark('telaMath', () => remarkMath, MATH_OPTIONS)
 
 export const mathInlineSchema = $nodeSchema('math_inline', () => ({
   group: 'inline',
@@ -211,8 +214,10 @@ export const mathNodeViews = $prose(() => {
   })
 })
 
-// `$x^2$` → inline math. Require a non-space immediately inside each `$` so
-// currency ("$5 and $10") doesn't convert. Fires on the closing `$`.
+// `$x^2$` → inline math, kept as a TYPING convenience only: the node
+// serializes as `$$x^2$$`, which is what the parser reads back now that
+// single-`$` math is off. Requires a non-space immediately inside each `$`, so
+// currency ("$5 and $10") still doesn't convert. Fires on the closing `$`.
 export const mathInlineInputRule = $inputRule((ctx) => {
   return new InputRule(
     /\$([^\s$](?:[^$]*[^\s$])?)\$$/,
