@@ -8,7 +8,13 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearch,
+} from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   BookOpen,
@@ -130,6 +136,7 @@ import { BacklinksSection } from './BacklinksSection'
 import { RelatedPagesSection } from './RelatedPagesSection'
 import { PageTrustStrip } from './PageTrustStrip'
 import { MarkdownView } from '../view/MarkdownView'
+import { scrollToHashIn } from '../../lib/markdown/heading-anchors'
 import { SheetExportMenu } from './sheet-export-menu'
 import { prefetchMilkdownEditor } from '../../lib/prefetchEditor'
 import { useFileDownload } from './use-file-download'
@@ -420,6 +427,24 @@ function PageViewer({
   const [readerContentEl, setReaderContentEl] = useState<HTMLElement | null>(null)
   const { selection: readerSelection, clear: clearReaderSelection } =
     useReaderCommentAnchor(readerContentEl, commentsEnabled)
+  // Deep-link hash (`#some-section`). The browser tries to jump on load, before
+  // MarkdownView has rendered a thing, finds no target and never retries — so
+  // the jump has to happen here, once the body is on screen. The hash comes
+  // from the ROUTER, not `window.location`: on a fresh load the router
+  // normalizes the URL after the first render, so reading the window at
+  // onReady time sees an empty hash and the jump silently never happens.
+  const locationHash = useLocation({ select: (l) => l.hash })
+  const [viewContentEl, setViewContentEl] = useState<HTMLElement | null>(null)
+  const handleViewReady = useCallback(
+    (el: HTMLElement) => {
+      setViewContentEl(el)
+      if (commentsEnabled) setReaderContentEl(el)
+    },
+    [commentsEnabled],
+  )
+  useEffect(() => {
+    if (viewContentEl && locationHash) scrollToHashIn(viewContentEl, locationHash)
+  }, [viewContentEl, locationHash])
   const handleCommentsOpenChange = useCallback(
     (next: boolean) => {
       setCommentsOpen(next)
@@ -751,8 +776,9 @@ function PageViewer({
               setCommentsOpen(true)
             }}
             // Hand the rendered root to the selection bridge so a passage the
-            // reader highlights can be anchored into a new comment.
-            onReady={commentsEnabled ? setReaderContentEl : undefined}
+            // reader highlights can be anchored into a new comment, and honour
+            // a deep-link hash now that the headings exist.
+            onReady={handleViewReady}
             className={EDITOR_MIN_H}
           />
         )}

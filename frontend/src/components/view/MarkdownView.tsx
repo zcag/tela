@@ -12,6 +12,7 @@ import {
 import katex from 'katex'
 import { refractor } from 'refractor/core'
 import { parsePageMarkdown } from '../../lib/markdown/remark-stack'
+import { stampHeadingIds } from '../../lib/markdown/heading-anchors'
 import { configureRefractor } from '../../lib/milkdown/refractor-config'
 import {
   CALLOUT_LABELS,
@@ -955,7 +956,10 @@ export function MarkdownView({
   const contentRef = useRef<HTMLDivElement>(null)
   useCommentHighlights(contentRef, commentThreads, onCommentClick)
   useEffect(() => {
-    if (contentRef.current) onReady?.(contentRef.current)
+    if (!contentRef.current) return
+    // Anchor ids first, so a host's onReady (TOC, deep-link scroll) sees them.
+    stampHeadingIds(contentRef.current)
+    onReady?.(contentRef.current)
   }, [body, onReady])
   return (
     <ViewContext.Provider value={ctx}>

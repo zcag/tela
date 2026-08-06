@@ -12,7 +12,10 @@ import {
   postDateFromSqlite,
 } from '../../lib/relativeTime'
 import { useHeadMeta } from '../../lib/useHeadMeta'
-import { pageSlug } from '../../lib/slug'
+import {
+  stampHeadingIds,
+  scrollToHashIn,
+} from '../../lib/markdown/heading-anchors'
 import {
   getTheme,
   setTheme,
@@ -272,21 +275,17 @@ export function ReaderShell({
   const handleContentReady = useCallback((root: HTMLElement | null) => {
     if (!root) return
     requestAnimationFrame(() => {
-      const els = Array.from(
-        root.querySelectorAll('h1, h2, h3'),
-      ) as HTMLElement[]
-      const entries: TocEntry[] = []
       // Stable, human-readable slug ids (deduped) so a heading deep-link
       // (`#getting-started`) survives across loads — unlike the old positional
       // `reader-h-${i}`, which changed the moment a heading was added above.
-      const used = new Map<string, number>()
-      els.forEach((el, i) => {
-        const text = (el.textContent ?? '').trim()
-        if (!text) return
-        const base = pageSlug(text) || `section-${i + 1}`
-        const n = used.get(base) ?? 0
-        used.set(base, n + 1)
-        el.id = n === 0 ? base : `${base}-${n + 1}`
+      // MarkdownView already stamped these; re-running is idempotent and covers
+      // a non-MarkdownView root (a sheet's grid renders its own DOM).
+      const entries = stampHeadingIds(root).filter((e) => e.level <= 3)
+      const els: HTMLElement[] = []
+      for (const entry of entries) {
+        const el = document.getElementById(entry.id)
+        if (!el) continue
+        els.push(el)
         el.classList.add('reader-heading')
         // Hover affordance: a click-to-copy anchor injected once per heading.
         // The reader dispatches no transactions, so poking PM's static DOM is
@@ -303,18 +302,14 @@ export function ReaderShell({
           const a = el.querySelector(':scope > .reader-anchor') as HTMLElement
           a.setAttribute('href', `#${el.id}`)
         }
-        entries.push({ id: el.id, text, level: Number(el.tagName[1]) })
-      })
-      headingsRef.current = els.filter((el) => el.id && el.textContent?.trim())
+      }
+      headingsRef.current = els
       setToc(entries)
       wireFootnotes(root)
       // Honour a deep-link hash now that ids exist (the browser couldn't on
-      // load — the article hadn't rendered yet).
-      const hash = decodeURIComponent(window.location.hash.slice(1))
-      if (hash) {
-        const target = document.getElementById(hash)
-        if (target) target.scrollIntoView({ block: 'start' })
-      }
+      // load — the article hadn't rendered yet). Scoped to this root so it
+      // can't match a heading in another mounted copy of the same body.
+      scrollToHashIn(root, window.location.hash)
       // PDF export readiness signal (gotenberg waits on this). Wait for fonts,
       // then for any charts to finish painting (ECharts lazy-loads ~1MB + renders
       // async, so a fixed delay isn't enough), then a short settle so async
