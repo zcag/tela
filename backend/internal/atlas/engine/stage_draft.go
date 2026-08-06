@@ -134,7 +134,7 @@ func buildJiraStateContext(rc *RunContext) (core.Chunk, bool) {
 	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 		return core.Chunk{}, false
 	}
-	text := string(data)
+	text := core.SourceText(data)
 	lines := strings.Count(text, "\n") + 1
 	return core.Chunk{
 		File: "status.md", StartLine: 1, EndLine: lines, Kind: core.ChunkDoc,

@@ -1,5 +1,10 @@
 package core
 
+import (
+	"strings"
+	"unicode/utf8"
+)
+
 // Lang is a source language id, derived from extension (+ shebang for scripts).
 type Lang string
 
@@ -109,4 +114,24 @@ func (a *Artifacts) SpineByKind(kinds ...SpineKind) []SpineItem {
 		}
 	}
 	return out
+}
+
+// SourceText decodes raw source-file bytes into text that is safe to store.
+//
+// A repo file is not guaranteed to be UTF-8 — a Latin-1/CP1252 source file is
+// ordinary text with no NUL bytes, so it sails past the binary filter and then
+// kills the run at the DB write: Postgres rejects the whole INSERT with
+// `invalid byte sequence for encoding "UTF8"`, and since the run re-clones and
+// re-chunks from scratch every time, it fails identically forever (source 19,
+// laravel/framework: 46 consecutive failed runs before this was found).
+//
+// Invalid bytes become U+FFFD rather than dropping the file: the rest of it is
+// still perfectly good retrievable text, and losing a file silently is worse
+// than a few replacement runes in one line. Valid UTF-8 (the overwhelming
+// majority) is returned unchanged with no allocation.
+func SourceText(b []byte) string {
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	return strings.ToValidUTF8(string(b), "�")
 }

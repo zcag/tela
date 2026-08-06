@@ -234,7 +234,7 @@ func readSnapshotFile(rc *RunContext, name string) string {
 	if err != nil {
 		return ""
 	}
-	return string(data)
+	return core.SourceText(data)
 }
 
 func findReadme(rc *RunContext) string {
@@ -243,7 +243,7 @@ func findReadme(rc *RunContext) string {
 		if strings.HasPrefix(base, "readme") {
 			data, err := os.ReadFile(filepath.Join(rc.Art.RepoDir, f.Path))
 			if err == nil {
-				return string(data)
+				return core.SourceText(data)
 			}
 		}
 	}

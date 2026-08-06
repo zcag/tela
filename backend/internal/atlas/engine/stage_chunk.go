@@ -59,7 +59,7 @@ func chunkFiles(ctx context.Context, rc *RunContext, files []core.File) ([]core.
 		if err != nil {
 			continue
 		}
-		chunks = append(chunks, chunkFile(f, string(src))...)
+		chunks = append(chunks, chunkFile(f, core.SourceText(src))...)
 		if (i+1)%50 == 0 || i+1 == len(files) {
 			rc.Step(i+1, len(files), "chunking")
 		}

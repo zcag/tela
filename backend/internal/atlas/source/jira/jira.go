@@ -197,7 +197,7 @@ func (*Connector) SpineWithProgress(ctx context.Context, snap source.Snapshot, f
 	if err != nil {
 		return nil, fmt.Errorf("jira spine: read schema.md: %w", err)
 	}
-	items := parseSchemaSpine(string(data))
+	items := parseSchemaSpine(core.SourceText(data))
 
 	// The current-state surface (per-status + per-epic progress) is a must-cover
 	// part of the spine for a tracker, read back out of status.md the same way the
@@ -205,7 +205,7 @@ func (*Connector) SpineWithProgress(ctx context.Context, snap source.Snapshot, f
 	// snapshots (acquired before this connector wrote it), so a missing file is not
 	// fatal — the schema surface still stands.
 	if sd, err := os.ReadFile(filepath.Join(snap.Dir, "status.md")); err == nil {
-		items = append(items, parseStatusSpine(string(sd))...)
+		items = append(items, parseStatusSpine(core.SourceText(sd))...)
 	}
 
 	if onUnit != nil {

@@ -201,7 +201,7 @@ func (*Connector) SpineWithProgress(ctx context.Context, snap source.Snapshot, f
 		case core.LangGo:
 			items = append(items, extractGo(f.Path, src)...)
 		default:
-			items = append(items, extractRegex(f.Path, string(src), f.Lang)...)
+			items = append(items, extractRegex(f.Path, core.SourceText(src), f.Lang)...)
 		}
 		if onUnit != nil {
 			onUnit(i+1, len(files))
@@ -415,7 +415,7 @@ func extractGo(path string, src []byte) []core.SpineItem {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
 	if err != nil {
-		return extractRegex(path, string(src), core.LangGo) // fall back on parse error
+		return extractRegex(path, core.SourceText(src), core.LangGo) // fall back on parse error
 	}
 	var out []core.SpineItem
 	add := func(k core.SpineKind, name string, pos token.Pos, detail string) {
