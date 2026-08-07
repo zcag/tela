@@ -37,14 +37,14 @@ var feedbackKinds = map[string]bool{"idea": true, "bug": true, "other": true}
 // session caller (created_by_api_key_id) or after the underlying user/key
 // has been deleted (ON DELETE SET NULL).
 type feedbackDTO struct {
-	ID                int64           `json:"id"`
-	CreatedAt         string          `json:"created_at"`
-	CreatedByUserID   *int64          `json:"created_by_user_id"`
-	CreatedByAPIKeyID *int64          `json:"created_by_api_key_id"`
-	Subject           string         `json:"subject"`
-	Body              string         `json:"body"`
-	Kind              *string        `json:"kind"`
-	Source            string         `json:"source"`
+	ID                int64   `json:"id"`
+	CreatedAt         string  `json:"created_at"`
+	CreatedByUserID   *int64  `json:"created_by_user_id"`
+	CreatedByAPIKeyID *int64  `json:"created_by_api_key_id"`
+	Subject           string  `json:"subject"`
+	Body              string  `json:"body"`
+	Kind              *string `json:"kind"`
+	Source            string  `json:"source"`
 	// Context is a free-form bag (map, not json.RawMessage, so the MCP output
 	// schema types it as an object rather than a byte array — cf. Page.Props).
 	Context map[string]any `json:"context"`
@@ -263,17 +263,25 @@ func (s *Server) feedbackAdminRecipients(ctx context.Context, excludeID int64) (
 // the submitter's username (joined; nil for a deleted/anonymous user) and a flag
 // for whether it came through an API key / agent.
 type feedbackAdminEntry struct {
-	ID        int64           `json:"id"`
-	CreatedAt string          `json:"created_at"`
-	Subject   string          `json:"subject"`
-	Body      string          `json:"body"`
-	Kind      *string        `json:"kind"`
-	Source    string         `json:"source"`
-	UserID    *int64         `json:"user_id"`
-	Username  *string        `json:"username"`
-	ViaAPIKey bool           `json:"via_api_key"`
-	Context   map[string]any `json:"context"`
+	ID         int64          `json:"id"`
+	CreatedAt  string         `json:"created_at"`
+	Subject    string         `json:"subject"`
+	Body       string         `json:"body"`
+	Kind       *string        `json:"kind"`
+	Source     string         `json:"source"`
+	UserID     *int64         `json:"user_id"`
+	Username   *string        `json:"username"`
+	ViaAPIKey  bool           `json:"via_api_key"`
+	Context    map[string]any `json:"context"`
+	Status     string         `json:"status"`
+	ResolvedAt *string        `json:"resolved_at"`
 }
+
+// feedbackStatuses is the closed set of triage states (migration 0071).
+// Deliberately three: an entry is waiting, handled, or declined. Anything
+// richer (assignees, threads, priorities) is a tracker — tela doesn't have one
+// and this inbox doesn't have the volume to want one.
+var feedbackStatuses = map[string]bool{"open": true, "done": true, "wontfix": true}
 
 // ListFeedback returns the most recent feedback across the instance, newest first.
 // Instance-admin only — feedback is global (about tela itself), not org-scoped.
@@ -282,14 +290,23 @@ func (s *Server) ListFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := clampLimit(r.URL.Query().Get("limit"), 100, 200)
+	// ?status=open|done|wontfix narrows the inbox; anything else (including the
+	// absent param) lists everything, so the filter can never silently hide rows
+	// on a typo'd value.
+	statusFilter := r.URL.Query().Get("status")
+	if !feedbackStatuses[statusFilter] {
+		statusFilter = ""
+	}
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT f.id, f.created_at, f.subject, f.body, f.kind, f.source, f.context,
 		       f.created_by_user_id, u.username,
-		       CASE WHEN f.created_by_api_key_id IS NOT NULL THEN 1 ELSE 0 END
+		       CASE WHEN f.created_by_api_key_id IS NOT NULL THEN 1 ELSE 0 END,
+		       f.status, f.resolved_at
 		  FROM feedback f
 		  LEFT JOIN users u ON u.id = f.created_by_user_id
+		 WHERE ($2 = '' OR f.status = $2)
 		 ORDER BY f.id DESC
-		 LIMIT $1`, limit)
+		 LIMIT $1`, limit, statusFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "list feedback failed")
 		return
@@ -298,17 +315,19 @@ func (s *Server) ListFeedback(w http.ResponseWriter, r *http.Request) {
 	entries := []feedbackAdminEntry{}
 	for rows.Next() {
 		var (
-			e        feedbackAdminEntry
-			kind     sql.NullString
-			ctxRaw   []byte
-			userID   sql.NullInt64
-			username sql.NullString
-			viaKey   int
+			e          feedbackAdminEntry
+			kind       sql.NullString
+			ctxRaw     []byte
+			userID     sql.NullInt64
+			username   sql.NullString
+			viaKey     int
+			resolvedAt sql.NullString
 		)
-		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.Subject, &e.Body, &kind, &e.Source, &ctxRaw, &userID, &username, &viaKey); err != nil {
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.Subject, &e.Body, &kind, &e.Source, &ctxRaw, &userID, &username, &viaKey, &e.Status, &resolvedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "scan feedback row failed")
 			return
 		}
+		e.ResolvedAt = nullableString(resolvedAt)
 		e.Kind = nullableString(kind)
 		if len(ctxRaw) > 0 {
 			_ = json.Unmarshal(ctxRaw, &e.Context)
@@ -325,6 +344,46 @@ func (s *Server) ListFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"feedback": entries})
+}
+
+// UpdateFeedbackStatus moves one entry between open/done/wontfix —
+// PATCH /api/admin/feedback/{id}. Instance-admin only.
+//
+// resolved_at is derived, never client-supplied: stamped on the move off 'open'
+// and cleared on the move back, so it can't drift out of agreement with status.
+func (s *Server) UpdateFeedbackStatus(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireInstanceAdmin(w, r); !ok {
+		return
+	}
+	id, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "could not parse request body")
+		return
+	}
+	if !feedbackStatuses[req.Status] {
+		writeError(w, http.StatusBadRequest, "bad_request", "status must be one of open, done, wontfix")
+		return
+	}
+	res, err := s.DB.ExecContext(r.Context(),
+		`UPDATE feedback
+		    SET status = $1,
+		        resolved_at = CASE WHEN $1 = 'open' THEN NULL ELSE tela_now() END
+		  WHERE id = $2`, req.Status, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "update feedback failed")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "no such feedback")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // MarkFeedbackSeen stamps the caller's feedback_seen_at to now, clearing the

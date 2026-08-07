@@ -17,7 +17,7 @@ export function useCreateFeedback() {
     onSuccess: () => {
       // If the submitter happens to be an instance admin with the inbox open,
       // surface their own entry without a manual refetch.
-      void qc.invalidateQueries({ queryKey: adminUsageKeys.feedback })
+      void qc.invalidateQueries({ queryKey: adminUsageKeys.feedbackAll })
     },
   })
 }

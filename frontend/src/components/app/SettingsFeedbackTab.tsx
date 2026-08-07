@@ -1,17 +1,34 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { useAdminFeedback, useMarkFeedbackSeen } from '../../lib/queries/admin-usage'
+import {
+  useAdminFeedback,
+  useMarkFeedbackSeen,
+  useSetFeedbackStatus,
+} from '../../lib/queries/admin-usage'
 import { localDateFromSqlite } from '../../lib/relativeTime'
-import type { FeedbackContext, FeedbackEntry, FeedbackKind } from '../../lib/types'
+import type {
+  FeedbackContext,
+  FeedbackEntry,
+  FeedbackKind,
+  FeedbackStatus,
+} from '../../lib/types'
 import { Badge } from '../ui/badge'
+import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 
 // Instance-admin inbox for feedback submitted via the in-app widget, the MCP
-// submit_feedback tool, or a direct API post. Read-only, newest first. Each row
-// surfaces the type, where it came from, and the silent context (page, build,
-// browser) so a report can be triaged — and acted on — without a back-and-forth.
+// submit_feedback tool, or a direct API post. Newest first. Each row surfaces
+// the type, where it came from, and the silent context (page, build, browser)
+// so a report can be triaged — and acted on — without a back-and-forth.
+//
+// Triage state is per-entry and explicit. It is NOT the unread badge: that's a
+// per-admin "last opened this tab" watermark, stamped on open, so with only it
+// every entry read as permanently seen and never done — a bug you'd already
+// fixed still sat in the list looking untouched.
 export function SettingsFeedbackTab() {
-  const fb = useAdminFeedback()
+  // Default to Open: the inbox's job is what still needs attention.
+  const [filter, setFilter] = useState<FeedbackStatus | undefined>('open')
+  const fb = useAdminFeedback(filter)
   // Opening the inbox marks everything seen → clears the unread badge.
   const { mutate: markSeen } = useMarkFeedbackSeen()
   useEffect(() => markSeen(), [markSeen])
@@ -22,6 +39,21 @@ export function SettingsFeedbackTab() {
         Feedback your users sent about tela — from the in-app widget, an agent's
         submit_feedback tool, or the API. Most recent first.
       </p>
+
+      <div role="group" aria-label="Filter by status" className="flex gap-[var(--space-1)]">
+        {FILTERS.map((f) => (
+          <Button
+            key={f.label}
+            type="button"
+            size="sm"
+            variant={filter === f.value ? 'secondary' : 'ghost'}
+            aria-pressed={filter === f.value}
+            onClick={() => setFilter(f.value)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
 
       {fb.isLoading ? (
         <p className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">Loading feedback…</p>
@@ -36,11 +68,20 @@ export function SettingsFeedbackTab() {
           ))}
         </ul>
       ) : (
-        <p className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">No feedback yet.</p>
+        <p className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">
+          {filter === 'open' ? 'Nothing open — all caught up.' : 'No feedback yet.'}
+        </p>
       )}
     </section>
   )
 }
+
+const FILTERS: ReadonlyArray<{ label: string; value: FeedbackStatus | undefined }> = [
+  { label: 'Open', value: 'open' },
+  { label: 'Done', value: 'done' },
+  { label: "Won't fix", value: 'wontfix' },
+  { label: 'All', value: undefined },
+]
 
 const KIND_VARIANT: Record<FeedbackKind, 'danger' | 'accent' | 'muted'> = {
   bug: 'danger',
@@ -85,6 +126,8 @@ function describeUA(ua?: string): string | null {
 function FeedbackRow({ entry }: { entry: FeedbackEntry }) {
   const who = entry.username ?? (entry.user_id ? `user #${entry.user_id}` : 'unknown')
   const source = sourceLabel(entry.source)
+  const { mutate: setStatus, isPending } = useSetFeedbackStatus()
+  const open = entry.status === 'open'
   return (
     <li
       className={cn(
@@ -104,6 +147,9 @@ function FeedbackRow({ entry }: { entry: FeedbackEntry }) {
             </Badge>
           ) : null}
           {source ? <Badge variant="muted">{source}</Badge> : null}
+          {!open ? (
+            <Badge variant="muted">{entry.status === 'done' ? 'Done' : "Won't fix"}</Badge>
+          ) : null}
         </div>
       </div>
       {entry.body.trim() !== entry.subject.trim() ? (
@@ -114,9 +160,48 @@ function FeedbackRow({ entry }: { entry: FeedbackEntry }) {
         </p>
       ) : null}
       <FeedbackMeta context={entry.context} />
-      <span className="text-[length:var(--text-xs)] text-[var(--text-muted)] font-[family-name:var(--font-sans)]">
-        {who} · {localDateFromSqlite(entry.created_at)}
-      </span>
+      <div className="flex flex-wrap items-center justify-between gap-[var(--space-2)]">
+        <span className="text-[length:var(--text-xs)] text-[var(--text-muted)] font-[family-name:var(--font-sans)]">
+          {who} · {localDateFromSqlite(entry.created_at)}
+          {entry.resolved_at
+            ? ` · resolved ${localDateFromSqlite(entry.resolved_at)}`
+            : null}
+        </span>
+        <div className="flex gap-[var(--space-1)]">
+          {open ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={isPending}
+                onClick={() => setStatus({ id: entry.id, status: 'done' })}
+              >
+                Mark done
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={isPending}
+                onClick={() => setStatus({ id: entry.id, status: 'wontfix' })}
+              >
+                Won't fix
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={isPending}
+              onClick={() => setStatus({ id: entry.id, status: 'open' })}
+            >
+              Reopen
+            </Button>
+          )}
+        </div>
+      </div>
     </li>
   )
 }

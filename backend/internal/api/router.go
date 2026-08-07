@@ -384,6 +384,10 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/ai-endpoints", srv.AdminAIEndpoints)
 	mux.HandleFunc("GET /api/admin/feedback", srv.ListFeedback)
 	mux.HandleFunc("POST /api/admin/feedback/seen", srv.MarkFeedbackSeen)
+	// Registered after /seen: a literal segment and a wildcard can coexist here
+	// because they're distinct methods, but keep the order so the intent is
+	// obvious if /seen ever gains a PATCH.
+	mux.HandleFunc("PATCH /api/admin/feedback/{id}", srv.UpdateFeedbackStatus)
 	mux.HandleFunc("GET /api/admin/settings", srv.GetInstanceSettings)
 	mux.HandleFunc("PATCH /api/admin/settings", srv.PatchInstanceSettings)
 	mux.HandleFunc("GET /api/admin/license", srv.GetLicense)

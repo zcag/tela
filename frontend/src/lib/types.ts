@@ -542,6 +542,10 @@ export interface FeedbackContext {
   user_agent?: string
 }
 
+// Triage state of a feedback row (migration 0071). Distinct from the unread
+// badge, which is a per-admin "last opened the tab" watermark: seen ≠ handled.
+export type FeedbackStatus = 'open' | 'done' | 'wontfix'
+
 // One submitted feedback row, instance-admin read (GET /api/admin/feedback).
 export interface FeedbackEntry {
   id: number
@@ -554,6 +558,9 @@ export interface FeedbackEntry {
   username: string | null
   via_api_key: boolean
   context: FeedbackContext | null
+  status: FeedbackStatus
+  // Server-derived: set when status left 'open', cleared when it returns.
+  resolved_at: string | null
 }
 
 // Request body for POST /api/feedback from the in-app widget. Subject is
