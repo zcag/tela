@@ -133,6 +133,17 @@ func (m *atlasManager) StartDelta(ctx context.Context, sourceID int64) (int64, b
 		return 0, false, &apiErr{http.StatusInternalServerError, "internal", "lookup source failed"}
 	}
 
+	// Same monthly budget as StartRun. A delta is cheaper than a full run but not
+	// free — it still clones, chunks the changed files and embeds them — and this
+	// is the path the SCHEDULER drives, so leaving it ungated would let automatic
+	// refreshes spend an account's whole allowance without a single user action.
+	// Checked before the probe clone below, so a refused delta costs nothing.
+	if acct, ae := m.ownerAccount(ctx, src.ProjectID); ae != nil {
+		return 0, false, ae
+	} else if ae := m.s.checkAtlasRunQuota(ctx, acct); ae != nil {
+		return 0, false, ae
+	}
+
 	baselineID, baseRef := m.lastDoneBaseline(ctx, sourceID, src.Ref)
 	if baselineID == 0 {
 		// No baseline to diff against → a full run is owed (StartRun semantics).

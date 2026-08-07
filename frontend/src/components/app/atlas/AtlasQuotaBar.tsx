@@ -25,9 +25,9 @@ function Bar({ m }: { m: Meter }) {
   const over = m.used >= m.limit
   const near = !over && pct >= 80
   const tone = over
-    ? 'var(--danger, #dc2626)'
+    ? 'var(--danger)'
     : near
-      ? 'var(--warning, #d97706)'
+      ? 'var(--warning)'
       : 'var(--accent)'
   return (
     <div className="min-w-[12rem] flex-1">
@@ -78,13 +78,13 @@ export function AtlasQuotaBar() {
     <div
       className="mt-[var(--space-4)] rounded-[var(--radius-md)] border p-[var(--space-3)]"
       style={{
-        borderColor: blocked ? 'var(--danger, #dc2626)' : 'var(--border)',
-        background: blocked ? 'color-mix(in srgb, var(--danger, #dc2626) 6%, transparent)' : 'var(--surface-2)',
+        borderColor: blocked ? 'var(--danger)' : 'var(--border)',
+        background: blocked ? 'color-mix(in srgb, var(--danger) 6%, transparent)' : 'var(--surface-2)',
       }}
     >
       {blocked && (
         <p className="mb-[var(--space-3)] flex items-start gap-[var(--space-2)] text-[length:var(--text-sm)] text-[var(--text-primary)]">
-          <AlertTriangle className="mt-[0.15em] size-[var(--space-4)] shrink-0" style={{ color: 'var(--danger, #dc2626)' }} />
+          <AlertTriangle className="mt-[0.15em] size-[var(--space-4)] shrink-0" style={{ color: 'var(--danger)' }} />
           <span>
             <strong>Over the {plan.name} plan limit.</strong> New Atlas runs are paused until the
             budget resets on the 1st. Existing docs stay published and searchable — nothing is

@@ -248,7 +248,10 @@ func (m *atlasManager) regenProject(ctx context.Context, projectID int64) {
 	}
 	rows.Close()
 	for _, id := range ids {
-		if _, _, ae := m.StartDelta(ctx, id); ae != nil && ae.Code != "run_active" {
+		// run_active and quota_exceeded are expected steady states, not faults: the
+		// source simply stays stale and the next tick retries (a quota clears on the
+		// 1st). Warning on them would emit an hourly line forever per blocked source.
+		if _, _, ae := m.StartDelta(ctx, id); ae != nil && ae.Code != "run_active" && ae.Code != "quota_exceeded" {
 			slog.Warn("atlas: scheduled delta", "source", id, "code", ae.Code, "msg", ae.Message)
 		}
 	}
