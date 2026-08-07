@@ -460,17 +460,36 @@ func (s *Server) HandlePublicSitemap(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
-	// Author homes for owners of public spaces.
+	// Author homes for owners of public spaces. The org_id IS NULL guard mirrors
+	// handleOwnerWhere's user branch — an owner row on a public ORG space does
+	// NOT give the user a handle home, so listing them here advertised URLs that
+	// 404 (their spaces live on the ORG handle).
 	if rows, err := s.DB.QueryContext(ctx,
 		`SELECT DISTINCT u.username
 		   FROM users u JOIN space_members m ON m.user_id = u.id
 		   JOIN spaces sp ON sp.id = m.space_id
-		  WHERE sp.visibility = 'public' AND m.role = 'owner'
+		  WHERE sp.visibility = 'public' AND m.role = 'owner' AND sp.org_id IS NULL
 		  ORDER BY u.username`); err == nil {
 		for rows.Next() {
 			var h string
 			if rows.Scan(&h) == nil {
 				set.URLs = append(set.URLs, urlEntry{Loc: base + "/u/" + h})
+			}
+		}
+		rows.Close()
+	}
+	// Org homes. These are real public pages at /{org-slug} and were missing
+	// entirely — an org's public spaces were reachable but its home never
+	// advertised.
+	if rows, err := s.DB.QueryContext(ctx,
+		`SELECT DISTINCT o.slug
+		   FROM orgs o JOIN spaces sp ON sp.org_id = o.id
+		  WHERE sp.visibility = 'public'
+		  ORDER BY o.slug`); err == nil {
+		for rows.Next() {
+			var h string
+			if rows.Scan(&h) == nil {
+				set.URLs = append(set.URLs, urlEntry{Loc: base + "/" + h})
 			}
 		}
 		rows.Close()

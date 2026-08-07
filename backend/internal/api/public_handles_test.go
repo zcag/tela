@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -118,6 +119,50 @@ func TestByHandle_UserHomeExcludesOrgSpaces(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("org space under user handle status=%d want 404", resp.StatusCode)
+	}
+}
+
+// TestSitemap_AgreesWithHandleHomes: the sitemap must advertise exactly the
+// handle homes that resolve. An owner row on a public ORG space gives the user
+// no handle home, so listing their /u/{name} advertised a 404; the org's own
+// home is the real page and was missing entirely.
+func TestSitemap_AgreesWithHandleHomes(t *testing.T) {
+	ts, d := newWiredServer(t)
+	frank := seedUser(t, d, "frank", "frankpw123", false) // org-space owner only
+	gina := seedUser(t, d, "gina", "ginapw1234", false)   // has her own public space
+
+	org := seedOrg(t, d, "Zeta Co", "zetaco")
+	orgSpace := seedOrgSpace(t, d, "Zeta Docs", "zeta-docs", org)
+	seedMember(t, d, orgSpace, frank, "owner")
+	mustExec(t, d, `UPDATE spaces SET visibility = 'public' WHERE id = $1`, orgSpace)
+	seedPublicSpace(t, d, "Gina Blog", "gina-blog", gina)
+
+	resp, err := http.Get(ts.URL + "/api/public/sitemap.xml")
+	if err != nil {
+		t.Fatalf("GET sitemap: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	body := string(raw)
+
+	if strings.Contains(body, "/u/frank") {
+		t.Fatalf("sitemap advertises /u/frank, which 404s (org-space owner only)\n%s", body)
+	}
+	if !strings.Contains(body, "/u/gina") {
+		t.Fatalf("sitemap dropped /u/gina, whose handle home resolves\n%s", body)
+	}
+	if !strings.Contains(body, "/zetaco</loc>") {
+		t.Fatalf("sitemap missing the org home /zetaco\n%s", body)
+	}
+
+	// The invariant, asserted directly: every author home listed must resolve.
+	for _, h := range []string{"gina"} {
+		if status, _ := getByHandle(t, tsWrap{ts.URL}, h); status != http.StatusOK {
+			t.Fatalf("sitemap lists /u/%s but it returns %d", h, status)
+		}
+	}
+	if status, _ := getByHandle(t, tsWrap{ts.URL}, "frank"); status != http.StatusNotFound {
+		t.Fatalf("frank's handle home should 404 (org spaces belong to the org)")
 	}
 }
 
