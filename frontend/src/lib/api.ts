@@ -6,12 +6,17 @@ const BASE = ''
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  // Set only on code=forbidden_public: the no-login reader route for content
+  // denied on the authed route but published public. Callers redirect there
+  // instead of rendering a permission wall (see PageView).
+  readonly publicPath?: string
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, publicPath?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.publicPath = publicPath
   }
 }
 
@@ -83,7 +88,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     if (isJson) {
       const body = (await res.json().catch(() => null)) as ApiErrorBody | null
       if (body && typeof body.error === 'string' && typeof body.code === 'string') {
-        throw new ApiError(res.status, body.code, body.error)
+        throw new ApiError(res.status, body.code, body.error, body.public_path)
       }
     }
     const fallback = await res.text().catch(() => '')
@@ -106,6 +111,10 @@ export interface SearchResult {
   title: string
   snippet: string
   breadcrumb: string[]
+  // True when the hit is reachable only because its space is published — the
+  // caller holds no membership, so it must open in the no-login reader; the
+  // authed route would 403.
+  public: boolean
 }
 
 export function searchPages(

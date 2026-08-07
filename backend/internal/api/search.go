@@ -28,12 +28,35 @@ const headlineOpts = `StartSel=<mark>, StopSel=</mark>, MaxFragments=1, MaxWords
 // same way, so ranking and snippeting agree.
 const stripExcalidrawSQL = "regexp_replace(p.body, '```excalidraw.*?```', '', 'g')"
 
+// searchAccessSQL is the joinable access set for palette search: the caller's
+// own space_access UNION every space published public. Yields space_id plus
+// is_member (1 = reachable via membership, 0 = reachable only because the space
+// is public); a space that is both collapses to 1, so membership always wins.
+//
+// Mirrors rag.accessibleSpacesSQL for the lexical tier — same rule, and the two
+// must agree or a page would surface in one tier and 403 in the other. is_member
+// is load-bearing twice over: it soft-demotes public-only hits (publicRankPenalty)
+// AND decides which URL the hit links to (authed route vs public reader).
+//
+// uid must be the already-bound $N placeholder for the user id.
+func searchAccessSQL(uid string) string {
+	return `(SELECT space_id, max(is_member) AS is_member FROM (
+	           SELECT space_id, 1 AS is_member FROM space_access WHERE user_id = ` + uid + `
+	           UNION ALL SELECT id, 0 FROM spaces WHERE visibility = 'public'
+	         ) a GROUP BY space_id)`
+}
+
 type searchHit struct {
 	PageID     int64    `json:"page_id"`
 	SpaceID    int64    `json:"space_id"`
 	Title      string   `json:"title"`
 	Snippet    string   `json:"snippet"`
 	Breadcrumb []string `json:"breadcrumb"`
+	// Public marks a hit the caller can read ONLY because its space is published
+	// (they hold no space_access). Such a hit must link to the no-login reader —
+	// the authed route 403s — so the palette branches on this, and URL below is
+	// already built accordingly.
+	Public bool `json:"public"`
 	// URL is the human-shareable in-app link, used by the search-results widget
 	// (click-through) and as the ChatGPT search/fetch `url` field.
 	URL string `json:"url"`
@@ -94,27 +117,21 @@ func (s *Server) searchCore(ctx context.Context, u *auth.User, k *auth.APIKey, q
 	)
 	if spaceFilter != nil {
 		rows, err = s.DB.QueryContext(ctx, `
-			SELECT p.id, p.space_id, p.title,
+			SELECT p.id, p.space_id, p.title, sm.is_member,
 			       ts_headline('english', `+stripExcalidrawSQL+`,
 			                   websearch_to_tsquery('english', $3), $4) AS snippet
 			FROM pages p
-			JOIN (SELECT space_id, max(is_member) AS is_member FROM (
-			        SELECT space_id, 1 AS is_member FROM space_access WHERE user_id = $1
-			        UNION ALL SELECT id, 0 FROM spaces WHERE visibility = 'public'
-			      ) a GROUP BY space_id) sm ON sm.space_id = p.space_id
+			JOIN `+searchAccessSQL("$1")+` sm ON sm.space_id = p.space_id
 			WHERE p.space_id = $2 AND p.deleted_at IS NULL AND p.search_tsv @@ websearch_to_tsquery('english', $3)
 			ORDER BY ts_rank_cd(p.search_tsv, websearch_to_tsquery('english', $3)) DESC, p.updated_at DESC
 			LIMIT $5`, u.ID, *spaceFilter, query, headlineOpts, limit)
 	} else {
 		rows, err = s.DB.QueryContext(ctx, `
-			SELECT p.id, p.space_id, p.title,
+			SELECT p.id, p.space_id, p.title, sm.is_member,
 			       ts_headline('english', `+stripExcalidrawSQL+`,
 			                   websearch_to_tsquery('english', $2), $3) AS snippet
 			FROM pages p
-			JOIN (SELECT space_id, max(is_member) AS is_member FROM (
-			        SELECT space_id, 1 AS is_member FROM space_access WHERE user_id = $1
-			        UNION ALL SELECT id, 0 FROM spaces WHERE visibility = 'public'
-			      ) a GROUP BY space_id) sm ON sm.space_id = p.space_id
+			JOIN `+searchAccessSQL("$1")+` sm ON sm.space_id = p.space_id
 			WHERE p.deleted_at IS NULL AND p.search_tsv @@ websearch_to_tsquery('english', $2)
 			ORDER BY ts_rank_cd(p.search_tsv, websearch_to_tsquery('english', $2))
 			         * (CASE WHEN sm.is_member = 1 THEN 1.0 ELSE `+strconv.FormatFloat(publicRankPenalty, 'f', -1, 64)+` END) DESC,
@@ -129,12 +146,13 @@ func (s *Server) searchCore(ctx context.Context, u *auth.User, k *auth.APIKey, q
 	type hitRow struct {
 		ID, SpaceID int64
 		Title       string
+		IsMember    int
 		Snippet     string
 	}
 	hits := []hitRow{}
 	for rows.Next() {
 		var h hitRow
-		if err := rows.Scan(&h.ID, &h.SpaceID, &h.Title, &h.Snippet); err != nil {
+		if err := rows.Scan(&h.ID, &h.SpaceID, &h.Title, &h.IsMember, &h.Snippet); err != nil {
 			return nil, &apiErr{http.StatusInternalServerError, "internal", "scan search row failed"}
 		}
 		hits = append(hits, h)
@@ -149,13 +167,22 @@ func (s *Server) searchCore(ctx context.Context, u *auth.User, k *auth.APIKey, q
 		if err != nil {
 			return nil, &apiErr{http.StatusInternalServerError, "internal", "build breadcrumb failed"}
 		}
+		// A public-only hit is unreachable on the authed route, so link it at the
+		// no-login reader — for the palette AND for the `url` handed to agents
+		// (MCP search, the ChatGPT connector), which was serving 403s.
+		public := h.IsMember == 0
+		path := pageAppPath(h.SpaceID, h.ID, h.Title)
+		if public {
+			path = publicReaderPath(h.SpaceID, h.ID, h.Title)
+		}
 		results = append(results, searchHit{
 			PageID:     h.ID,
 			SpaceID:    h.SpaceID,
 			Title:      h.Title,
 			Snippet:    h.Snippet,
 			Breadcrumb: bc,
-			URL:        canonicalBaseURL() + pageAppPath(h.SpaceID, h.ID, h.Title),
+			Public:     public,
+			URL:        canonicalBaseURL() + path,
 			ID:         strconv.FormatInt(h.ID, 10),
 			Text:       h.Snippet,
 		})

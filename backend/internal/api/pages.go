@@ -572,6 +572,16 @@ func (s *Server) GetPage(w http.ResponseWriter, r *http.Request) {
 	k, _ := auth.APIKeyFromContext(r.Context())
 	p, ae := s.getPageCore(r.Context(), u, k, id)
 	if ae != nil {
+		// A denial on published content carries where to read it instead; the
+		// SPA (PageView) redirects there rather than showing a permission wall.
+		if path := s.publicReaderFallbackPath(r.Context(), ae, id); path != "" {
+			writeJSON(w, http.StatusForbidden, errorBody{
+				Error:      "not a member; this page is published and readable without an account",
+				Code:       "forbidden_public",
+				PublicPath: path,
+			})
+			return
+		}
 		writeError(w, ae.Status, ae.Code, ae.Message)
 		return
 	}
@@ -627,6 +637,34 @@ func (s *Server) getPageCore(ctx context.Context, u *auth.User, k *auth.APIKey, 
 		return models.Page{}, ae
 	}
 	return p, nil
+}
+
+// publicReaderFallbackPath returns the no-login reader route for pageID when a
+// membership denial should redirect rather than dead-end: the caller holds no
+// space_access, but the space is published public, so the identical content
+// reads without an account.
+//
+// Same rule /p/{id} applies (HandlePublicShare) — a public space's pages are
+// already world-readable, surfaced to non-members by ranked search
+// (searchAccessSQL) and indexed for SEO — so a 403 on the authed URL was an
+// inconsistency, not a boundary. Returns "" (caller keeps the plain denial) for
+// anything else: only a bare `forbidden` is eligible, since an
+// api_key_space_scope denial is a real ceiling. A missing page also yields ""
+// via selectPageByID, preserving getPageCore's deliberate collapse of
+// not-found into not-a-member (no cross-space id enumeration).
+func (s *Server) publicReaderFallbackPath(ctx context.Context, ae *apiErr, pageID int64) string {
+	if ae.Code != "forbidden" {
+		return ""
+	}
+	p, err := selectPageByID(ctx, s.DB, pageID)
+	if err != nil {
+		return ""
+	}
+	sp, err := selectSpaceByID(ctx, s.DB, p.SpaceID)
+	if err != nil || sp.Visibility != spaceVisibilityPublic {
+		return ""
+	}
+	return publicReaderPath(p.SpaceID, p.ID, p.Title)
 }
 
 func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,9 @@ const statusClientClosed = 499
 type errorBody struct {
 	Error string `json:"error"`
 	Code  string `json:"code"`
+	// PublicPath accompanies code=forbidden_public only — the no-login reader
+	// route for content denied on the authed route but published public.
+	PublicPath string `json:"public_path,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

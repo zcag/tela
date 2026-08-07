@@ -280,17 +280,43 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
     }
   }, [pageId])
 
+  // A denial on PUBLISHED content isn't a denial at all — the backend hands
+  // back where the same page reads without an account (code=forbidden_public),
+  // so follow it instead of walling the user off. `replace` keeps Back going to
+  // wherever they came from rather than bouncing through the dead URL again.
+  // Covers every way an authed link travels: a pasted address-bar URL, an old
+  // link, a semantic-search hit — none of which know the space is public.
+  // MUST stay above the early returns (hook-count stability, React #310).
+  const pageError = page.error instanceof ApiError ? page.error : null
+  // Parsed into route params rather than navigated as a raw string: the router
+  // is typed on its route ids, and a server-supplied path is untrusted input.
+  // A shape we don't recognise falls through to the normal 403 wall.
+  const publicTarget = useMemo(() => {
+    const m = /^\/public\/spaces\/(\d+)\/pages\/(\d+)(?:\/([^/?#]+))?$/.exec(
+      pageError?.publicPath ?? '',
+    )
+    return m
+      ? { spaceId: Number(m[1]), pageId: Number(m[2]), slug: m[3] }
+      : null
+  }, [pageError])
+  useEffect(() => {
+    if (!publicTarget) return
+    void navigate({
+      to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
+      params: publicTarget,
+      replace: true,
+    })
+  }, [publicTarget, navigate])
+
   // queryClient's reporting policy drops every non-401 4xx as "handled by the
   // UI" — right in general, but a 403 here is NOT handled: it's a dead end the
   // user can't act on, and it stayed invisible while a real user sat on it.
   // Reported from the one place that knows it terminated in an error state.
   // The server fingerprint normalizes digits, so every page folds into one issue.
-  // MUST stay above the early returns — a hook after a conditional return
-  // changes the hook count between renders (React #310).
+  // forbidden_public is excluded — it self-heals into a redirect, so reporting
+  // it would file a bug on the fix working.
   const forbiddenPageId =
-    page.isError && page.error instanceof ApiError && page.error.status === 403
-      ? pageId
-      : null
+    page.isError && pageError?.status === 403 && !publicTarget ? pageId : null
   useEffect(() => {
     if (forbiddenPageId == null) return
     reportClientError({
@@ -303,8 +329,10 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
 
   // 403 / 404 / wrong-space handling
   if (page.isError) {
-    const status = page.error instanceof ApiError ? page.error.status : null
+    const status = pageError?.status ?? null
     if (status === 404) return <PageNotFound spaceId={spaceId} />
+    // Redirect to the public reader is in flight — don't flash the wall.
+    if (publicTarget) return <PageLoading />
     // A permission denial is not a server failure: saying "something went wrong,
     // try again" sent a locked-out user chasing a non-existent outage, and Retry
     // can never succeed.

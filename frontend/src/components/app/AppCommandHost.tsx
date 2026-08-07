@@ -275,11 +275,17 @@ export function AppCommandHost() {
             spaceId: r.space_id,
             title: r.title,
             breadcrumb: r.breadcrumb,
+            isPublic: r.public,
           },
           {
             idPrefix: 'page-t2',
             snippet: r.snippet,
-            spaceName: spaceNameById.get(r.space_id),
+            // spaceNameById only covers the user's OWN spaces, so a published
+            // space they aren't in has no name here — label it rather than
+            // rendering a bare parent chain that reads like an own page.
+            spaceName: r.public
+              ? 'Published'
+              : spaceNameById.get(r.space_id),
           },
         ),
       )

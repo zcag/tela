@@ -54,6 +54,40 @@ public reader (`/public/spaces/{spaceID}/pages/{id}/{slug}`) when the page's
 space is public, instead of the session-gated in-app route; bots still get the OG
 envelope.
 
+### Published ≠ reachable: route every page link through the visibility choice
+
+A published page is world-readable — ranked search surfaces it to non-members
+(`searchAccessSQL` / `rag.accessibleSpacesSQL` union public spaces in), and it's
+SEO-indexed — but the **authed** route `/spaces/{sid}/pages/{pid}` still gates on
+`space_access`. So any link built on the authed path dead-ends every non-member
+who follows it, on content that was deliberately published. That was a real bug:
+a user searched, found a public page, and got "you don't have access."
+
+Two mechanisms keep the two in step; keep both when touching this area:
+
+1. **`GET /api/pages/{id}` degrades instead of walling.** On a bare `forbidden`
+   for a page whose space is public, it answers `403 {code:"forbidden_public",
+   public_path:"/public/spaces/…"}` (`publicReaderFallbackPath`, `pages.go`) and
+   the SPA redirects there (`PageView`). This is the safety net that rescues
+   links already in the wild — a pasted address-bar URL, an old link, a semantic
+   hit. It is **not** a loosening: `api_key_space_scope` denials and missing
+   pages still return the opaque `forbidden`, so ids stay unenumerable.
+2. **Search emits the right URL up front.** `searchHit.public` (from the
+   already-computed `sm.is_member`) marks a hit reachable only via publication;
+   the hit's `url` is then built with `publicReaderPath`, not `pageAppPath`. This
+   feeds the palette *and* the `url` the MCP `search` tool / ChatGPT connector
+   hand to agents — which previously pointed at a route those callers can't read.
+
+Frontend: `pagePath` vs `publicReaderPath` (`lib/slug.ts`) are the pair, and
+`navigateToPage`'s `isPublic` picks between them. Don't re-derive either path
+inline at a new call site.
+
+**Still on the authed route (rides mechanism 1):** the tier-4 semantic palette
+rows. `rag.Hit` carries no membership bit — `hydrate` has no uid in scope — so a
+public-only semantic hit opens via the redirect rather than linking straight to
+the reader. Correct, one hop slower; thread `is_member` through `hydrate` to
+close it.
+
 ## Shipped (frontend)
 
 - No-login public reader route `/public/spaces/{id}/pages/{id}/{slug}` (reuses

@@ -622,6 +622,8 @@ export interface ApiKeyRow {
 export interface ApiErrorBody {
   error: string
   code: string
+  // code=forbidden_public only — the no-login reader route to redirect to.
+  public_path?: string
 }
 
 export function parseSqliteTs(s: string): Date {

@@ -57,9 +57,26 @@ export function buildWikilinkResolveIndex(
 }
 
 // pagePath builds the in-app route path for a page, with the cosmetic slug
-// appended when the title yields one.
+// appended when the title yields one. Mirrors the backend's pageAppPath.
 export function pagePath(spaceId: number, pageId: number, title: string): string {
   const base = `/spaces/${spaceId}/pages/${pageId}`
+  const s = pageSlug(title)
+  return s ? `${base}/${s}` : base
+}
+
+// publicReaderPath builds the no-login reader route for a page in a PUBLIC
+// space. Mirrors the backend's publicReaderPath.
+//
+// Which of the two a page gets is a real decision, not a formatting detail: the
+// authed route 403s for anyone without space_access, so linking a published
+// page there dead-ends every non-member who finds it via search or a shared
+// URL. Route the choice through this pair — don't re-derive either path inline.
+export function publicReaderPath(
+  spaceId: number,
+  pageId: number,
+  title: string,
+): string {
+  const base = `/public/spaces/${spaceId}/pages/${pageId}`
   const s = pageSlug(title)
   return s ? `${base}/${s}` : base
 }
