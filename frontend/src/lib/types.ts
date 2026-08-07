@@ -27,6 +27,10 @@ export interface Space {
   visibility?: 'private' | 'public'
   // Blog standfirst shown on a public space's front page. Present on list/detail.
   description?: string
+  // Canonical public path (/{handle}/{space-slug}) when published, absent
+  // otherwise. Server-derived — never re-derive the owning-handle rule (org slug
+  // vs personal username) client-side. Present only on the single-space fetch.
+  public_path?: string
   created_at: string
   updated_at: string
   // Access summary — present on the spaces list (sidebar), optional elsewhere.

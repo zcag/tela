@@ -104,14 +104,14 @@ func (s *Server) GetPublicSpace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Byline author: the space owner's handle, for a link back to /u/{handle}.
-	// Best-effort — a space with no owner row simply omits the byline.
+	// Byline: the space's OWNING handle, for a link back to /{handle} — an org's
+	// slug when the space is org-owned, else the personal owner's username. Using
+	// the space_members owner alone bylined an org's space with whoever created
+	// it. Best-effort — a space with no owner simply omits the byline.
 	var owner string
 	_ = s.DB.QueryRowContext(r.Context(),
-		`SELECT u.username
-		   FROM space_members m JOIN users u ON u.id = m.user_id
-		  WHERE m.space_id = $1 AND m.role = 'owner'
-		  ORDER BY m.user_id ASC LIMIT 1`, sp.ID).Scan(&owner)
+		`SELECT `+spaceHandleExpr+` FROM spaces s LEFT JOIN orgs o ON o.id = s.org_id
+		  WHERE s.id = $1`, sp.ID).Scan(&owner)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"space": publicSpaceDTO{
 			ID:          sp.ID,

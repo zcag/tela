@@ -18,13 +18,16 @@ import (
 // in-query, never any private body or member data.
 
 // discoverSpaceDTO is one directory card. PageCount and UpdatedAt are the
-// "popular" and "recent" sort signals; OwnerHandle links back to /u/{handle}.
+// "popular" and "recent" sort signals. OwnerHandle is the space's OWNING handle
+// — the org's slug for an org space, else the personal owner's username — and
+// links to /{handle}; PublicPath is the card's canonical /{handle}/{space-slug}.
 type discoverSpaceDTO struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Slug        string `json:"slug"`
 	Description string `json:"description"`
 	OwnerHandle string `json:"owner_handle,omitempty"`
+	PublicPath  string `json:"public_path,omitempty"`
 	PageCount   int64  `json:"page_count"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -54,15 +57,10 @@ func (s *Server) GetPublicDiscover(w http.ResponseWriter, r *http.Request) {
 	// lists (count 0, NULL recency). Owner handle is the 'owner' space_member.
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT s.id, s.name, s.slug, s.description,
-		       COALESCE(o.username, '') AS owner_handle,
+		       `+spaceHandleExpr+` AS owner_handle,
 		       agg.page_count, agg.last_updated
 		  FROM spaces s
-		  LEFT JOIN LATERAL (
-		         SELECT u.username
-		           FROM space_members m JOIN users u ON u.id = m.user_id
-		          WHERE m.space_id = s.id AND m.role = 'owner'
-		          ORDER BY m.user_id ASC LIMIT 1
-		       ) o ON TRUE
+		  LEFT JOIN orgs o ON o.id = s.org_id
 		  LEFT JOIN LATERAL (
 		         SELECT COUNT(*) AS page_count, MAX(p.updated_at) AS last_updated
 		           FROM pages p
@@ -90,6 +88,7 @@ func (s *Server) GetPublicDiscover(w http.ResponseWriter, r *http.Request) {
 		if lastUpdated != nil {
 			d.UpdatedAt = *lastUpdated
 		}
+		d.PublicPath = handleSpacePath(d.OwnerHandle, d.Slug)
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {

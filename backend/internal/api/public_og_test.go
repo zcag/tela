@@ -35,8 +35,9 @@ func TestPublicReaderOG_AuthorIsPageAuthor(t *testing.T) {
 		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	// Author should be the writer, linked to their /u/ home — not the owner.
-	if !strings.Contains(body, `"name":"writer"`) || !strings.Contains(body, `/u/writer`) {
+	// Author should be the writer, linked to their unified handle home (/{handle},
+	// not the legacy /u/ form) — and not the owner.
+	if !strings.Contains(body, `"name":"writer"`) || !strings.Contains(body, `"url":"/writer"`) {
 		t.Fatalf("JSON-LD author isn't the page author:\n%s", body)
 	}
 	if strings.Contains(body, `"name":"owner"`) {

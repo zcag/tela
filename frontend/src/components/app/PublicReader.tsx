@@ -123,8 +123,8 @@ export function PublicReaderView({
   // to the space owner for legacy pages with no recorded author.
   const authorLink = (name: string) => (
     <Link
-      to="/u/$username"
-      params={{ username: name }}
+      to="/$handle"
+      params={{ handle: name }}
       className="reader-meta-link"
     >
       {name}

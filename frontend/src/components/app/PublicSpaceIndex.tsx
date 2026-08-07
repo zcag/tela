@@ -84,8 +84,8 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
                 <span>
                   by{' '}
                   <Link
-                    to="/u/$username"
-                    params={{ username: space.owner_handle }}
+                    to="/$handle"
+                    params={{ handle: space.owner_handle }}
                     className="font-medium text-[var(--text-primary)] no-underline hover:text-[var(--accent)]"
                   >
                     @{space.owner_handle}

@@ -179,16 +179,24 @@ function DiscoverSpaceCard({ space }: { space: DiscoverSpace }) {
       pageCount={space.page_count}
       updatedAt={space.updated_at}
       owner={space.owner_handle}
-      renderTitleLink={({ className, children }) => (
-        <Link
-          to="/public/spaces/$spaceId"
-          params={{ spaceId: space.id }}
-          search={{ tag: undefined }}
-          className={className}
-        >
-          {children}
-        </Link>
-      )}
+      renderTitleLink={({ className, children }) =>
+        // Prefer the canonical /{handle}/{space-slug} the server derived; the id
+        // route stays as the fallback for an ownerless space.
+        space.public_path ? (
+          <a href={space.public_path} className={className}>
+            {children}
+          </a>
+        ) : (
+          <Link
+            to="/public/spaces/$spaceId"
+            params={{ spaceId: space.id }}
+            search={{ tag: undefined }}
+            className={className}
+          >
+            {children}
+          </Link>
+        )
+      }
     />
   )
 }

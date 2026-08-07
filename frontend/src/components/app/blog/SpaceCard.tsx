@@ -63,8 +63,8 @@ export function SpaceCard({
         {owner ? (
           <>
             <Link
-              to="/u/$username"
-              params={{ username: owner }}
+              to="/$handle"
+              params={{ handle: owner }}
               // relative z-index lifts this above the card's stretched ::after.
               className="relative z-10 font-medium text-[var(--text-muted)] no-underline hover:text-[var(--accent)]"
             >

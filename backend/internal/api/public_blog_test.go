@@ -114,7 +114,10 @@ func TestPublicBlogSurfaces(t *testing.T) {
 	if r.StatusCode != http.StatusOK {
 		t.Fatalf("sitemap status=%d", r.StatusCode)
 	}
-	for _, want := range []string{"<urlset", fmt.Sprintf("/public/spaces/%d", pub), fmt.Sprintf("/pages/%d", post), "/u/alice"} {
+	// Space front pages list at their canonical PRETTY path (/{handle}/{slug}),
+	// author homes at the unified /{handle} — not the legacy /u/ form. Reader
+	// pages keep the id path (no pretty page URL exists yet).
+	for _, want := range []string{"<urlset", "/alice/field-notes</loc>", fmt.Sprintf("/pages/%d", post), "/alice</loc>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sitemap missing %q\n%s", want, body)
 		}

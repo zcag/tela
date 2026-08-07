@@ -963,6 +963,10 @@ function PublicAccessSection({
   const updateSpace = useUpdateSpace()
   const [error, setError] = useState<string | null>(null)
   const isPublic = space.visibility === 'public'
+  // The server derives the canonical /{handle}/{space-slug} (org slug vs personal
+  // username), so we never re-implement that rule here. Fall back to the id form
+  // if it's absent — an ownerless space, or a stale cached space object.
+  const publicHref = space.public_path || `/public/spaces/${space.id}`
 
   async function toggle() {
     setError(null)
@@ -1001,12 +1005,12 @@ function PublicAccessSection({
           </p>
           {isPublic ? (
             <a
-              href={`/public/spaces/${space.id}`}
+              href={publicHref}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-[var(--space-1)] inline-block truncate text-[length:var(--text-xs)] text-[var(--accent)] no-underline hover:underline"
             >
-              {`${window.location.origin}/public/spaces/${space.id}`}
+              {`${window.location.origin}${publicHref}`}
             </a>
           ) : null}
         </div>

@@ -145,11 +145,11 @@ func TestSitemap_AgreesWithHandleHomes(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	body := string(raw)
 
-	if strings.Contains(body, "/u/frank") {
-		t.Fatalf("sitemap advertises /u/frank, which 404s (org-space owner only)\n%s", body)
+	if strings.Contains(body, "/frank</loc>") {
+		t.Fatalf("sitemap advertises /frank, which 404s (org-space owner only)\n%s", body)
 	}
-	if !strings.Contains(body, "/u/gina") {
-		t.Fatalf("sitemap dropped /u/gina, whose handle home resolves\n%s", body)
+	if !strings.Contains(body, "/gina</loc>") {
+		t.Fatalf("sitemap dropped /gina, whose handle home resolves\n%s", body)
 	}
 	if !strings.Contains(body, "/zetaco</loc>") {
 		t.Fatalf("sitemap missing the org home /zetaco\n%s", body)
@@ -214,14 +214,14 @@ func TestHandleOG_UnfurlsBothURLShapes(t *testing.T) {
 		t.Fatalf("org card title doubled\n%s", body)
 	}
 
-	// Space card via the pretty URL, canonical still the id form so the two URL
-	// shapes never compete as separate documents.
+	// Space card via the pretty URL. Canonical is the pretty form on BOTH shapes,
+	// so the id URL consolidates onto it instead of competing.
 	if status, body = og("/api/public/og/handles/hana/hana-blog"); status != http.StatusOK ||
 		!strings.Contains(body, "Hana Blog") {
 		t.Fatalf("handle space OG status=%d body=%s", status, body)
 	}
-	if !strings.Contains(body, publicSpacePath(own)+`"`) {
-		t.Fatalf("canonical should be the id form %s\n%s", publicSpacePath(own), body)
+	if !strings.Contains(body, `<link rel="canonical" href="/hana/hana-blog">`) {
+		t.Fatalf("canonical should be the pretty handle form\n%s", body)
 	}
 
 	// The org space is NOT reachable under the user's handle (matches the API).

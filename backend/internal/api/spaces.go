@@ -332,6 +332,11 @@ func (s *Server) getSpaceCore(ctx context.Context, u *auth.User, k *auth.APIKey,
 		return models.Space{}, &apiErr{http.StatusInternalServerError, "internal", "fetch space failed"}
 	}
 	sp.MyRole = role
+	// Canonical public path, so the share dialog hands out the pretty handle URL
+	// rather than the id form (and never re-derives the handle rule client-side).
+	if sp.Visibility == spaceVisibilityPublic {
+		sp.PublicPath = s.spaceHandlePath(ctx, sp.ID, sp.Slug)
+	}
 	return sp, nil
 }
 
@@ -542,6 +547,11 @@ func (s *Server) updateSpaceCore(ctx context.Context, u *auth.User, k *auth.APIK
 		return models.Space{}, &apiErr{http.StatusInternalServerError, "internal", "fetch updated space failed"}
 	}
 	sp.MyRole = role
+	// Canonical public path, so the share dialog hands out the pretty handle URL
+	// rather than the id form (and never re-derives the handle rule client-side).
+	if sp.Visibility == spaceVisibilityPublic {
+		sp.PublicPath = s.spaceHandlePath(ctx, sp.ID, sp.Slug)
+	}
 	return sp, nil
 }
 

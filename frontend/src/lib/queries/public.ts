@@ -216,7 +216,12 @@ export interface DiscoverSpace {
   name: string
   slug: string
   description: string
+  // The space's OWNING handle — an org's slug for an org space, else the
+  // personal owner's username. Links to /{handle}.
   owner_handle?: string
+  // Canonical /{handle}/{space-slug}, server-derived. Absent for an ownerless
+  // space, where callers fall back to the id route.
+  public_path?: string
   page_count: number
   // Most-recent page activity in the space. '' when the space has no pages.
   updated_at: string

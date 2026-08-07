@@ -156,6 +156,18 @@ func (s *Server) spaceOwnerHandle(ctx context.Context, spaceID int64) string {
 	return h
 }
 
+// canonicalSpacePath is the canonical path for a public space: the pretty
+// /{handle}/{space-slug}, falling back to the id form when no handle resolves.
+// One definition so the OG canonical and the sitemap can never disagree — a
+// sitemap entry whose page canonicalizes elsewhere is a self-inflicted
+// deindexing.
+func (s *Server) canonicalSpacePath(ctx context.Context, sp models.Space) string {
+	if p := s.spaceHandlePath(ctx, sp.ID, sp.Slug); p != "" {
+		return p
+	}
+	return publicSpacePath(sp.ID)
+}
+
 // loadPublicSpaceForOG loads a space only when it is public, writing an HTML 404
 // otherwise (crawler-friendly — no JSON envelope).
 func (s *Server) loadPublicSpaceForOG(w http.ResponseWriter, r *http.Request) (models.Space, bool) {
@@ -188,11 +200,14 @@ func (s *Server) HandlePublicSpaceOG(w http.ResponseWriter, r *http.Request) {
 // renderSpaceOG writes the blog front-page card for a public space. Shared by
 // the id route (/public/spaces/{id}) and the handle route (/{handle}/{slug}) so
 // BOTH URL shapes unfurl — the pretty handle form is the one the docs tell people
-// to share, and it produced no card at all until it routed here. Canonical stays
-// the id form for both, so the two shapes never compete as separate documents.
+// to share, and it produced no card at all until it routed here. Both emit the
+// PRETTY path as canonical, so the two shapes consolidate onto one document.
 func (s *Server) renderSpaceOG(w http.ResponseWriter, r *http.Request, sp models.Space) {
 	base := canonicalBaseURL()
-	canonical := base + publicSpacePath(sp.ID)
+	// Canonical is the PRETTY handle form — that's the URL people share and the
+	// one the docs name, so it's the one search results should show. The id form
+	// stays live and points here, consolidating both shapes onto one document.
+	canonical := base + s.canonicalSpacePath(r.Context(), sp)
 	owner := s.spaceOwnerHandle(r.Context(), sp.ID)
 	siteName := s.ogSiteName(r, s.spaceOwnerOrg(r.Context(), sp.ID))
 	desc := sp.Description
@@ -205,7 +220,7 @@ func (s *Server) renderSpaceOG(w http.ResponseWriter, r *http.Request, sp models
 		"name": sp.Name, "description": sp.Description, "url": canonical,
 	}
 	if owner != "" {
-		ld["author"] = map[string]any{"@type": "Person", "name": owner, "url": base + "/u/" + owner}
+		ld["author"] = map[string]any{"@type": "Person", "name": owner, "url": base + "/" + url.PathEscape(owner)}
 	}
 	// One post list feeds both the JSON-LD blogPost array AND a crawler-visible
 	// linked index — so bots reach every public page through internal <a> links
@@ -284,7 +299,7 @@ func (s *Server) HandlePublicReaderOG(w http.ResponseWriter, r *http.Request) {
 		"isPartOf":      map[string]any{"@type": "Blog", "name": sp.Name, "url": base + publicSpacePath(sp.ID)},
 	}
 	if author != "" {
-		ld["author"] = map[string]any{"@type": "Person", "name": author, "url": base + "/u/" + author}
+		ld["author"] = map[string]any{"@type": "Person", "name": author, "url": base + "/" + url.PathEscape(author)}
 	}
 
 	writeOGDoc(w, ogDoc{
@@ -329,7 +344,9 @@ func (s *Server) HandlePublicUserOG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := canonicalBaseURL()
-	canonical := base + "/u/" + name
+	// /u/{name} is the LEGACY form and redirects to /{name}; canonical points at
+	// the unified handle URL so both shapes consolidate there.
+	canonical := base + "/" + url.PathEscape(name)
 	// A user home isn't org-scoped, so branding comes only from the request's
 	// custom-domain host (ogSiteName with no owning org) — else "tela".
 	siteName := s.ogSiteName(r, 0)
@@ -548,14 +565,22 @@ func (s *Server) HandlePublicSitemap(w http.ResponseWriter, r *http.Request) {
 	set := urlset{NS: "http://www.sitemaps.org/schemas/sitemap/0.9"}
 	ctx := r.Context()
 
-	// Public space front pages.
+	// Public space front pages, at their CANONICAL pretty path — the sitemap must
+	// list what each page canonicalizes to, or we'd be submitting URLs that point
+	// search engines somewhere else.
 	if rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, updated_at FROM spaces WHERE visibility = 'public' ORDER BY id`); err == nil {
+		`SELECT s.id, s.slug, s.updated_at, `+spaceHandleExpr+`
+		   FROM spaces s LEFT JOIN orgs o ON o.id = s.org_id
+		  WHERE s.visibility = 'public' ORDER BY s.id`); err == nil {
 		for rows.Next() {
 			var id int64
-			var upd string
-			if rows.Scan(&id, &upd) == nil {
-				set.URLs = append(set.URLs, urlEntry{Loc: base + publicSpacePath(id), LastMod: sitemapDate(upd)})
+			var slug, upd, handle string
+			if rows.Scan(&id, &slug, &upd, &handle) == nil {
+				path := handleSpacePath(handle, slug)
+				if path == "" {
+					path = publicSpacePath(id)
+				}
+				set.URLs = append(set.URLs, urlEntry{Loc: base + path, LastMod: sitemapDate(upd)})
 			}
 		}
 		rows.Close()
@@ -588,7 +613,7 @@ func (s *Server) HandlePublicSitemap(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var h string
 			if rows.Scan(&h) == nil {
-				set.URLs = append(set.URLs, urlEntry{Loc: base + "/u/" + h})
+				set.URLs = append(set.URLs, urlEntry{Loc: base + "/" + url.PathEscape(h)})
 			}
 		}
 		rows.Close()

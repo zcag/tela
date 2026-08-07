@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
 )
 
 // Unified GitHub-style handle URLs. ONE namespace where {handle} is a user OR
@@ -174,6 +175,38 @@ func (s *Server) handleHasPublicSpace(ctx context.Context, kind string, ownerID 
 		`SELECT EXISTS(SELECT 1 FROM spaces s
 		                WHERE s.visibility = 'public' AND `+handleOwnerWhere(kind)+`)`, ownerID).Scan(&ok)
 	return ok
+}
+
+// spaceHandlePath returns a public space's canonical pretty path,
+// /{handle}/{space-slug} — the ORG's slug when the space is org-owned, else the
+// personal owner's username. This is the URL people are told to share, so it is
+// what canonical tags and the sitemap advertise; the id form
+// (/public/spaces/{id}) stays live as an alternate. Empty when no handle
+// resolves (an ownerless space), so callers fall back to the id path rather than
+// emitting a broken canonical.
+func (s *Server) spaceHandlePath(ctx context.Context, spaceID int64, slug string) string {
+	var handle string
+	_ = s.DB.QueryRowContext(ctx,
+		`SELECT `+spaceHandleExpr+` FROM spaces s LEFT JOIN orgs o ON o.id = s.org_id
+		  WHERE s.id = $1`, spaceID).Scan(&handle)
+	return handleSpacePath(handle, slug)
+}
+
+// spaceHandleExpr resolves a space's owning handle over the `spaces s LEFT JOIN
+// orgs o` shape — org slug, else the personal owner's username, else ''. Shared
+// so the per-space lookup and the sitemap's bulk query stay identical (the
+// sitemap must not re-derive it per row: that's an N+1 inside an open cursor).
+const spaceHandleExpr = `COALESCE(o.slug,
+	(SELECT u.username FROM space_members m JOIN users u ON u.id = m.user_id
+	  WHERE m.space_id = s.id AND m.role = 'owner' ORDER BY m.user_id ASC LIMIT 1), '')`
+
+// handleSpacePath builds /{handle}/{space-slug}, or "" when either part is
+// missing so callers fall back to the id path.
+func handleSpacePath(handle, slug string) string {
+	if handle == "" || slug == "" {
+		return ""
+	}
+	return "/" + url.PathEscape(handle) + "/" + url.PathEscape(slug)
 }
 
 // handleOwnerWhere is the ownership predicate for a handle home, over the

@@ -34,6 +34,12 @@ type Space struct {
 	// Populated only on the single-space fetch (GET /api/spaces/{id} and the
 	// MCP get_space tool); omitted elsewhere.
 	MyRole string `json:"my_role,omitempty"`
+	// PublicPath is the space's canonical public path (/{handle}/{space-slug})
+	// when it is published, '' otherwise. Server-derived so clients never
+	// re-implement the owning-handle rule (org slug vs personal username) — that
+	// duplication is what let org spaces be advertised under their creator's
+	// personal handle. Populated only on the single-space fetch, like MyRole.
+	PublicPath string `json:"public_path,omitempty"`
 }
 
 type Page struct {

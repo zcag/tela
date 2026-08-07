@@ -222,7 +222,7 @@ function BioSection() {
           <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
             {me.data?.username ? (
               <a
-                href={`/u/${me.data.username}`}
+                href={`/${me.data.username}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--accent)] no-underline hover:underline"
