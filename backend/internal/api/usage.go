@@ -24,6 +24,11 @@ type usageOut struct {
 		StorageBytes int64  `json:"storage_bytes"`
 		Members      *int64 `json:"members,omitempty"`
 		LLMCalls     int64  `json:"llm_calls"` // managed AI calls this calendar month
+		// Atlas cost meters for this calendar month, so the UI can show how close an
+		// account is BEFORE a run is refused. AtlasRuns excludes failed runs, matching
+		// what the gate counts.
+		AtlasRuns   int64 `json:"atlas_runs"`
+		EmbedTokens int64 `json:"embed_tokens"`
 	} `json:"usage"`
 	// Subscription is the live Polar billing state, omitted when the account has
 	// never subscribed (status 'none'). Drives the "Manage subscription" button
@@ -60,6 +65,12 @@ func (s *Server) buildUsage(ctx context.Context, acct account) (usageOut, error)
 			return usageOut{}, err
 		}
 		out.Usage.Members = &n
+	}
+	if out.Usage.AtlasRuns, err = countAtlasRunsThisMonth(ctx, s.DB, acct); err != nil {
+		return usageOut{}, err
+	}
+	if out.Usage.EmbedTokens, err = sumEmbedTokensThisMonth(ctx, s.DB, acct); err != nil {
+		return usageOut{}, err
 	}
 	// AI calls used this calendar month (the same period cloud_usage is keyed by).
 	if err = s.DB.QueryRowContext(ctx,

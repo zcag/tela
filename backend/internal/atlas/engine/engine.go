@@ -92,6 +92,13 @@ type RunContext struct {
 	Retriever *Retriever     // built by the index stage, used by generation
 	Coverage  core.Coverage  // computed by validate, refined by repair, written by publish
 
+	// MaxFiles refuses a source larger than the owner's plan allows, checked right
+	// after inventory — before chunking or embedding, so an oversized repo costs
+	// nothing but the clone. 0 = unlimited. It is deliberately a hard refusal
+	// rather than a truncation: indexing the first N files would produce docs that
+	// silently claim to cover a whole repo, and the coverage audit would agree.
+	MaxFiles int
+
 	// OnFinish, if set, is called once when the run reaches a terminal state
 	// (done/failed). It is the pluggable seam for run-finish notifications —
 	// standalone atlas hard-wired internal/notify here; inside tela the executor

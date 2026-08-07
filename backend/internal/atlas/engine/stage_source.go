@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/zcag/tela/backend/internal/atlas/core"
@@ -57,6 +58,10 @@ func (inventoryStage) Run(ctx context.Context, rc *RunContext) error {
 	// Fallback for connectors without the progress upgrade.
 	if files, err = conn.Inventory(ctx, rc.Snapshot, *rc.Source); err != nil {
 		return err
+	}
+	if rc.MaxFiles > 0 && len(files) > rc.MaxFiles {
+		return fmt.Errorf("source has %d files, over this plan's limit of %d per run — narrow it with the source's subpath/include/exclude filters, or upgrade",
+			len(files), rc.MaxFiles)
 	}
 	if err := saveFiles(rc, files); err != nil {
 		return err

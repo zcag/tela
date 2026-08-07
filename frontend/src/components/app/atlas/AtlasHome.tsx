@@ -19,6 +19,7 @@ import {
 } from './atlas-lib'
 import { NewProjectDialog } from './NewProjectDialog'
 import { CredentialsDialog } from './CredentialsDialog'
+import { AtlasQuotaBar } from './AtlasQuotaBar'
 
 function freshnessOf(p: AtlasProject): { f: Freshness; label: string } {
   const r = p.last_run
@@ -110,6 +111,8 @@ export function AtlasHome() {
           </Button>
         </div>
       </div>
+
+      <AtlasQuotaBar />
 
       {projectsQ.isLoading ? (
         <p className="mt-[var(--space-6)] text-[length:var(--text-sm)] text-[var(--text-muted)]">Loading projects…</p>

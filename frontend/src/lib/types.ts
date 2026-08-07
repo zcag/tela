@@ -188,6 +188,10 @@ export interface Plan {
   price_cents: number | null
   price_period: string
   price_cents_yearly: number | null
+  // Cost-shaped Atlas caps; null = unlimited.
+  max_atlas_files_per_run: number | null
+  max_atlas_runs_per_month: number | null
+  max_embed_tokens_per_month: number | null
 }
 
 // GET /api/usage and /api/orgs/{id}/usage. members is present for orgs only.
@@ -200,6 +204,10 @@ export interface Usage {
     storage_bytes: number
     members?: number
     llm_calls: number
+    // Atlas cost meters for the current calendar month. atlas_runs excludes
+    // failed runs, matching what the server's gate counts.
+    atlas_runs: number
+    embed_tokens: number
   }
   // Live Polar billing state; absent until the account has subscribed. Drives
   // the "Manage subscription" button and the cancel/past-due notices.

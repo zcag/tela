@@ -58,10 +58,21 @@ func (m *atlasManager) StartRun(ctx context.Context, sourceID int64) (int64, *ap
 	if m.sourceHasNonTerminalRun(ctx, sourceID) {
 		return 0, &apiErr{http.StatusConflict, "run_active", "a run is already queued or in progress for this source"}
 	}
-	if _, err := m.loadSource(ctx, sourceID); err == sql.ErrNoRows {
+	src, err := m.loadSource(ctx, sourceID)
+	if err == sql.ErrNoRows {
 		return 0, &apiErr{http.StatusNotFound, "not_found", "source not found"}
 	} else if err != nil {
 		return 0, &apiErr{http.StatusInternalServerError, "internal", "lookup source failed"}
+	}
+
+	// Monthly run + embed-token budget for the owning account. Refused BEFORE the
+	// run row exists, so a blocked attempt leaves no failed run in the history and
+	// costs the user nothing. The per-run file cap can't be judged yet — the repo
+	// isn't cloned — so the engine enforces that one after inventory.
+	if acct, ae := m.ownerAccount(ctx, src.ProjectID); ae != nil {
+		return 0, ae
+	} else if ae := m.s.checkAtlasRunQuota(ctx, acct); ae != nil {
+		return 0, ae
 	}
 
 	var runID int64
@@ -96,6 +107,7 @@ func (m *atlasManager) buildRunContext(ctx context.Context, src atlasSourceRow, 
 	// SecretValue + SecretMeta["email"]; git reads SecretValue + SecretMeta["username"].
 	coreSrc := m.resolveCoreSource(ctx, src)
 	return &engine.RunContext{
+		MaxFiles:  m.maxFilesFor(ctx, account{Kind: proj.OwnerKind, ID: proj.OwnerID}),
 		Project:   coreProj,
 		Source:    &coreSrc,
 		Run:       run,
@@ -343,4 +355,28 @@ func atlasWorkRoot() string {
 		return v
 	}
 	return os.TempDir()
+}
+
+// ownerAccount resolves the billable account behind an atlas project — the scope
+// every atlas quota is metered against.
+func (m *atlasManager) ownerAccount(ctx context.Context, projectID int64) (account, *apiErr) {
+	kind, id, err := m.s.atlasProjectOwner(ctx, projectID)
+	if err == sql.ErrNoRows {
+		return account{}, &apiErr{http.StatusNotFound, "not_found", "project not found"}
+	} else if err != nil {
+		return account{}, &apiErr{http.StatusInternalServerError, "internal", "lookup project failed"}
+	}
+	return account{Kind: kind, ID: id}, nil
+}
+
+// maxFilesFor resolves the owning plan's per-run file cap. 0 = unlimited, which
+// is also what a lookup failure yields: a quota check that can't read the plan
+// must not silently block a paying customer's run — the monthly gates at
+// StartRun already fail closed, and this one is the coarse backstop.
+func (m *atlasManager) maxFilesFor(ctx context.Context, acct account) int {
+	p, err := planFor(ctx, m.s.DB, acct)
+	if err != nil || p.MaxAtlasFilesPerRun == nil {
+		return 0
+	}
+	return int(*p.MaxAtlasFilesPerRun)
 }
