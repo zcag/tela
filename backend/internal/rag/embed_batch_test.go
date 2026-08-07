@@ -84,7 +84,7 @@ func TestEmbedMany_OneRequestPerBatch(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s embedder does not implement batchEmbedder", tc.name)
 			}
-			vecs, requests, err := b.EmbedMany(context.Background(), texts)
+			vecs, st, err := b.EmbedMany(context.Background(), texts)
 			if err != nil {
 				t.Fatalf("EmbedMany: %v", err)
 			}
@@ -94,8 +94,8 @@ func TestEmbedMany_OneRequestPerBatch(t *testing.T) {
 			if srv.requests != 1 {
 				t.Fatalf("expected 1 upstream request, got %d (sizes %v)", srv.requests, srv.batchSize)
 			}
-			if requests != 1 {
-				t.Fatalf("reported %d requests, server saw 1", requests)
+			if st.Requests != 1 {
+				t.Fatalf("reported %d requests, server saw 1", st.Requests)
 			}
 			if srv.batchSize[0] != len(texts) {
 				t.Fatalf("expected all %d inputs in one request, got %d", len(texts), srv.batchSize[0])
@@ -143,8 +143,8 @@ func TestEmbedMany_FallsBackPerItem(t *testing.T) {
 		t.Fatalf("expected exactly one rejected batch attempt, got %d", arrayRejects)
 	}
 	// 1 failed batch + one per item; all of them really hit the embedder.
-	if want := 1 + len(texts); reported != want || requests != want {
-		t.Fatalf("reported %d requests, server saw %d, want %d", reported, requests, want)
+	if want := 1 + len(texts); reported.Requests != want || requests != want {
+		t.Fatalf("reported %d requests, server saw %d, want %d", reported.Requests, requests, want)
 	}
 }
 
@@ -154,22 +154,28 @@ func TestEmbedMany_FallsBackPerItem(t *testing.T) {
 // nothing in the app looks broken. It must batch AND meter every input.
 func TestRecordingEmbedder_KeepsBatching(t *testing.T) {
 	srv := newBatchServer(t, true)
-	var metered int
+	var meterCalls, meteredTokens int
 	s := &Service{emb: NewOllamaEmbedder(srv.URL, "m", "")}
-	s.SetUsageRecorder(func(model string, tokens int) { metered++ })
+	s.SetUsageRecorder(func(model string, tokens int) { meterCalls++; meteredTokens += tokens })
 
 	texts := []string{"one", "two", "three"}
-	vecs, requests, err := s.EmbedMany(context.Background(), texts)
+	vecs, st, err := s.EmbedMany(context.Background(), texts)
 	if err != nil {
 		t.Fatalf("EmbedMany: %v", err)
 	}
 	if len(vecs) != len(texts) {
 		t.Fatalf("got %d vectors for %d inputs", len(vecs), len(texts))
 	}
-	if srv.requests != 1 || requests != 1 {
-		t.Fatalf("decorator broke batching: server saw %d requests, reported %d", srv.requests, requests)
+	if srv.requests != 1 || st.Requests != 1 {
+		t.Fatalf("decorator broke batching: server saw %d requests, reported %d", srv.requests, st.Requests)
 	}
-	if metered != len(texts) {
-		t.Fatalf("metered %d inputs, want %d", metered, len(texts))
+	// Metering is per BATCH, not per input: the recorder gets the provider's
+	// token count for the whole call (a per-text estimate would bill text the
+	// clamp dropped). One call, covering every input's tokens.
+	if meterCalls != 1 {
+		t.Fatalf("metered %d times, want 1 per batch", meterCalls)
+	}
+	if want := estimateTokens(texts); meteredTokens != want {
+		t.Fatalf("metered %d tokens, want %d (all %d inputs)", meteredTokens, want, len(texts))
 	}
 }

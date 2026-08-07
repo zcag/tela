@@ -194,6 +194,9 @@ func (m *atlasManager) onFinish(rc *engine.RunContext, status core.RunStatus, ru
 		u := rc.Run.Stats.Usage
 		m.s.recordAIUsage("chat", rc.Project.Model.ChatModel, int(u.PromptTokens), int(u.CompletionTokens), 0)
 	}
+	// Count the outcome before notifying: a notify failure must not lose the only
+	// signal a monitoring system gets about this run.
+	atlasRuns.WithLabelValues(string(status)).Inc()
 	m.notifyAtlasRunFinish(context.Background(), rc, status, runErr)
 }
 

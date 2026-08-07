@@ -89,6 +89,17 @@ var (
 		Help: "Atlas runs killed by the 4h stuck-run watchdog.",
 	})
 
+	// atlasRuns counts Atlas runs by terminal status. Without it a broken source is
+	// completely silent: run outcomes live only in atlas_runs.status, are never
+	// logged, and so reach neither Prometheus nor Loki. One source failed 47
+	// consecutive runs over three weeks — hourly, on the same encoding bug — and
+	// raised nothing; it surfaced only because someone read the table by hand.
+	// The watchdog counter next door catches HUNG runs, not fast-failing ones.
+	atlasRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tela_atlas_runs_total",
+		Help: "Atlas runs by terminal status (done|failed).",
+	}, []string{"status"})
+
 	// polarLastWebhook tracks the Unix timestamp of the last successfully
 	// processed Polar webhook. Alertable when it's been silent for >24h while
 	// active subscriptions exist (possible Polar delivery outage or misconfigured
@@ -160,6 +171,7 @@ func init() {
 		aiUp,
 		aiProbeLatency,
 		atlasKills,
+		atlasRuns,
 		polarLastWebhook,
 		// Go runtime + process collectors (goroutines, GC, memory, open FDs,
 		// CPU, etc.).

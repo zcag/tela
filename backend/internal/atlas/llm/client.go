@@ -44,7 +44,13 @@ type Client struct {
 	// back to a zero vector, and how many upstream REQUESTS it cost — the
 	// delegate is free to batch, so the caller can't infer that. nil ⇒ the
 	// original /embeddings HTTP path (preserved verbatim for standalone use).
-	EmbedFunc func(ctx context.Context, inputs []string) (vecs [][]float32, zeroed int, requests int, err error)
+	//
+	// tokens is what the provider actually charged. It must NOT be derived from
+	// input length: the delegate clamps each input before sending, so a length
+	// estimate counts text that was never embedded — it overstated a single large
+	// chunk by ~400x, and that inflated figure is what the per-plan monthly embed
+	// budget meters.
+	EmbedFunc func(ctx context.Context, inputs []string) (vecs [][]float32, zeroed int, requests int, tokens int, err error)
 
 	mu    sync.Mutex
 	usage core.Usage // token + call tally, accumulated across this run
@@ -156,18 +162,12 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, int, 
 	defer release()
 
 	if c.EmbedFunc != nil {
-		vecs, zeroed, requests, err := c.EmbedFunc(ctx, inputs)
+		vecs, zeroed, requests, tokens, err := c.EmbedFunc(ctx, inputs)
 		if err != nil {
 			return nil, 0, err
 		}
 		c.rememberDim(vecs)
-		// Approximate token accounting (~4 chars/token) so run stats still report
-		// embed volume; the delegate (tela's embedder) doesn't return token counts.
-		var toks int
-		for _, s := range inputs {
-			toks += (len(s) + 3) / 4
-		}
-		c.addEmbed(toks, requests)
+		c.addEmbed(tokens, requests)
 		return vecs, zeroed, nil
 	}
 	trimmed := make([]string, len(inputs))

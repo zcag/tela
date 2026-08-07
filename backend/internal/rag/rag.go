@@ -125,18 +125,19 @@ func (e recordingEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 // batchEmbedder assertion in Service.EmbedMany would fail on the wrapper and
 // every batch would silently degrade to one request per item — which is exactly
 // the bug this seam existed to hide.
-func (e recordingEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, int, error) {
+func (e recordingEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, EmbedStats, error) {
 	inner, ok := e.inner.(batchEmbedder)
 	if !ok {
 		return embedMany(texts, nil, func(t string) ([]float32, error) { return e.Embed(ctx, t) })
 	}
-	vecs, requests, err := inner.EmbedMany(ctx, texts)
+	vecs, st, err := inner.EmbedMany(ctx, texts)
 	if err == nil {
-		for _, t := range texts {
-			e.rec(e.inner.Model(), (len(t)+3)/4)
-		}
+		// Record the PROVIDER's token count for the batch, not a per-text estimate
+		// of the raw input: the input is clamped before sending, so the estimate
+		// bills text that was never embedded.
+		e.rec(e.inner.Model(), st.Tokens)
 	}
-	return vecs, requests, err
+	return vecs, st, err
 }
 
 func (e recordingEmbedder) Model() string { return e.inner.Model() }
@@ -178,7 +179,7 @@ func (s *Service) Embed(ctx context.Context, text string) ([]float32, error) {
 // implement it; a fake or a future provider that doesn't just falls back to
 // per-item, so it stays out of the required Embedder contract.
 type batchEmbedder interface {
-	EmbedMany(ctx context.Context, texts []string) (vecs [][]float32, requests int, err error)
+	EmbedMany(ctx context.Context, texts []string) (vecs [][]float32, st EmbedStats, err error)
 }
 
 // EmbedMany embeds a slice of passages, using the embedder's batch transport
@@ -187,9 +188,9 @@ type batchEmbedder interface {
 // one-at-a-time, and the shared embed GPU is the scarce resource — flooding it
 // starves the chat model that lives on the same card. Returns one vector per
 // text in order, plus how many upstream requests it actually cost.
-func (s *Service) EmbedMany(ctx context.Context, texts []string) (vecs [][]float32, requests int, err error) {
+func (s *Service) EmbedMany(ctx context.Context, texts []string) (vecs [][]float32, st EmbedStats, err error) {
 	if !s.Enabled() {
-		return nil, 0, errEmbedderDisabled
+		return nil, EmbedStats{}, errEmbedderDisabled
 	}
 	if b, ok := s.emb.(batchEmbedder); ok {
 		return b.EmbedMany(ctx, texts)

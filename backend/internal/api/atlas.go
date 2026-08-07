@@ -128,22 +128,22 @@ func (m *atlasManager) newLLMClient() *atlasllm.Client {
 // An embed error degrades to zero vectors (those chunks just won't be
 // dense-retrievable) rather than failing the whole run — mirroring atlas's
 // last-resort. ctx cancellation propagates as a hard error.
-func (m *atlasManager) embedBatch(ctx context.Context, inputs []string) ([][]float32, int, int, error) {
+func (m *atlasManager) embedBatch(ctx context.Context, inputs []string) ([][]float32, int, int, int, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, 0, err
 	}
-	vecs, requests, err := m.s.rag.EmbedMany(ctx, inputs)
+	vecs, st, err := m.s.rag.EmbedMany(ctx, inputs)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, 0, requests, ctxErr
+			return nil, 0, st.Requests, st.Tokens, ctxErr
 		}
 		out := make([][]float32, len(inputs))
 		for i := range out {
 			out[i] = make([]float32, atlasEmbedDim)
 		}
-		return out, len(inputs), requests, nil
+		return out, len(inputs), st.Requests, st.Tokens, nil
 	}
-	return vecs, 0, requests, nil
+	return vecs, 0, st.Requests, st.Tokens, nil
 }
 
 // atlasOwnerManageErr gates MANAGEMENT of an owner-scoped atlas resource (a

@@ -94,11 +94,11 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 // /embeddings shape takes an `input` array and answers with one data row per
 // input, and LiteLLM passes that through. See embedMany for the fallback
 // contract.
-func (e *OpenAIEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, int, error) {
+func (e *OpenAIEmbedder) EmbedMany(ctx context.Context, texts []string) ([][]float32, EmbedStats, error) {
 	return embedMany(texts,
-		func(in []string) ([][]float32, error) {
-			rows, _, err := e.post(ctx, in, len(in))
-			return rows, err
+		func(in []string) ([][]float32, int, error) {
+			rows, tokens, _, err := e.postCounted(ctx, in, len(in))
+			return rows, tokens, err
 		},
 		func(text string) ([]float32, error) { return e.Embed(ctx, text) },
 	)
@@ -119,10 +119,16 @@ func (e *OpenAIEmbedder) embedOnce(ctx context.Context, input string) (vec []flo
 // input is either a single string or a []string batch; want is how many rows the
 // caller expects.
 func (e *OpenAIEmbedder) post(ctx context.Context, input any, want int) (rows [][]float32, overflow bool, err error) {
+	rows, _, overflow, err = e.postCounted(ctx, input, want)
+	return rows, overflow, err
+}
+
+// postCounted is post plus the provider-reported token count.
+func (e *OpenAIEmbedder) postCounted(ctx context.Context, input any, want int) (rows [][]float32, tokens int, overflow bool, err error) {
 	body, _ := json.Marshal(map[string]any{"model": e.model, "input": input})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.base+"/embeddings", bytes.NewReader(body))
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if e.token != "" {
@@ -131,7 +137,7 @@ func (e *OpenAIEmbedder) post(ctx context.Context, input any, want int) (rows []
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return nil, false, fmt.Errorf("openai embed: %w", err)
+		return nil, 0, false, fmt.Errorf("openai embed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -147,24 +153,35 @@ func (e *OpenAIEmbedder) post(ctx context.Context, input any, want int) (rows []
 				strings.Contains(low, "context window") ||
 				strings.Contains(low, "too long") ||
 				strings.Contains(low, "too many tokens"))
-		return nil, over, fmt.Errorf("openai embed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, 0, over, fmt.Errorf("openai embed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
 	var out struct {
 		Data []struct {
 			Embedding []float32 `json:"embedding"`
 		} `json:"data"`
+		// The provider's own token count — the only honest measure of what an
+		// embed cost. Estimating from input length overstates it badly, because
+		// the input is clamped to maxEmbedChars before it is ever sent.
+		Usage struct {
+			PromptTokens int `json:"prompt_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
 		Error any `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, false, fmt.Errorf("openai embed decode: %w", err)
+		return nil, 0, false, fmt.Errorf("openai embed decode: %w", err)
 	}
 	if len(out.Data) != want || len(out.Data[0].Embedding) == 0 {
-		return nil, false, fmt.Errorf("openai embed: got %d vectors for %d inputs (model %q)", len(out.Data), want, e.model)
+		return nil, 0, false, fmt.Errorf("openai embed: got %d vectors for %d inputs (model %q)", len(out.Data), want, e.model)
 	}
 	rows = make([][]float32, len(out.Data))
 	for i := range out.Data {
 		rows[i] = out.Data[i].Embedding
 	}
-	return rows, false, nil
+	tokens = out.Usage.TotalTokens
+	if tokens == 0 {
+		tokens = out.Usage.PromptTokens
+	}
+	return rows, tokens, false, nil
 }
