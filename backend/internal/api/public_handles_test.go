@@ -209,6 +209,10 @@ func TestHandleOG_UnfurlsBothURLShapes(t *testing.T) {
 		!strings.Contains(body, "Kappa Co") || !strings.Contains(body, `"Organization"`) {
 		t.Fatalf("org home OG status=%d body=%s", status, body)
 	}
+	// An org is its own site, so the title must not double as "X — X".
+	if strings.Contains(body, "Kappa Co — Kappa Co") {
+		t.Fatalf("org card title doubled\n%s", body)
+	}
 
 	// Space card via the pretty URL, canonical still the id form so the two URL
 	// shapes never compete as separate documents.

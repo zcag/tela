@@ -398,8 +398,15 @@ func (s *Server) HandleHandleHomeOG(w http.ResponseWriter, r *http.Request) {
 		body = template.HTML("<ul>" + list + "</ul>") //nolint:gosec // names+paths escaped above
 	}
 
+	// "name — siteName" reads as "Çağdaş Salur — tela" for a user, but an ORG is
+	// its own site, so the same formula gives "tela — tela". Title is just the
+	// name there; og:site_name still carries the brand.
+	title := name + " — " + siteName
+	if kind == handleKindOrg || name == siteName {
+		title = name
+	}
 	writeOGDoc(w, ogDoc{
-		Title:        name + " — " + siteName,
+		Title:        title,
 		Description:  runeTruncate(desc, 200),
 		CanonicalURL: canonical,
 		ImageURL:     base + "/api/public/handles/" + url.PathEscape(handle) + "/og.png",
