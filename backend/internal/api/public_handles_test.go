@@ -166,6 +166,80 @@ func TestSitemap_AgreesWithHandleHomes(t *testing.T) {
 	}
 }
 
+// TestHandleOG_UnfurlsBothURLShapes: the pretty handle URLs are what the docs
+// tell people to share, so they must render a bot card — and gate on exactly the
+// same ownership rule as the handle home, so a card never advertises a 404.
+func TestHandleOG_UnfurlsBothURLShapes(t *testing.T) {
+	ts, d := newWiredServer(t)
+	hana := seedUser(t, d, "hana", "hanapw1234", false)
+	own := seedPublicSpace(t, d, "Hana Blog", "hana-blog", hana)
+	mustExec(t, d, `INSERT INTO pages (space_id, parent_id, title, body, position) VALUES ($1, NULL, 'First Post', 'b', 0)`, own)
+
+	org := seedOrg(t, d, "Kappa Co", "kappaco")
+	orgSpace := seedOrgSpace(t, d, "Kappa Docs", "kappa-docs", org)
+	seedMember(t, d, orgSpace, hana, "owner")
+	mustExec(t, d, `UPDATE spaces SET visibility = 'public' WHERE id = $1`, orgSpace)
+
+	og := func(path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	// User home card.
+	status, body := og("/api/public/og/handles/hana")
+	if status != http.StatusOK || !strings.Contains(body, `property="og:title"`) {
+		t.Fatalf("handle home OG status=%d body=%s", status, body)
+	}
+	if !strings.Contains(body, "/hana/hana-blog") {
+		t.Fatalf("handle home card should link its spaces\n%s", body)
+	}
+	// It must NOT advertise the org space — that lives on the org's handle.
+	if strings.Contains(body, "kappa-docs") {
+		t.Fatalf("handle home card leaked an org space\n%s", body)
+	}
+
+	// Org home card renders too (previously no card existed for org handles).
+	if status, body = og("/api/public/og/handles/kappaco"); status != http.StatusOK ||
+		!strings.Contains(body, "Kappa Co") || !strings.Contains(body, `"Organization"`) {
+		t.Fatalf("org home OG status=%d body=%s", status, body)
+	}
+
+	// Space card via the pretty URL, canonical still the id form so the two URL
+	// shapes never compete as separate documents.
+	if status, body = og("/api/public/og/handles/hana/hana-blog"); status != http.StatusOK ||
+		!strings.Contains(body, "Hana Blog") {
+		t.Fatalf("handle space OG status=%d body=%s", status, body)
+	}
+	if !strings.Contains(body, publicSpacePath(own)+`"`) {
+		t.Fatalf("canonical should be the id form %s\n%s", publicSpacePath(own), body)
+	}
+
+	// The org space is NOT reachable under the user's handle (matches the API).
+	if status, _ = og("/api/public/og/handles/hana/kappa-docs"); status != http.StatusNotFound {
+		t.Fatalf("org space under user handle OG status=%d want 404", status)
+	}
+	// Unknown handle, and a handle with no public presence, both 404.
+	seedUser(t, d, "ivan", "ivanpw1234", false)
+	for _, p := range []string{"/api/public/og/handles/nosuchhandle", "/api/public/og/handles/ivan"} {
+		if status, _ = og(p); status != http.StatusNotFound {
+			t.Fatalf("%s status=%d want 404", p, status)
+		}
+	}
+	// The card image follows the same gate.
+	if status, _ = og("/api/public/handles/hana/og.png"); status != http.StatusOK {
+		t.Fatalf("handle og.png status=%d want 200", status)
+	}
+	if status, _ = og("/api/public/handles/ivan/og.png"); status != http.StatusNotFound {
+		t.Fatalf("no-presence og.png status=%d want 404", status)
+	}
+}
+
 // TestByHandle_DisplayName confirms name = display_name when set.
 func TestByHandle_DisplayName(t *testing.T) {
 	ts, d := newWiredServer(t)

@@ -35,11 +35,11 @@ type ogDoc struct {
 	Description  string
 	CanonicalURL string
 	ImageURL     string
-	OGType       string // website | article | profile
-	FeedURL      string // optional rss alternate
-	JSONLD       string // optional ld+json
-	SiteName     string // og:site_name — org brand on a white-label domain, else "tela"
-	Heading      string // optional <h1> for the crawler body (page title)
+	OGType       string        // website | article | profile
+	FeedURL      string        // optional rss alternate
+	JSONLD       string        // optional ld+json
+	SiteName     string        // og:site_name — org brand on a white-label domain, else "tela"
+	Heading      string        // optional <h1> for the crawler body (page title)
 	BodyHTML     template.HTML // optional rendered page body (crawler-visible content)
 }
 
@@ -182,6 +182,15 @@ func (s *Server) HandlePublicSpaceOG(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.renderSpaceOG(w, r, sp)
+}
+
+// renderSpaceOG writes the blog front-page card for a public space. Shared by
+// the id route (/public/spaces/{id}) and the handle route (/{handle}/{slug}) so
+// BOTH URL shapes unfurl — the pretty handle form is the one the docs tell people
+// to share, and it produced no card at all until it routed here. Canonical stays
+// the id form for both, so the two shapes never compete as separate documents.
+func (s *Server) renderSpaceOG(w http.ResponseWriter, r *http.Request, sp models.Space) {
 	base := canonicalBaseURL()
 	canonical := base + publicSpacePath(sp.ID)
 	owner := s.spaceOwnerHandle(r.Context(), sp.ID)
@@ -310,13 +319,10 @@ func (s *Server) HandlePublicUserOG(w http.ResponseWriter, r *http.Request) {
 		writeInternalHTML(w)
 		return
 	}
-	var hasPublic bool
-	_ = s.DB.QueryRowContext(r.Context(),
-		`SELECT EXISTS(
-		   SELECT 1 FROM spaces sp
-		     JOIN space_members m ON m.space_id = sp.id
-		    WHERE m.user_id = (SELECT id FROM users WHERE LOWER(username) = LOWER($1))
-		      AND sp.visibility = 'public')`, name).Scan(&hasPublic)
+	// Same gate as the handle home (handleOwnerWhere): an owner row on a public
+	// ORG space does NOT give the user a home, so it must not render a card.
+	_, uid, _, _, resolved := s.resolveHandle(r.Context(), name)
+	hasPublic := resolved && s.handleHasPublicSpace(r.Context(), handleKindUser, uid)
 	if !hasPublic {
 		writeNotFoundHTML(w)
 		return
@@ -344,6 +350,111 @@ func (s *Server) HandlePublicUserOG(w http.ResponseWriter, r *http.Request) {
 		JSONLD:       jsonLD(ld),
 		SiteName:     siteName,
 	})
+}
+
+// HandleHandleHomeOG — GET /{handle} (bot UAs). The unified handle home card,
+// for a USER or an ORG. Gated on handleHasPublicSpace — the same predicate
+// GetPublicByHandle uses — so a card is never served for a home that 404s.
+func (s *Server) HandleHandleHomeOG(w http.ResponseWriter, r *http.Request) {
+	handle := r.PathValue("handle")
+	kind, ownerID, name, bio, ok := s.resolveHandle(r.Context(), handle)
+	if !ok || !s.handleHasPublicSpace(r.Context(), kind, ownerID) {
+		writeNotFoundHTML(w)
+		return
+	}
+
+	base := canonicalBaseURL()
+	canonical := base + "/" + url.PathEscape(handle)
+	// An org home IS org-scoped, so it brands from that org; a user home brands
+	// only from the request's custom-domain host.
+	orgID := int64(0)
+	if kind == handleKindOrg {
+		orgID = ownerID
+	}
+	siteName := s.ogSiteName(r, orgID)
+	desc := bio
+	if desc == "" {
+		desc = name + " on " + siteName
+	}
+
+	entityType := "Person"
+	ogType := "profile"
+	if kind == handleKindOrg {
+		entityType, ogType = "Organization", "website"
+	}
+	ld := map[string]any{
+		"@context": "https://schema.org", "@type": "ProfilePage", "url": canonical,
+		"mainEntity": map[string]any{"@type": entityType, "name": name, "url": canonical, "description": bio},
+	}
+	// Crawler-visible links to the handle's public spaces, so bots reach them
+	// through internal <a> links rather than the sitemap alone.
+	var body template.HTML
+	if spaces, err := s.publicSpacesForHandle(r, kind, ownerID); err == nil && len(spaces) > 0 {
+		var list string
+		for _, sp := range spaces {
+			path := "/" + url.PathEscape(handle) + "/" + url.PathEscape(sp.Slug)
+			list += "<li><a href=\"" + html.EscapeString(path) + "\">" + html.EscapeString(sp.Name) + "</a></li>"
+		}
+		body = template.HTML("<ul>" + list + "</ul>") //nolint:gosec // names+paths escaped above
+	}
+
+	writeOGDoc(w, ogDoc{
+		Title:        name + " — " + siteName,
+		Description:  runeTruncate(desc, 200),
+		CanonicalURL: canonical,
+		ImageURL:     base + "/api/public/handles/" + url.PathEscape(handle) + "/og.png",
+		OGType:       ogType,
+		JSONLD:       jsonLD(ld),
+		SiteName:     siteName,
+		Heading:      name,
+		BodyHTML:     body,
+	})
+}
+
+// HandleHandleSpaceOG — GET /{handle}/{spaceSlug} (bot UAs). Resolves the pretty
+// URL to its space and renders the same card as the id route.
+func (s *Server) HandleHandleSpaceOG(w http.ResponseWriter, r *http.Request) {
+	kind, ownerID, _, _, ok := s.resolveHandle(r.Context(), r.PathValue("handle"))
+	if !ok {
+		writeNotFoundHTML(w)
+		return
+	}
+	id, _, err := s.publicSpaceIDForHandle(r, kind, ownerID, r.PathValue("spaceSlug"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeNotFoundHTML(w)
+		return
+	}
+	if err != nil {
+		writeInternalHTML(w)
+		return
+	}
+	sp, err := selectSpaceByID(r.Context(), s.DB, id)
+	if err != nil || sp.Visibility != spaceVisibilityPublic {
+		writeNotFoundHTML(w)
+		return
+	}
+	s.renderSpaceOG(w, r, sp)
+}
+
+// HandleHandleOGImage — GET /api/public/handles/{handle}/og.png. The handle-home
+// card image, for a user OR an org (the older /api/public/users/{name}/og.png
+// stays for the legacy /u/ route).
+func (s *Server) HandleHandleOGImage(w http.ResponseWriter, r *http.Request) {
+	handle := r.PathValue("handle")
+	kind, ownerID, name, bio, ok := s.resolveHandle(r.Context(), handle)
+	if !ok || !s.handleHasPublicSpace(r.Context(), kind, ownerID) {
+		http.NotFound(w, r)
+		return
+	}
+	sub := bio
+	if sub == "" {
+		sub = "on " + s.ogSiteName(r, 0)
+	}
+	orgID := int64(0)
+	if kind == handleKindOrg {
+		orgID = ownerID
+	}
+	writeOGImagePNG(w, name, runeTruncate(sub, 70), s.resolveOGBrand(r, orgID))
 }
 
 // HandlePublicSpaceOGImage — GET /api/public/spaces/{id}/og.png. A title card for
@@ -386,13 +497,10 @@ func (s *Server) HandlePublicUserOGImage(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
-	var hasPublic bool
-	_ = s.DB.QueryRowContext(r.Context(),
-		`SELECT EXISTS(
-		   SELECT 1 FROM spaces sp
-		     JOIN space_members m ON m.space_id = sp.id
-		    WHERE m.user_id = (SELECT id FROM users WHERE LOWER(username) = LOWER($1))
-		      AND sp.visibility = 'public')`, name).Scan(&hasPublic)
+	// Same gate as the handle home (handleOwnerWhere): an owner row on a public
+	// ORG space does NOT give the user a home, so it must not render a card.
+	_, uid, _, _, resolved := s.resolveHandle(r.Context(), name)
+	hasPublic := resolved && s.handleHasPublicSpace(r.Context(), handleKindUser, uid)
 	if !hasPublic {
 		http.NotFound(w, r)
 		return

@@ -316,14 +316,38 @@
 			reverse_proxy {$TELA_UPSTREAM_FRONTEND:frontend:80}
 		}
 
+		# Bot UAs on a handle URL get a server-rendered card, rewritten to the
+		# backend's OG routes (same shape as @page_bots above). Without this the
+		# pretty URL — the one the docs tell people to share — unfurled as nothing:
+		# the SPA canonicalizes to /public/* client-side, which a link-preview
+		# fetcher never executes. Two matchers because the rewrite target differs
+		# by segment count. MUST precede @handle (first match wins). Keep the path
+		# regexes in sync with @handle below, and the UA regex with botUASubstrings
+		# in backend/internal/api/public_share.go.
+		@handle_home_bots {
+			path_regexp handlehome ^/([A-Za-z0-9][A-Za-z0-9._-]*)$
+			header_regexp User-Agent "(?i)(slackbot-linkexpanding|twitterbot|facebookexternalhit|facebookcatalog|discordbot|telegrambot|linkedinbot|whatsapp|mastodon|cardyb|slack-imgproxy|pinterest|skypeuripreview|embedly|iframely|bot/|bot\s)"
+		}
+		handle @handle_home_bots {
+			rewrite * /api/public/og/handles/{re.handlehome.1}
+			reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
+		}
+		@handle_space_bots {
+			path_regexp handlespace ^/([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9._-]+)$
+			header_regexp User-Agent "(?i)(slackbot-linkexpanding|twitterbot|facebookexternalhit|facebookcatalog|discordbot|telegrambot|linkedinbot|whatsapp|mastodon|cardyb|slack-imgproxy|pinterest|skypeuripreview|embedly|iframely|bot/|bot\s)"
+		}
+		handle @handle_space_bots {
+			rewrite * /api/public/og/handles/{re.handlespace.1}/{re.handlespace.2}
+			reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
+		}
+
 		# GitHub-style handle pages: /{handle} (user/org public home) and
 		# /{handle}/{space-slug} (public space). These ARE the open-web surface, so
-		# — like /public and /u — they stay INDEXABLE (no noindex header). The SPA
-		# resolves the handle client-side; bot OG/JSON-LD for these is served via the
-		# /public/* + /u/* backend routes the client canonicalizes to. Handle-shaped
-		# = one or two slug segments (dots allowed, e.g. gulden.gullu). Anything that
-		# isn't a real landing file, a known app route, or handle-shaped falls to the
-		# noindex fallback below.
+		# — like /public and /u — they stay INDEXABLE (no noindex header). Humans
+		# get the SPA, which resolves the handle client-side; bot UAs were captured
+		# above. Handle-shaped = one or two slug segments (dots allowed, e.g.
+		# gulden.gullu). Anything that isn't a real landing file, a known app route,
+		# or handle-shaped falls to the noindex fallback below.
 		@handle path_regexp ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)?$
 		handle @handle {
 			reverse_proxy {$TELA_UPSTREAM_FRONTEND:frontend:80}

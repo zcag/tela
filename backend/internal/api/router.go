@@ -286,6 +286,15 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("GET /public/spaces/{id}/pages/{page_id}", srv.HandlePublicReaderOG)
 	mux.HandleFunc("GET /public/spaces/{id}/pages/{page_id}/{slug}", srv.HandlePublicReaderOG)
 	mux.HandleFunc("GET /u/{username}", srv.HandlePublicUserOG)
+	// Unified handle URLs (/{handle}, /{handle}/{space-slug}) — the form the docs
+	// tell people to share, so they must unfurl too. Registered under an explicit
+	// /api/public/og/ prefix rather than as root wildcards: `GET /{handle}/{slug}`
+	// overlaps the /dav/ subtree without either being a subset, which ServeMux
+	// rejects at registration (it panics). Caddy bot-gates the pretty URL and
+	// REWRITES to these, the same shape @page_bots already uses for /p/{id}.
+	mux.HandleFunc("GET /api/public/og/handles/{handle}", srv.HandleHandleHomeOG)
+	mux.HandleFunc("GET /api/public/og/handles/{handle}/{spaceSlug}", srv.HandleHandleSpaceOG)
+	mux.HandleFunc("GET /api/public/handles/{handle}/og.png", srv.HandleHandleOGImage)
 	// Feature routes with a public purpose but no page/space (e.g. /ask): Caddy
 	// bot-gates the HTML to the backend (humans get the SPA); the og.png is served
 	// to all UAs. On auth.IsPublicPath. See api/og_feature.go.

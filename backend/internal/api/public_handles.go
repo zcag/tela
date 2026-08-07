@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -48,7 +49,7 @@ func (s *Server) GetPublicByHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind, ownerID, name, bio, ok := s.resolveHandle(r, handle)
+	kind, ownerID, name, bio, ok := s.resolveHandle(r.Context(), handle)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "no such handle")
 		return
@@ -95,7 +96,7 @@ func (s *Server) GetPublicByHandleSpace(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "not_found", "no such public space")
 		return
 	}
-	kind, ownerID, _, _, ok := s.resolveHandle(r, handle)
+	kind, ownerID, _, _, ok := s.resolveHandle(r.Context(), handle)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "no such public space")
 		return
@@ -129,14 +130,14 @@ func (s *Server) GetPublicByHandleSpace(w http.ResponseWriter, r *http.Request) 
 // resolveHandle maps a handle to (kind, ownerID, displayName, bio). User
 // namespace wins on a collision. bio is the user's bio (orgs have none → "").
 // ok=false when the handle matches no user and no org.
-func (s *Server) resolveHandle(r *http.Request, handle string) (kind string, ownerID int64, name, bio string, ok bool) {
+func (s *Server) resolveHandle(ctx context.Context, handle string) (kind string, ownerID int64, name, bio string, ok bool) {
 	var (
 		uid         int64
 		username    string
 		displayName string
 		userBio     string
 	)
-	err := s.DB.QueryRowContext(r.Context(),
+	err := s.DB.QueryRowContext(ctx,
 		`SELECT id, username, display_name, bio FROM users WHERE LOWER(username) = LOWER($1)`, handle).
 		Scan(&uid, &username, &displayName, &userBio)
 	if err == nil {
@@ -154,13 +155,25 @@ func (s *Server) resolveHandle(r *http.Request, handle string) (kind string, own
 		oid     int64
 		orgName string
 	)
-	err = s.DB.QueryRowContext(r.Context(),
+	err = s.DB.QueryRowContext(ctx,
 		`SELECT id, name FROM orgs WHERE LOWER(slug) = LOWER($1)`, handle).
 		Scan(&oid, &orgName)
 	if err == nil {
 		return handleKindOrg, oid, orgName, "", true
 	}
 	return "", 0, "", "", false
+}
+
+// handleHasPublicSpace reports whether the account has ≥1 public space under
+// handleOwnerWhere — the SAME predicate that decides whether /{handle} resolves.
+// The OG/sitemap surfaces gate on this so they can never advertise a card for a
+// home that 404s (which is exactly what the org-attribution bug produced).
+func (s *Server) handleHasPublicSpace(ctx context.Context, kind string, ownerID int64) bool {
+	var ok bool
+	_ = s.DB.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM spaces s
+		                WHERE s.visibility = 'public' AND `+handleOwnerWhere(kind)+`)`, ownerID).Scan(&ok)
+	return ok
 }
 
 // handleOwnerWhere is the ownership predicate for a handle home, over the
