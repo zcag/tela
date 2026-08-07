@@ -80,3 +80,20 @@ export function publicReaderPath(
   const s = pageSlug(title)
   return s ? `${base}/${s}` : base
 }
+
+// handleReaderPath is the CANONICAL public page URL:
+// /{handle}/{space-slug}/{id}/{slug}. Mirrors the backend's readerPathUnder.
+// Prefer it wherever the owning handle is known (a public space payload carries
+// owner_handle); publicReaderPath above stays the fallback for callers that only
+// have the space id. The id segment resolves the page, so the trailing slug is
+// decorative and a rename never breaks a shared link.
+export function handleReaderPath(
+  handle: string,
+  spaceSlug: string,
+  pageId: number,
+  title: string,
+): string {
+  const base = `/${handle}/${spaceSlug}/${pageId}`
+  const s = pageSlug(title)
+  return s ? `${base}/${s}` : base
+}

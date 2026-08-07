@@ -168,6 +168,30 @@ func (s *Server) canonicalSpacePath(ctx context.Context, sp models.Space) string
 	return publicSpacePath(sp.ID)
 }
 
+// canonicalReaderPath is the canonical path for a page in a public space:
+// /{handle}/{space-slug}/{id}/{page-slug}. The page ID stays load-bearing — it
+// is what resolves the page — so the slug remains decorative, regenerated from
+// the current title on every render. That is what makes the URL rename-proof:
+// retitling changes the slug text and every previously shared link still
+// resolves. Falls back to the id form when the space has no owning handle.
+func (s *Server) canonicalReaderPath(ctx context.Context, sp models.Space, pageID int64, title string) string {
+	return readerPathUnder(s.spaceHandlePath(ctx, sp.ID, sp.Slug), sp.ID, pageID, title)
+}
+
+// readerPathUnder builds a page path under an ALREADY-RESOLVED
+// /{handle}/{space-slug} prefix ("" → the id form). Takes the prefix so a
+// renderer emitting a whole list resolves the handle once instead of per row.
+func readerPathUnder(prefix string, spaceID, pageID int64, title string) string {
+	if prefix == "" {
+		return publicReaderPath(spaceID, pageID, title)
+	}
+	p := prefix + "/" + strconv.FormatInt(pageID, 10)
+	if sl := pageSlug(title); sl != "" {
+		p += "/" + sl
+	}
+	return p
+}
+
 // loadPublicSpaceForOG loads a space only when it is public, writing an HTML 404
 // otherwise (crawler-friendly — no JSON envelope).
 func (s *Server) loadPublicSpaceForOG(w http.ResponseWriter, r *http.Request) (models.Space, bool) {
@@ -229,8 +253,9 @@ func (s *Server) renderSpaceOG(w http.ResponseWriter, r *http.Request, sp models
 	if posts := s.topLevelPosts(r, sp.ID, 100); len(posts) > 0 {
 		bp := make([]map[string]any, 0, len(posts))
 		var list string
+		prefix := s.spaceHandlePath(r.Context(), sp.ID, sp.Slug)
 		for _, p := range posts {
-			path := publicReaderPath(sp.ID, p.id, p.title)
+			path := readerPathUnder(prefix, sp.ID, p.id, p.title)
 			bp = append(bp, map[string]any{
 				"@type": "BlogPosting", "headline": p.title,
 				"url":           base + path,
@@ -267,6 +292,13 @@ func (s *Server) HandlePublicReaderOG(w http.ResponseWriter, r *http.Request) {
 		writeNotFoundHTML(w)
 		return
 	}
+	s.renderReaderOG(w, r, sp, pageID)
+}
+
+// renderReaderOG writes the article card for one page in a public space. Shared
+// by the id route and the pretty /{handle}/{space-slug}/{id}/{slug} route so both
+// shapes unfurl identically and both emit the pretty path as canonical.
+func (s *Server) renderReaderOG(w http.ResponseWriter, r *http.Request, sp models.Space, pageID int64) {
 	page, err := selectPageByID(r.Context(), s.DB, pageID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && page.SpaceID != sp.ID) {
 		writeNotFoundHTML(w)
@@ -278,7 +310,7 @@ func (s *Server) HandlePublicReaderOG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := canonicalBaseURL()
-	canonical := base + publicReaderPath(sp.ID, pageID, page.Title)
+	canonical := base + s.canonicalReaderPath(r.Context(), sp, pageID, page.Title)
 	imageURL := base + fmt.Sprintf("/p/%d/og.png", pageID)
 	desc := postExcerpt(page.Body, page.Props, 200)
 	// Crawler-visible author should match the human-visible byline: the page's
@@ -296,7 +328,7 @@ func (s *Server) HandlePublicReaderOG(w http.ResponseWriter, r *http.Request) {
 		"mainEntityOfPage": canonical, "image": imageURL,
 		"datePublished": telaTimeToRFC3339(page.CreatedAt),
 		"dateModified":  telaTimeToRFC3339(page.UpdatedAt),
-		"isPartOf":      map[string]any{"@type": "Blog", "name": sp.Name, "url": base + publicSpacePath(sp.ID)},
+		"isPartOf":      map[string]any{"@type": "Blog", "name": sp.Name, "url": base + s.canonicalSpacePath(r.Context(), sp)},
 	}
 	if author != "" {
 		ld["author"] = map[string]any{"@type": "Person", "name": author, "url": base + "/" + url.PathEscape(author)}
@@ -460,6 +492,39 @@ func (s *Server) HandleHandleSpaceOG(w http.ResponseWriter, r *http.Request) {
 	s.renderSpaceOG(w, r, sp)
 }
 
+// HandleHandlePageOG — GET /{handle}/{space-slug}/{pageId}[/{slug}] (bot UAs).
+// Resolves the pretty page URL to its space + page and renders the same reader
+// card as the id route. The pageId segment is what resolves the page; the slug
+// is decorative and never checked, so a stale slug from before a retitle still
+// serves the right page instead of 404ing.
+func (s *Server) HandleHandlePageOG(w http.ResponseWriter, r *http.Request) {
+	kind, ownerID, _, _, ok := s.resolveHandle(r.Context(), r.PathValue("handle"))
+	if !ok {
+		writeNotFoundHTML(w)
+		return
+	}
+	spaceID, _, err := s.publicSpaceIDForHandle(r, kind, ownerID, r.PathValue("spaceSlug"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeNotFoundHTML(w)
+		return
+	}
+	if err != nil {
+		writeInternalHTML(w)
+		return
+	}
+	pageID, perr := strconv.ParseInt(r.PathValue("pageId"), 10, 64)
+	if perr != nil {
+		writeNotFoundHTML(w)
+		return
+	}
+	sp, err := selectSpaceByID(r.Context(), s.DB, spaceID)
+	if err != nil || sp.Visibility != spaceVisibilityPublic {
+		writeNotFoundHTML(w)
+		return
+	}
+	s.renderReaderOG(w, r, sp, pageID)
+}
+
 // HandleHandleOGImage — GET /api/public/handles/{handle}/og.png. The handle-home
 // card image, for a user OR an org (the older /api/public/users/{name}/og.png
 // stays for the legacy /u/ route).
@@ -587,15 +652,17 @@ func (s *Server) HandlePublicSitemap(w http.ResponseWriter, r *http.Request) {
 	}
 	// Pages in public spaces (reader URLs).
 	if rows, err := s.DB.QueryContext(ctx,
-		`SELECT p.id, p.title, p.space_id, p.updated_at
-		   FROM pages p JOIN spaces sp ON sp.id = p.space_id
-		  WHERE sp.visibility = 'public' AND p.deleted_at IS NULL
+		`SELECT p.id, p.title, p.space_id, p.updated_at, s.slug, `+spaceHandleExpr+`
+		   FROM pages p JOIN spaces s ON s.id = p.space_id
+		   LEFT JOIN orgs o ON o.id = s.org_id
+		  WHERE s.visibility = 'public' AND p.deleted_at IS NULL
 		  ORDER BY p.space_id, p.id`); err == nil {
 		for rows.Next() {
 			var pid, sid int64
-			var title, upd string
-			if rows.Scan(&pid, &title, &sid, &upd) == nil {
-				set.URLs = append(set.URLs, urlEntry{Loc: base + publicReaderPath(sid, pid, title), LastMod: sitemapDate(upd)})
+			var title, upd, spaceSlug, handle string
+			if rows.Scan(&pid, &title, &sid, &upd, &spaceSlug, &handle) == nil {
+				loc := readerPathUnder(handleSpacePath(handle, spaceSlug), sid, pid, title)
+				set.URLs = append(set.URLs, urlEntry{Loc: base + loc, LastMod: sitemapDate(upd)})
 			}
 		}
 		rows.Close()

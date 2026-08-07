@@ -19,12 +19,19 @@ export interface BlogPost extends BlogCardMeta {
 // for the grid below. The whole card is one link into the no-login reader.
 export function PostCard({
   spaceId,
+  handle,
+  spaceSlug,
   post,
   featured = false,
   headingLevel = 3,
   sectionLabel,
 }: {
   spaceId: number
+  // Owning handle + space slug, when the caller knows them: the card then links
+  // to the canonical /{handle}/{space-slug}/{id}/{slug} instead of the id form.
+  // Both or neither — a partial pair falls back to the id route.
+  handle?: string
+  spaceSlug?: string
   post: BlogPost
   featured?: boolean
   // Heading tag for the title, so each surface keeps a correct outline: posts
@@ -37,10 +44,20 @@ export function PostCard({
 }) {
   const title = post.title || 'Untitled'
   const Heading = headingLevel === 2 ? 'h2' : 'h3'
+  const slug = pageSlug(title) || undefined
+  const linkProps =
+    handle && spaceSlug
+      ? ({
+          to: '/$handle/$spaceSlug/$pageId/{-$slug}',
+          params: { handle, spaceSlug, pageId: post.id, slug },
+        } as const)
+      : ({
+          to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
+          params: { spaceId, pageId: post.id, slug },
+        } as const)
   return (
     <Link
-      to="/public/spaces/$spaceId/pages/$pageId/{-$slug}"
-      params={{ spaceId, pageId: post.id, slug: pageSlug(title) || undefined }}
+      {...linkProps}
       className={[
         'group relative flex overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border-subtle)]',
         'bg-[var(--surface-1)] no-underline transition-all duration-[var(--duration-fast)]',

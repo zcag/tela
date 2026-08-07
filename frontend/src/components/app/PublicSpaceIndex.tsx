@@ -146,6 +146,10 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
           {showFeatured ? (
             <PostCard
               spaceId={space.id}
+
+              handle={space.owner_handle}
+
+              spaceSlug={space.slug}
               post={featured}
               featured
               headingLevel={2}
@@ -161,6 +165,10 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
               return (
                 <PostCard
                   spaceId={space.id}
+
+                  handle={space.owner_handle}
+
+                  spaceSlug={space.slug}
                   post={grid[0]}
                   headingLevel={2}
                   sectionLabel={sectionLabel(pages, grid[0].id)}
@@ -172,6 +180,10 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
                   <PostCard
                     key={p.id}
                     spaceId={space.id}
+
+                    handle={space.owner_handle}
+
+                    spaceSlug={space.slug}
                     post={p}
                     headingLevel={2}
                     sectionLabel={sectionLabel(pages, p.id)}

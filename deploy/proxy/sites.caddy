@@ -340,15 +340,27 @@
 			rewrite * /api/public/og/handles/{re.handlespace.1}/{re.handlespace.2}
 			reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
 		}
+		# Page reader: /{handle}/{space-slug}/{pageId}[/{slug}]. The numeric id is
+		# what resolves the page; the trailing slug is decorative, so it is passed
+		# through but never required.
+		@handle_page_bots {
+			path_regexp handlepage ^/([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9._-]+)/([0-9]+)(?:/([A-Za-z0-9._-]*))?$
+			header_regexp User-Agent "(?i)(slackbot-linkexpanding|twitterbot|facebookexternalhit|facebookcatalog|discordbot|telegrambot|linkedinbot|whatsapp|mastodon|cardyb|slack-imgproxy|pinterest|skypeuripreview|embedly|iframely|bot/|bot\s)"
+		}
+		handle @handle_page_bots {
+			rewrite * /api/public/og/handles/{re.handlepage.1}/{re.handlepage.2}/{re.handlepage.3}
+			reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
+		}
 
 		# GitHub-style handle pages: /{handle} (user/org public home) and
 		# /{handle}/{space-slug} (public space). These ARE the open-web surface, so
 		# — like /public and /u — they stay INDEXABLE (no noindex header). Humans
 		# get the SPA, which resolves the handle client-side; bot UAs were captured
 		# above. Handle-shaped = one or two slug segments (dots allowed, e.g.
-		# gulden.gullu). Anything that isn't a real landing file, a known app route,
-		# or handle-shaped falls to the noindex fallback below.
-		@handle path_regexp ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)?$
+		# gulden.gullu), optionally followed by a numeric page id + decorative slug.
+		# Anything that isn't a real landing file, a known app route, or
+		# handle-shaped falls to the noindex fallback below.
+		@handle path_regexp ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+(/[0-9]+(/[A-Za-z0-9._-]*)?)?)?$
 		handle @handle {
 			reverse_proxy {$TELA_UPSTREAM_FRONTEND:frontend:80}
 		}

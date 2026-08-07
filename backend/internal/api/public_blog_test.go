@@ -117,7 +117,12 @@ func TestPublicBlogSurfaces(t *testing.T) {
 	// Space front pages list at their canonical PRETTY path (/{handle}/{slug}),
 	// author homes at the unified /{handle} — not the legacy /u/ form. Reader
 	// pages keep the id path (no pretty page URL exists yet).
-	for _, want := range []string{"<urlset", "/alice/field-notes</loc>", fmt.Sprintf("/pages/%d", post), "/alice</loc>"} {
+	for _, want := range []string{
+		"<urlset",
+		"/alice/field-notes</loc>",
+		fmt.Sprintf("/alice/field-notes/%d/the-token-tax</loc>", post),
+		"/alice</loc>",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sitemap missing %q\n%s", want, body)
 		}

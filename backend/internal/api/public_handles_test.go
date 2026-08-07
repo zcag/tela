@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -222,6 +223,29 @@ func TestHandleOG_UnfurlsBothURLShapes(t *testing.T) {
 	}
 	if !strings.Contains(body, `<link rel="canonical" href="/hana/hana-blog">`) {
 		t.Fatalf("canonical should be the pretty handle form\n%s", body)
+	}
+
+	// Page card via the pretty URL, and the rename-proofing that justifies keeping
+	// the id in the path: a STALE slug still resolves, because the id governs.
+	var pid int64
+	mustQueryRow(t, d, `SELECT id FROM pages WHERE space_id = $1 AND title = 'First Post'`, &pid, own)
+	for _, p := range []string{
+		fmt.Sprintf("/api/public/og/handles/hana/hana-blog/%d/first-post", pid),
+		fmt.Sprintf("/api/public/og/handles/hana/hana-blog/%d/a-totally-stale-slug", pid),
+		fmt.Sprintf("/api/public/og/handles/hana/hana-blog/%d", pid),
+	} {
+		status, body = og(p)
+		if status != http.StatusOK || !strings.Contains(body, "First Post") {
+			t.Fatalf("%s status=%d body=%s", p, status, body)
+		}
+		want := fmt.Sprintf(`<link rel="canonical" href="/hana/hana-blog/%d/first-post">`, pid)
+		if !strings.Contains(body, want) {
+			t.Fatalf("%s canonical should be %s\n%s", p, want, body)
+		}
+	}
+	// A page id that isn't in this space must 404, not leak another space's page.
+	if status, _ = og(fmt.Sprintf("/api/public/og/handles/hana/hana-blog/%d", pid+9999)); status != http.StatusNotFound {
+		t.Fatalf("foreign page id status=%d want 404", status)
 	}
 
 	// The org space is NOT reachable under the user's handle (matches the API).

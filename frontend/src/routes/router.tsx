@@ -798,6 +798,31 @@ const publicHandleSpaceRoute = createRoute({
   ),
 })
 
+// A page inside a public space: /{handle}/{space-slug}/{pageId}[/{slug}]. The
+// numeric pageId resolves the page; the slug is decorative (regenerated from the
+// current title), so a link shared before a retitle still lands correctly — the
+// same guarantee /p/{id}/{slug} and the id-form reader already give.
+const publicHandlePageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/$handle/$spaceSlug/$pageId/{-$slug}',
+  parseParams: (raw) => ({
+    handle: raw.handle,
+    spaceSlug: raw.spaceSlug,
+    pageId: Number(raw.pageId),
+    slug: raw.slug,
+  }),
+  stringifyParams: (params) => ({
+    handle: params.handle,
+    spaceSlug: params.spaceSlug,
+    pageId: String(params.pageId),
+    slug: params.slug,
+  }),
+  component: lazyRouteComponent(
+    () => import('./public'),
+    'PublicHandlePageRoute',
+  ),
+})
+
 // #3 PDF print surface. Public child of rootRoute (NO ensureMe gate — the
 // signed print token is the authorization), loaded only by gotenberg's headless
 // Chromium during PDF export. Lazy so it never lands in the main chunk.
@@ -827,6 +852,7 @@ const routeTree = rootRoute.addChildren([
   // /share, /public, …) always out-matches the single-segment handle route.
   publicHandleRoute,
   publicHandleSpaceRoute,
+  publicHandlePageRoute,
   appLayoutRoute.addChildren([
     indexRoute,
     quickNotesRoute,

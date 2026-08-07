@@ -225,3 +225,57 @@ export function PublicReaderRoute() {
     />
   )
 }
+
+// A page addressed by the pretty handle URL: /{handle}/{space-slug}/{id}/{slug}.
+// Resolves the space by handle+slug, then renders the SAME reader as the id
+// route. The id resolves the page, so a stale slug (shared before a retitle)
+// still lands on the right page — it is only canonicalised in the address bar.
+export function PublicHandlePageRoute() {
+  const { handle, spaceSlug, pageId } = useParams({
+    from: '/$handle/$spaceSlug/$pageId/{-$slug}',
+  })
+  const spaceQuery = usePublicByHandleSpace(handle, spaceSlug)
+  const spaceId = spaceQuery.data?.space.id
+  const pageQuery = usePublicSpacePage(spaceId ?? -1, pageId, spaceId != null)
+
+  const pageTitle = pageQuery.data?.page.title ?? ''
+  useEffect(() => {
+    if (!pageQuery.data) return
+    const slug = pageSlug(pageTitle)
+    const base = `/${handle}/${spaceSlug}/${pageId}`
+    const desired = slug ? `${base}/${slug}` : base
+    if (window.location.pathname !== desired) {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        desired + window.location.search + window.location.hash,
+      )
+    }
+  }, [pageQuery.data, pageTitle, handle, spaceSlug, pageId])
+
+  if (spaceQuery.isLoading || (spaceId != null && pageQuery.isLoading)) {
+    return (
+      <PublicShell>
+        <p role="status" className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">
+          Loading…
+        </p>
+      </PublicShell>
+    )
+  }
+  if (spaceQuery.error || !spaceQuery.data || pageQuery.error || !pageQuery.data) {
+    return <PublicUnavailable />
+  }
+  return (
+    <PublicReaderView
+      space={spaceQuery.data.space}
+      pageId={pageQuery.data.page.id}
+      pageTitle={pageQuery.data.page.title}
+      pageBody={pageQuery.data.page.body}
+      pageProps={pageQuery.data.page.props}
+      createdAt={pageQuery.data.page.created_at}
+      updatedAt={pageQuery.data.page.updated_at}
+      author={pageQuery.data.page.author}
+      editor={pageQuery.data.page.editor}
+    />
+  )
+}

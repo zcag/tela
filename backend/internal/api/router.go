@@ -294,6 +294,8 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	// REWRITES to these, the same shape @page_bots already uses for /p/{id}.
 	mux.HandleFunc("GET /api/public/og/handles/{handle}", srv.HandleHandleHomeOG)
 	mux.HandleFunc("GET /api/public/og/handles/{handle}/{spaceSlug}", srv.HandleHandleSpaceOG)
+	mux.HandleFunc("GET /api/public/og/handles/{handle}/{spaceSlug}/{pageId}", srv.HandleHandlePageOG)
+	mux.HandleFunc("GET /api/public/og/handles/{handle}/{spaceSlug}/{pageId}/{slug}", srv.HandleHandlePageOG)
 	mux.HandleFunc("GET /api/public/handles/{handle}/og.png", srv.HandleHandleOGImage)
 	// Feature routes with a public purpose but no page/space (e.g. /ask): Caddy
 	// bot-gates the HTML to the backend (humans get the SPA); the og.png is served
