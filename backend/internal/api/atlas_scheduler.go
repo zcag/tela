@@ -11,7 +11,7 @@ import (
 // The scheduler runs two decoupled passes off a 1-minute base tick:
 //   - detection: a cheap no-clone drift probe per source (git ls-remote / jira
 //     count), at most every atlasDetectInterval, recording staleness for the UI
-//     + the regen gate. No generation.
+//   - the regen gate. No generation.
 //   - regen: a delta for each STALE source, on the project's (slower) cadence.
 const (
 	atlasPollInterval   = time.Minute

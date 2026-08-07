@@ -48,7 +48,7 @@ type attachmentOut struct {
 	ByteSize int64  `json:"byte_size"`
 	Hash     string `json:"hash"`
 	URL      string `json:"url"`
-	Embedded bool   `json:"embedded"` // body already references this file's hash
+	Embedded bool   `json:"embedded"`          // body already references this file's hash
 	Summary  string `json:"summary,omitempty"` // machine-generated, "" until the worker runs (or non-text)
 }
 

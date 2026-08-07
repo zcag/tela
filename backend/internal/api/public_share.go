@@ -77,7 +77,7 @@ func (s *Server) HandlePublicShare(w http.ResponseWriter, r *http.Request) {
 		// /pages/{id} no longer resolves and renders the SPA's not-found view.
 		dest := pageAppPath(spaceID, pageID, title)
 		if visibility == spaceVisibilityPublic {
-			dest = publicReaderPath(spaceID, pageID, title)
+			dest = s.canonicalPagePath(r.Context(), spaceID, pageID, title)
 		}
 		http.Redirect(w, r, dest, http.StatusFound)
 		return

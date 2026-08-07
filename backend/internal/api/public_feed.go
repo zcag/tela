@@ -71,6 +71,8 @@ func (s *Server) GetPublicSpaceFeed(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	base := canonicalBaseURL()
+	// One feed = one space, so resolve its pretty prefix once, not per item.
+	prefix := s.spacePrettyPrefix(r.Context(), id)
 	items := []rssItem{}
 	for rows.Next() {
 		var (
@@ -84,7 +86,7 @@ func (s *Server) GetPublicSpaceFeed(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal", "scan feed row failed")
 			return
 		}
-		link := base + publicReaderPath(id, pid, title)
+		link := base + readerPathUnder(prefix, id, pid, title)
 		items = append(items, rssItem{
 			Title:       title,
 			Link:        link,

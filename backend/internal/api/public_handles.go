@@ -193,7 +193,7 @@ func (s *Server) spaceHandlePath(ctx context.Context, spaceID int64, slug string
 }
 
 // spaceHandleExpr resolves a space's owning handle over the `spaces s LEFT JOIN
-// orgs o` shape — org slug, else the personal owner's username, else ''. Shared
+// orgs o` shape — org slug, else the personal owner's username, else ”. Shared
 // so the per-space lookup and the sitemap's bulk query stay identical (the
 // sitemap must not re-derive it per row: that's an N+1 inside an open cursor).
 const spaceHandleExpr = `COALESCE(o.slug,

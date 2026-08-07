@@ -48,7 +48,8 @@ func TestGetPage_PublicSpaceNonMember_RedirectsInsteadOf403(t *testing.T) {
 	if body.Code != "forbidden_public" {
 		t.Fatalf("code=%q want forbidden_public", body.Code)
 	}
-	want := fmt.Sprintf("/public/spaces/%d/pages/%d/claude-101", pub, pageID)
+	// The canonical pretty form — what a denied non-member should be sent to.
+	want := fmt.Sprintf("/alice/claude-notes/%d/claude-101", pageID)
 	if body.PublicPath != want {
 		t.Fatalf("public_path=%q want %q", body.PublicPath, want)
 	}
@@ -131,8 +132,10 @@ func TestSearch_PublicNonMemberHit_LinksToReader(t *testing.T) {
 			if !r.Public {
 				t.Errorf("public-space hit %q: public=false, want true", r.Title)
 			}
-			if !strings.Contains(r.URL, fmt.Sprintf("/public/spaces/%d/pages/", pub)) {
-				t.Errorf("public-space hit url=%q want the /public reader route", r.URL)
+			// Canonical pretty reader URL, not the id form — this `url` is what
+			// MCP/agent callers follow, and the id form canonicalizes away.
+			if !strings.Contains(r.URL, "/alice/claude-notes/") {
+				t.Errorf("public-space hit url=%q want the canonical reader URL", r.URL)
 			}
 		case own:
 			sawOwn = true

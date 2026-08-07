@@ -27,11 +27,11 @@ type adminUsageTotals struct {
 type adminAccountUsage struct {
 	Kind     string `json:"kind"` // "user" | "org"
 	ID       int64  `json:"id"`
-	Label    string `json:"label"`     // username or org name
+	Label    string `json:"label"` // username or org name
 	PlanKey  string `json:"plan_key"`
 	PlanName string `json:"plan_name"`
-	LLMCalls int64  `json:"llm_calls"`        // this month
-	LLMCap   *int64 `json:"llm_cap"`          // monthly cap (nil = unlimited)
+	LLMCalls int64  `json:"llm_calls"` // this month
+	LLMCap   *int64 `json:"llm_cap"`   // monthly cap (nil = unlimited)
 }
 
 type adminUsageOut struct {

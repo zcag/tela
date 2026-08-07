@@ -110,7 +110,9 @@ func TestPublicShare_FullFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("Chrome UA status=%d want 302", resp.StatusCode)
 	}
-	if wantLoc, loc := publicReaderPath(pubSpace, pageID, "Welcome"), resp.Header.Get("Location"); loc != wantLoc {
+	// Redirect target is the CANONICAL pretty URL — sending a human to the id
+	// form would land them on a page that canonicalizes elsewhere.
+	if wantLoc, loc := fmt.Sprintf("/admin/engineering/%d/welcome", pageID), resp.Header.Get("Location"); loc != wantLoc {
 		t.Fatalf("Chrome UA (public) Location=%q want %q", loc, wantLoc)
 	}
 

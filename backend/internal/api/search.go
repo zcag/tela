@@ -162,6 +162,9 @@ func (s *Server) searchCore(ctx context.Context, u *auth.User, k *auth.APIKey, q
 	}
 
 	results := make([]searchHit, 0, len(hits))
+	// Hits cluster by space, so memoize the pretty prefix per space rather than
+	// re-resolving it for every public hit.
+	prefixes := map[int64]string{}
 	for _, h := range hits {
 		bc, err := pageBreadcrumb(ctx, s.DB, h.ID)
 		if err != nil {
@@ -173,7 +176,12 @@ func (s *Server) searchCore(ctx context.Context, u *auth.User, k *auth.APIKey, q
 		public := h.IsMember == 0
 		path := pageAppPath(h.SpaceID, h.ID, h.Title)
 		if public {
-			path = publicReaderPath(h.SpaceID, h.ID, h.Title)
+			pre, seen := prefixes[h.SpaceID]
+			if !seen {
+				pre = s.spacePrettyPrefix(ctx, h.SpaceID)
+				prefixes[h.SpaceID] = pre
+			}
+			path = readerPathUnder(pre, h.SpaceID, h.ID, h.Title)
 		}
 		results = append(results, searchHit{
 			PageID:     h.ID,

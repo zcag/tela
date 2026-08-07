@@ -664,7 +664,7 @@ func (s *Server) publicReaderFallbackPath(ctx context.Context, ae *apiErr, pageI
 	if err != nil || sp.Visibility != spaceVisibilityPublic {
 		return ""
 	}
-	return publicReaderPath(p.SpaceID, p.ID, p.Title)
+	return s.canonicalPagePath(ctx, p.SpaceID, p.ID, p.Title)
 }
 
 func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {

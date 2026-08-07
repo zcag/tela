@@ -144,10 +144,10 @@ func TestFeedbackUnseenBadge(t *testing.T) {
 func TestFeedbackAdminRecipients(t *testing.T) {
 	d := newAPITestDB(t)
 	s := New(d)
-	sub := seedUser(t, d, "subadmin", "testpass123", true)   // submitter (excluded)
-	a2 := seedUser(t, d, "admin2", "testpass123", true)       // admin with email (included)
-	a3 := seedUser(t, d, "admin3", "testpass123", true)       // admin, NO email (excluded)
-	mem := seedUser(t, d, "member1", "testpass123", false)    // non-admin with email (excluded)
+	sub := seedUser(t, d, "subadmin", "testpass123", true) // submitter (excluded)
+	a2 := seedUser(t, d, "admin2", "testpass123", true)    // admin with email (included)
+	a3 := seedUser(t, d, "admin3", "testpass123", true)    // admin, NO email (excluded)
+	mem := seedUser(t, d, "member1", "testpass123", false) // non-admin with email (excluded)
 	for id, email := range map[int64]string{sub: "sub@x.test", a2: "a2@x.test", mem: "m@x.test"} {
 		if _, err := d.Exec(`UPDATE users SET email=$1 WHERE id=$2`, email, id); err != nil {
 			t.Fatalf("set email: %v", err)

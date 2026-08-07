@@ -343,8 +343,8 @@ func (f *davDiscardFile) Write(p []byte) (int, error) {
 	f.n += int64(len(p))
 	return len(p), nil
 }
-func (f *davDiscardFile) Close() error                { return nil }
-func (f *davDiscardFile) Read([]byte) (int, error)    { return 0, os.ErrInvalid }
+func (f *davDiscardFile) Close() error             { return nil }
+func (f *davDiscardFile) Read([]byte) (int, error) { return 0, os.ErrInvalid }
 func (f *davDiscardFile) Seek(int64, int) (int64, error) {
 	return 0, os.ErrInvalid
 }

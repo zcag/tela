@@ -192,6 +192,26 @@ func readerPathUnder(prefix string, spaceID, pageID int64, title string) string 
 	return p
 }
 
+// canonicalPagePath is canonicalReaderPath for callers that hold only a space
+// ID (no loaded Space): /{handle}/{space-slug}/{id}/{slug}, falling back to the
+// id form. Every surface that hands out a public page link routes through this
+// or readerPathUnder — an RSS <link>, a /p redirect or a search `url` pointing
+// at a URL that canonicalizes elsewhere is a link people copy and share.
+func (s *Server) canonicalPagePath(ctx context.Context, spaceID, pageID int64, title string) string {
+	return readerPathUnder(s.spacePrettyPrefix(ctx, spaceID), spaceID, pageID, title)
+}
+
+// spacePrettyPrefix resolves a space's /{handle}/{space-slug} prefix by ID ("" if
+// none). Split out so loop callers resolve it once per space instead of per row.
+func (s *Server) spacePrettyPrefix(ctx context.Context, spaceID int64) string {
+	var slug, handle string
+	_ = s.DB.QueryRowContext(ctx,
+		`SELECT s.slug, `+spaceHandleExpr+`
+		   FROM spaces s LEFT JOIN orgs o ON o.id = s.org_id
+		  WHERE s.id = $1`, spaceID).Scan(&slug, &handle)
+	return handleSpacePath(handle, slug)
+}
+
 // loadPublicSpaceForOG loads a space only when it is public, writing an HTML 404
 // otherwise (crawler-friendly — no JSON envelope).
 func (s *Server) loadPublicSpaceForOG(w http.ResponseWriter, r *http.Request) (models.Space, bool) {

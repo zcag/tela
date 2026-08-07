@@ -54,7 +54,7 @@ func TestMetrics_Gating(t *testing.T) {
 	for _, want := range []string{
 		"tela_http_requests_total",
 		"tela_http_request_duration_seconds",
-		"go_goroutines",        // Go runtime collector
+		"go_goroutines",              // Go runtime collector
 		"process_start_time_seconds", // process collector
 	} {
 		if !strings.Contains(string(body), want) {
