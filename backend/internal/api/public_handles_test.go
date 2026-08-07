@@ -75,6 +75,52 @@ func TestByHandle_UserHome(t *testing.T) {
 	}
 }
 
+// TestByHandle_UserHomeExcludesOrgSpaces: setting up an org space leaves the
+// creator a space_members 'owner' row on it, which used to attribute every
+// public ORG space to its creator's PERSONAL handle — listed on their home and
+// served at /{user}/{slug} beside the canonical /{org}/{slug}. A user handle
+// must show only their own (org-less) spaces; the org handle keeps the rest.
+func TestByHandle_UserHomeExcludesOrgSpaces(t *testing.T) {
+	ts, d := newWiredServer(t)
+	erin := seedUser(t, d, "erin", "erinpw123", false)
+
+	own := seedPublicSpace(t, d, "Erin Blog", "erin-blog", erin)
+
+	// A public org space erin created — she holds the 'owner' member row.
+	org := seedOrg(t, d, "Widget Co", "widgetco")
+	orgSpace := seedOrgSpace(t, d, "Widget Docs", "widget-docs", org)
+	seedMember(t, d, orgSpace, erin, "owner")
+	mustExec(t, d, `UPDATE spaces SET visibility = 'public' WHERE id = $1`, orgSpace)
+	mustExec(t, d, `INSERT INTO pages (space_id, parent_id, title, body, position) VALUES ($1, NULL, 'Org Post', 'b', 0)`, orgSpace)
+
+	status, out := getByHandle(t, tsWrap{ts.URL}, "erin")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d want 200", status)
+	}
+	if len(out.Spaces) != 1 || out.Spaces[0].ID != own {
+		t.Fatalf("spaces=%+v want only her own space (%d)", out.Spaces, own)
+	}
+
+	// The org home still lists it — the space moved handles, it didn't vanish.
+	status, orgOut := getByHandle(t, tsWrap{ts.URL}, "widgetco")
+	if status != http.StatusOK {
+		t.Fatalf("org home status=%d want 200", status)
+	}
+	if len(orgOut.Spaces) != 1 || orgOut.Spaces[0].ID != orgSpace {
+		t.Fatalf("org spaces=%+v want %d", orgOut.Spaces, orgSpace)
+	}
+
+	// And it is no longer SERVED under her handle (the duplicate-URL half).
+	resp, err := http.Get(ts.URL + "/api/public/by-handle/erin/spaces/widget-docs")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("org space under user handle status=%d want 404", resp.StatusCode)
+	}
+}
+
 // TestByHandle_DisplayName confirms name = display_name when set.
 func TestByHandle_DisplayName(t *testing.T) {
 	ts, d := newWiredServer(t)

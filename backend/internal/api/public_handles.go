@@ -163,6 +163,26 @@ func (s *Server) resolveHandle(r *http.Request, handle string) (kind string, own
 	return "", 0, "", "", false
 }
 
+// handleOwnerWhere is the ownership predicate for a handle home, over the
+// `spaces s` alias with the owner id as $1. ONE definition — the space list, the
+// posts strip and the by-slug lookup must agree on what a handle owns, or a
+// space shows on a home it can't be opened from (or vice versa).
+//
+// The user branch is deliberately `org_id IS NULL`: setting up an org space
+// leaves you a space_members 'owner' row on it, so without the guard every
+// public ORG space its creator set up was attributed to their PERSONAL handle —
+// listed on their home AND served at /{user}/{slug} alongside the canonical
+// /{org}/{slug}. Org spaces belong to the org handle, and only there.
+func handleOwnerWhere(kind string) string {
+	if kind == handleKindOrg {
+		return `s.org_id = $1`
+	}
+	return `(s.org_id IS NULL
+	         AND (s.personal_user_id = $1
+	              OR EXISTS (SELECT 1 FROM space_members m
+	                          WHERE m.space_id = s.id AND m.user_id = $1 AND m.role = 'owner')))`
+}
+
 // handlePostDTO is one post on a handle home's "Latest" strip — a top-level
 // public page, with the space it lives in (for the link + label) and the shared
 // blog-card metadata (excerpt, reading time, cover, tags).
@@ -180,15 +200,7 @@ type handlePostDTO struct {
 // PUBLIC spaces (same ownership scope as publicSpacesForHandle). Public-only —
 // the visibility gate keeps private spaces out.
 func (s *Server) recentPostsForHandle(r *http.Request, kind string, ownerID int64, limit int) ([]handlePostDTO, error) {
-	var where string
-	switch kind {
-	case handleKindOrg:
-		where = `s.org_id = $1`
-	default:
-		where = `(s.personal_user_id = $1
-		          OR EXISTS (SELECT 1 FROM space_members m
-		                      WHERE m.space_id = s.id AND m.user_id = $1 AND m.role = 'owner'))`
-	}
+	where := handleOwnerWhere(kind)
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT s.id, s.name, p.id, p.title, p.body, p.props, p.created_at, p.updated_at
 		  FROM pages p JOIN spaces s ON s.id = p.space_id
@@ -217,20 +229,12 @@ func (s *Server) recentPostsForHandle(r *http.Request, kind string, ownerID int6
 }
 
 // publicSpacesForHandle returns the owner account's PUBLIC spaces with the
-// discover-style projection (page_count + last activity). For a user that means
-// the spaces they own — their personal home (spaces.personal_user_id) or a team
-// space they own (the space_members 'owner' row); for an org, spaces.org_id.
-// Public-visibility only — never leaks a private space.
+// discover-style projection (page_count + last activity). Ownership scope is
+// handleOwnerWhere — for a user, their personal home or an org-less space they
+// own; for an org, spaces.org_id. Public-visibility only — never leaks a
+// private space.
 func (s *Server) publicSpacesForHandle(r *http.Request, kind string, ownerID int64) ([]handleSpaceDTO, error) {
-	var where string
-	switch kind {
-	case handleKindOrg:
-		where = `s.org_id = $1`
-	default:
-		where = `(s.personal_user_id = $1
-		          OR EXISTS (SELECT 1 FROM space_members m
-		                      WHERE m.space_id = s.id AND m.user_id = $1 AND m.role = 'owner'))`
-	}
+	where := handleOwnerWhere(kind)
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT s.id, s.name, s.slug, s.description,
 		       agg.page_count, agg.last_updated
@@ -281,15 +285,12 @@ func (s *Server) publicSpaceIDForHandle(r *http.Request, kind string, ownerID in
 			  LIMIT 1`, ownerID, slug).Scan(&id, &owner)
 		return id, owner, err
 	}
-	// User: their personal home OR a team space they own. The byline handle is
-	// the user themselves.
+	// User: their personal home OR an org-less space they own (handleOwnerWhere).
+	// The byline handle is the user themselves.
 	err := s.DB.QueryRowContext(r.Context(),
 		`SELECT s.id, u.username
 		   FROM spaces s JOIN users u ON u.id = $1
-		  WHERE s.slug = $2 AND s.visibility = 'public'
-		    AND (s.personal_user_id = $1
-		         OR EXISTS (SELECT 1 FROM space_members m
-		                     WHERE m.space_id = s.id AND m.user_id = $1 AND m.role = 'owner'))
+		  WHERE s.slug = $2 AND s.visibility = 'public' AND `+handleOwnerWhere(handleKindUser)+`
 		  LIMIT 1`, ownerID, slug).Scan(&id, &owner)
 	return id, owner, err
 }
