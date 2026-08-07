@@ -15,6 +15,23 @@ const (
 	retrieveK     = 18
 	contextBudget = 22000 // chars of source per page
 	pageFanout    = 16    // pages drafted/refined in flight; the LLM gate is the real limiter
+
+	// refListBudget caps the ITEM LIST in one reference-page prompt. The list used
+	// to be unbounded — every item of the page's surface in a single call — so the
+	// prompt grew with the repo. A 4,503-item surface rendered a ~456 KB list and
+	// produced a 406 KB / ~101k-token prompt, which reliably killed the local model
+	// with a Metal OOM (taking every in-flight request down with it) and failed the
+	// chat over to the paid relief layer.
+	//
+	// The list is split into batches instead of truncated: refSystem tells the
+	// model the list is COMPLETE and that every item must appear, so dropping items
+	// would produce a page that lies about its own coverage — and the coverage
+	// audit, which checks the same surface, would then flag them as gaps.
+	//
+	// 32000 chars of list + contextBudget of excerpts + scaffolding lands around
+	// 13k tokens: near the measured p90 of ordinary traffic (21.4k) and far below
+	// the crash region. Roughly 320 items per call at typical item length.
+	refListBudget = 32000
 )
 
 // draftStage writes each page. Narrative pages hybrid-retrieve the most relevant
@@ -143,22 +160,31 @@ func buildJiraStateContext(rc *RunContext) (core.Chunk, bool) {
 }
 
 func draftReference(ctx context.Context, rc *RunContext, p *core.Page) (string, error) {
-	items := rc.Art.SpineByKind(p.SpineKinds...)
-	var list strings.Builder
-	q := make([]string, 0, len(items))
-	for _, it := range items {
-		fmt.Fprintf(&list, "- [%s] %s  (%s:%d)%s\n", it.Kind, it.Name, it.File, it.Line, detailSuffix(it.Detail))
-		q = append(q, it.Name)
+	batches := spineBatches(rc.Art.SpineByKind(p.SpineKinds...), refListBudget)
+	var out strings.Builder
+	var summary string
+	for i, batch := range batches {
+		list, query := renderSpineList(batch)
+		// Retrieval is per batch too. The query used to be every item name in the
+		// surface joined together, which the embedder then clamped — so the vector
+		// described an arbitrary prefix of the list rather than this page's scope.
+		chunks, err := retrieve(ctx, rc, query, retrieveK)
+		if err != nil {
+			return "", err
+		}
+		body, err := rc.LLM.Chat(ctx, refSystem, refUser(p.Title, list, assembleContext(chunks), i, len(batches)), 0.2)
+		if err != nil {
+			return "", err
+		}
+		clean, s := extractSummary(sanitizePage(body))
+		if summary == "" {
+			summary = s // only part 1 is asked for one; later parts must not overwrite it
+		}
+		if i > 0 {
+			out.WriteString("\n\n")
+		}
+		out.WriteString(strings.TrimSpace(clean))
 	}
-	chunks, err := retrieve(ctx, rc, strings.Join(q, " "), retrieveK)
-	if err != nil {
-		return "", err
-	}
-	body, err := rc.LLM.Chat(ctx, refSystem, refUser(p.Title, list.String(), assembleContext(chunks)), 0.2)
-	if err != nil {
-		return "", err
-	}
-	clean, summary := extractSummary(sanitizePage(body))
 	// A reference page's outline summary is only a generic placeholder ("Complete
 	// reference, anchored to the extracted surface"), so — unlike a narrative page,
 	// whose outline summary is a real plan line worth keeping — overwrite it
@@ -166,7 +192,48 @@ func draftReference(ctx context.Context, rc *RunContext, p *core.Page) (string, 
 	// publish skip the lock so the auto-summarizer writes a real one from the body,
 	// rather than freezing the placeholder.
 	p.Summary = summary
-	return clean, nil
+	return out.String(), nil
+}
+
+// spineBatches splits a page's surface into groups whose RENDERED list stays
+// under budget, so one prompt can never grow with the size of the repo. Always
+// returns at least one batch (possibly empty) so a page with no extracted
+// surface still gets drafted exactly as before.
+func spineBatches(items []core.SpineItem, budget int) [][]core.SpineItem {
+	if len(items) == 0 {
+		return [][]core.SpineItem{nil}
+	}
+	var out [][]core.SpineItem
+	var cur []core.SpineItem
+	size := 0
+	for _, it := range items {
+		n := len(renderSpineItem(it))
+		// An item bigger than the whole budget still goes in a batch of its own
+		// rather than being dropped — coverage beats prompt tidiness.
+		if len(cur) > 0 && size+n > budget {
+			out = append(out, cur)
+			cur, size = nil, 0
+		}
+		cur = append(cur, it)
+		size += n
+	}
+	return append(out, cur)
+}
+
+func renderSpineItem(it core.SpineItem) string {
+	return fmt.Sprintf("- [%s] %s  (%s:%d)%s\n", it.Kind, it.Name, it.File, it.Line, detailSuffix(it.Detail))
+}
+
+// renderSpineList renders one batch as the prompt's item list plus the retrieval
+// query for exactly those items.
+func renderSpineList(items []core.SpineItem) (list, query string) {
+	var b strings.Builder
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		b.WriteString(renderSpineItem(it))
+		names = append(names, it.Name)
+	}
+	return b.String(), strings.Join(names, " ")
 }
 
 func detailSuffix(d string) string {

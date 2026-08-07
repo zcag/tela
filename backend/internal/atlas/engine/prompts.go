@@ -1,5 +1,7 @@
 package engine
 
+import "fmt"
+
 // Generation prompts. The draft prompt is deliberately strict — ground only in
 // the provided code, cite file:line, diagram with Mermaid — which is the
 // retrieve-then-write pattern that holds up on a local model.
@@ -145,10 +147,40 @@ Do NOT echo these instructions, the tags, or any header like "existing page". Im
 const refSystem = `You are documenting a software system's interface surface. You are given the COMPLETE, authoritative,
 machine-extracted list of items — your job is to document EVERY item, grounded in the code excerpts. Do not omit any item, and do not invent items not in the list.`
 
-func refUser(title, itemList, context string) string {
+// refUser builds the reference-page prompt. A page whose surface is too large for
+// one prompt is written in PARTS (see refListBudget): part 0 opens the page, and
+// later parts continue it — they must not restate an H1, re-introduce the page,
+// or emit a second summary marker, or the published body ends up with a title and
+// standfirst per part. total==1 produces exactly the single-call prompt this used
+// to send, so the overwhelming majority of pages are unaffected.
+func refUser(title, itemList, context string, part, total int) string {
+	scope := "This is the COMPLETE list of items to document (extracted directly from the source — do not add or drop any):"
+	shape := `Write a Markdown reference page:
+1. An H1 title and a short intro explaining what this surface is.
+2. Document EVERY item in the list — a table or a section each, with what it is, where it lives (` + "`path:line`" + `), and (from the excerpts) what it does.
+3. Group sensibly (e.g. by prefix or area) if there are many.
+` + summaryDirective
+	if total > 1 {
+		scope = fmt.Sprintf(
+			"This surface is too large for one pass, so you are writing PART %d OF %d. Below is the complete list of items for THIS PART only (extracted directly from the source — do not add or drop any):",
+			part+1, total)
+		if part == 0 {
+			shape = `Write the OPENING of a Markdown reference page:
+1. An H1 title and a short intro explaining what this surface is.
+2. Document EVERY item in the list — a table or a section each, with what it is, where it lives (` + "`path:line`" + `), and (from the excerpts) what it does.
+3. Group sensibly (e.g. by prefix or area) if there are many. Later parts will continue this page, so do not write a conclusion.
+` + summaryDirective
+		} else {
+			shape = `CONTINUE the reference page — its title, introduction and earlier items are already written:
+1. Do NOT write an H1, do NOT re-introduce the page, and do NOT write a conclusion or a summary line.
+2. Start directly with the content for this part's items.
+3. Document EVERY item in the list — a table or a section each, with what it is, where it lives (` + "`path:line`" + `), and (from the excerpts) what it does.
+4. Group sensibly (e.g. by prefix or area) if there are many.`
+		}
+	}
 	return `# Reference page: ` + title + `
 
-This is the COMPLETE list of items to document (extracted directly from the source — do not add or drop any):
+` + scope + `
 
 ` + itemList + `
 
@@ -156,10 +188,6 @@ Relevant source excerpts for context:
 
 ` + context + `
 
-Write a Markdown reference page:
-1. An H1 title and a short intro explaining what this surface is.
-2. Document EVERY item in the list — a table or a section each, with what it is, where it lives (` + "`path:line`" + `), and (from the excerpts) what it does.
-3. Group sensibly (e.g. by prefix or area) if there are many.
-` + summaryDirective + `
+` + shape + `
 Be exhaustive: every listed item must appear. Ground descriptions in the excerpts; if an item's behavior isn't in the excerpts, document its location and signature anyway.`
 }

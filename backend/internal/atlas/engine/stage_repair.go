@@ -159,25 +159,43 @@ func redraftMermaid(ctx context.Context, rc *RunContext, p *core.Page) (string, 
 // redraftReference regenerates a reference page, forcing the previously-missing
 // items to appear.
 func redraftReference(ctx context.Context, rc *RunContext, p *core.Page, miss []core.Gap) (string, error) {
-	items := rc.Art.SpineByKind(p.SpineKinds...)
-	var list strings.Builder
-	q := make([]string, 0, len(items))
-	for _, it := range items {
-		fmt.Fprintf(&list, "- [%s] %s  (%s:%d)%s\n", it.Kind, it.Name, it.File, it.Line, detailSuffix(it.Detail))
-		q = append(q, it.Name)
-	}
-	var emph strings.Builder
-	emph.WriteString("CRITICAL: the previous draft OMITTED these items. They MUST each appear in your output:\n")
+	// Batched exactly like draftReference: this path re-sent the WHOLE surface in
+	// one prompt too, so a large page's repair hit the same OOM that made it need
+	// repairing. Each part carries only the omissions that fall inside it, so the
+	// CRITICAL emphasis stays about items the model can actually see.
+	missBy := make(map[string]core.Gap, len(miss))
 	for _, g := range miss {
-		fmt.Fprintf(&emph, "- %s (%s:%d)\n", g.Name, g.File, g.Line)
+		missBy[g.Name] = g
 	}
-	chunks, err := retrieve(ctx, rc, strings.Join(q, " "), retrieveK)
-	if err != nil {
-		return "", err
+	batches := spineBatches(rc.Art.SpineByKind(p.SpineKinds...), refListBudget)
+	var out strings.Builder
+	for i, batch := range batches {
+		list, query := renderSpineList(batch)
+		var emph strings.Builder
+		for _, it := range batch {
+			if g, ok := missBy[it.Name]; ok {
+				fmt.Fprintf(&emph, "- %s (%s:%d)\n", g.Name, g.File, g.Line)
+			}
+		}
+		chunks, err := retrieve(ctx, rc, query, retrieveK)
+		if err != nil {
+			return "", err
+		}
+		prompt := refUser(p.Title, list, assembleContext(chunks), i, len(batches))
+		if emph.Len() > 0 {
+			prompt = "CRITICAL: the previous draft OMITTED these items. They MUST each appear in your output:\n" +
+				emph.String() + "\n" + prompt
+		}
+		body, err := rc.LLM.Chat(ctx, refSystem, prompt, 0.2)
+		if err != nil {
+			return "", err
+		}
+		if i > 0 {
+			out.WriteString("\n\n")
+		}
+		out.WriteString(strings.TrimSpace(sanitizePage(body)))
 	}
-	prompt := emph.String() + "\n" + refUser(p.Title, list.String(), assembleContext(chunks))
-	body, err := rc.LLM.Chat(ctx, refSystem, prompt, 0.2)
-	return sanitizePage(body), err
+	return out.String(), nil
 }
 
 func mustCoverGaps(gaps []core.Gap) []core.Gap {
