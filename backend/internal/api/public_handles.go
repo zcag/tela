@@ -323,10 +323,13 @@ func (s *Server) publicSpaceIDForHandle(r *http.Request, kind string, ownerID in
 		owner string
 	)
 	if kind == handleKindOrg {
+		// The byline handle is the OWNING handle — the org's slug. Returning the
+		// space_members owner here (whoever created it) made every consumer think
+		// an org space lived on that person's personal handle: the reader then
+		// built its whole nav as /{creator}/{space-slug}/…, which 404s.
 		err := s.DB.QueryRowContext(r.Context(),
-			`SELECT s.id, COALESCE((SELECT u.username FROM space_members m JOIN users u ON u.id = m.user_id
-			                         WHERE m.space_id = s.id AND m.role = 'owner' ORDER BY m.user_id ASC LIMIT 1), '')
-			   FROM spaces s
+			`SELECT s.id, o.slug
+			   FROM spaces s JOIN orgs o ON o.id = s.org_id
 			  WHERE s.org_id = $1 AND s.slug = $2 AND s.visibility = 'public'
 			  LIMIT 1`, ownerID, slug).Scan(&id, &owner)
 		return id, owner, err

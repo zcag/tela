@@ -205,6 +205,26 @@ func TestHandleOG_UnfurlsBothURLShapes(t *testing.T) {
 		t.Fatalf("handle home card leaked an org space\n%s", body)
 	}
 
+	// An ORG space's byline handle must be the ORG's slug, not the creator's
+	// username. The reader builds its entire nav from this, so returning the
+	// creator made every link /{creator}/{space-slug}/… — which 404s.
+	resp, err := http.Get(ts.URL + "/api/public/by-handle/kappaco/spaces/kappa-docs")
+	if err != nil {
+		t.Fatalf("GET org space: %v", err)
+	}
+	defer resp.Body.Close()
+	var env struct {
+		Space struct {
+			OwnerHandle string `json:"owner_handle"`
+		} `json:"space"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Space.OwnerHandle != "kappaco" {
+		t.Fatalf("org space owner_handle=%q want kappaco (hana created it)", env.Space.OwnerHandle)
+	}
+
 	// Org home card renders too (previously no card existed for org handles).
 	if status, body = og("/api/public/og/handles/kappaco"); status != http.StatusOK ||
 		!strings.Contains(body, "Kappa Co") || !strings.Contains(body, `"Organization"`) {
