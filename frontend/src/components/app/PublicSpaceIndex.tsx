@@ -61,7 +61,10 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
   useHeadMeta({
     title: `${space.name}${activeTag ? ` · ${activeTag}` : ''} — tela`,
     description: space.description || `Posts from ${space.name}.`,
-    canonicalPath: `/public/spaces/${space.id}`,
+    canonicalPath:
+      space.owner_handle && space.slug
+        ? `/${space.owner_handle}/${space.slug}`
+        : `/public/spaces/${space.id}`,
     image: `/api/public/spaces/${space.id}/og.png`,
     ogType: 'website',
     feedHref: feedUrl,

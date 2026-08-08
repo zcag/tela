@@ -96,15 +96,29 @@ export function PublicReaderView({
     [tree.data, pages],
   )
 
+  // Every in-reader link goes through the canonical /{handle}/{space-slug}/…
+  // form when the space has an owning handle. Without this, clicking through the
+  // reader (prev/next, sidebar, wikilinks, back-to-index) silently flips the
+  // address bar back to the id form the page canonicalizes away from.
+  const handle = space.owner_handle
+  const spaceSlug = space.slug
+
   const onNavigateWikilink = useCallback(
     (targetPageId: number) => {
       if (!inScopePageIds.has(targetPageId)) return
+      if (handle && spaceSlug) {
+        void navigate({
+          to: '/$handle/$spaceSlug/$pageId/{-$slug}',
+          params: { handle, spaceSlug, pageId: targetPageId, slug: undefined },
+        })
+        return
+      }
       void navigate({
         to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
         params: { spaceId: space.id, pageId: targetPageId, slug: undefined },
       })
     },
-    [navigate, space.id, inScopePageIds],
+    [navigate, space.id, inScopePageIds, handle, spaceSlug],
   )
 
   const showSidebar = pages.length > 1
@@ -170,12 +184,12 @@ export function PublicReaderView({
         {hasPostNav ? (
           <nav className="reader-postnav" aria-label="More posts">
             {postNav!.older ? (
-              <PostNavLink spaceId={space.id} post={postNav!.older} dir="older" />
+              <PostNavLink spaceId={space.id} handle={handle} spaceSlug={spaceSlug} post={postNav!.older} dir="older" />
             ) : (
               <span />
             )}
             {postNav!.newer ? (
-              <PostNavLink spaceId={space.id} post={postNav!.newer} dir="newer" />
+              <PostNavLink spaceId={space.id} handle={handle} spaceSlug={spaceSlug} post={postNav!.newer} dir="newer" />
             ) : (
               <span />
             )}
@@ -188,6 +202,8 @@ export function PublicReaderView({
     return (
       <PublicDeckView
         spaceId={space.id}
+        handle={handle}
+        spaceSlug={spaceSlug}
         spaceName={space.name}
         pageId={pageId}
         pageTitle={pageTitle}
@@ -228,7 +244,10 @@ export function PublicReaderView({
       articleFooter={articleFooter}
       headMeta={{
         description: metaDescription,
-        canonicalPath: window.location.pathname,
+        canonicalPath:
+          handle && spaceSlug
+            ? `/${handle}/${spaceSlug}/${pageId}${pageSlug(pageTitle) ? `/${pageSlug(pageTitle)}` : ''}`
+            : window.location.pathname,
         image: `/p/${pageId}/og.png`,
         feedHref: `/api/public/spaces/${space.id}/feed.xml`,
       }}
@@ -236,6 +255,8 @@ export function PublicReaderView({
         showSidebar ? (
           <PublicSpaceNav
             spaceId={space.id}
+            handle={handle}
+            spaceSlug={spaceSlug}
             spaceName={space.name}
             pages={pages}
             activePageId={pageId}
@@ -249,6 +270,8 @@ export function PublicReaderView({
           {showSidebar ? (
             <PublicSpaceNavSheet
               spaceId={space.id}
+              handle={handle}
+              spaceSlug={spaceSlug}
               spaceName={space.name}
               pages={pages}
               activePageId={pageId}
@@ -270,8 +293,9 @@ export function PublicReaderView({
           </span>
           {/* Back to the space's front page (its blog index). */}
           <Link
-            to="/public/spaces/$spaceId"
-            params={{ spaceId: space.id }}
+            {...(handle && spaceSlug
+              ? ({ to: '/$handle/$spaceSlug', params: { handle, spaceSlug } } as const)
+              : ({ to: '/public/spaces/$spaceId', params: { spaceId: space.id } } as const))}
             className="truncate rounded-[var(--radius-xs)] font-[family-name:var(--font-sans)] text-[length:var(--text-sm)] text-[var(--text-muted)] no-underline transition-colors duration-[var(--duration-fast)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {space.name}
@@ -298,6 +322,8 @@ export function PublicReaderView({
 // slide), so this view is purely for humans.
 function PublicDeckView({
   spaceId,
+  handle,
+  spaceSlug,
   spaceName,
   pageId,
   pageTitle,
@@ -305,6 +331,8 @@ function PublicDeckView({
   telaHome,
 }: {
   spaceId: number
+  handle?: string
+  spaceSlug?: string
   spaceName: string
   pageId: number
   pageTitle: string
@@ -335,8 +363,9 @@ function PublicDeckView({
             /
           </span>
           <Link
-            to="/public/spaces/$spaceId"
-            params={{ spaceId }}
+            {...(handle && spaceSlug
+              ? ({ to: '/$handle/$spaceSlug', params: { handle, spaceSlug } } as const)
+              : ({ to: '/public/spaces/$spaceId', params: { spaceId } } as const))}
             className="truncate text-[length:var(--text-sm)] text-[var(--text-muted)] no-underline hover:text-[var(--text-primary)]"
           >
             {spaceName}
@@ -386,17 +415,31 @@ function PublicDeckView({
 // One end of the previous/next post navigation under an article.
 function PostNavLink({
   spaceId,
+  handle,
+  spaceSlug,
   post,
   dir,
 }: {
   spaceId: number
+  handle?: string
+  spaceSlug?: string
   post: PublicPageNode
   dir: 'older' | 'newer'
 }) {
+  const slug = pageSlug(post.title) || undefined
+  const linkProps =
+    handle && spaceSlug
+      ? ({
+          to: '/$handle/$spaceSlug/$pageId/{-$slug}',
+          params: { handle, spaceSlug, pageId: post.id, slug },
+        } as const)
+      : ({
+          to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
+          params: { spaceId, pageId: post.id, slug },
+        } as const)
   return (
     <Link
-      to="/public/spaces/$spaceId/pages/$pageId/{-$slug}"
-      params={{ spaceId, pageId: post.id, slug: pageSlug(post.title) || undefined }}
+      {...linkProps}
       className={`reader-postnav-link reader-postnav-${dir}`}
     >
       <span className="reader-postnav-dir">
@@ -413,11 +456,15 @@ function PostNavLink({
 // is bounded in reader.css; long titles truncate rather than ballooning the rail.
 function PublicSpaceNav({
   spaceId,
+  handle,
+  spaceSlug,
   spaceName,
   pages,
   activePageId,
 }: {
   spaceId: number
+  handle?: string
+  spaceSlug?: string
   spaceName: string
   pages: PublicPageNode[]
   activePageId: number
@@ -428,6 +475,8 @@ function PublicSpaceNav({
       <p className="reader-spacenav-title">{spaceName}</p>
       <PublicSpaceNavList
         spaceId={spaceId}
+        handle={handle}
+        spaceSlug={spaceSlug}
         nodes={tree}
         activePageId={activePageId}
       />
@@ -437,12 +486,16 @@ function PublicSpaceNav({
 
 function PublicSpaceNavList({
   spaceId,
+  handle,
+  spaceSlug,
   nodes,
   activePageId,
   onNavigate,
   sub = false,
 }: {
   spaceId: number
+  handle?: string
+  spaceSlug?: string
   nodes: TreeNode<PublicPageNode>[]
   activePageId: number
   /** Fired on a link click — lets the mobile sheet close itself on navigation. */
@@ -454,12 +507,24 @@ function PublicSpaceNavList({
       {nodes.map((node) => (
         <li key={node.id}>
           <Link
-            to="/public/spaces/$spaceId/pages/$pageId/{-$slug}"
-            params={{
-              spaceId,
-              pageId: node.id,
-              slug: pageSlug(node.title) || undefined,
-            }}
+            {...(handle && spaceSlug
+              ? ({
+                  to: '/$handle/$spaceSlug/$pageId/{-$slug}',
+                  params: {
+                    handle,
+                    spaceSlug,
+                    pageId: node.id,
+                    slug: pageSlug(node.title) || undefined,
+                  },
+                } as const)
+              : ({
+                  to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
+                  params: {
+                    spaceId,
+                    pageId: node.id,
+                    slug: pageSlug(node.title) || undefined,
+                  },
+                } as const))}
             className="reader-spacenav-link"
             data-active={node.id === activePageId}
             aria-current={node.id === activePageId ? 'page' : undefined}
@@ -471,6 +536,8 @@ function PublicSpaceNavList({
           {node.children.length > 0 ? (
             <PublicSpaceNavList
               spaceId={spaceId}
+              handle={handle}
+              spaceSlug={spaceSlug}
               nodes={node.children}
               activePageId={activePageId}
               onNavigate={onNavigate}
@@ -488,11 +555,15 @@ function PublicSpaceNavList({
 // navigation.
 function PublicSpaceNavSheet({
   spaceId,
+  handle,
+  spaceSlug,
   spaceName,
   pages,
   activePageId,
 }: {
   spaceId: number
+  handle?: string
+  spaceSlug?: string
   spaceName: string
   pages: PublicPageNode[]
   activePageId: number
@@ -519,6 +590,8 @@ function PublicSpaceNavSheet({
           <nav aria-label={`${spaceName} pages`}>
             <PublicSpaceNavList
               spaceId={spaceId}
+              handle={handle}
+              spaceSlug={spaceSlug}
               nodes={tree}
               activePageId={activePageId}
               onNavigate={() => setOpen(false)}
