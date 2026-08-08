@@ -115,6 +115,10 @@ export interface SearchResult {
   // caller holds no membership, so it must open in the no-login reader; the
   // authed route would 403.
   public: boolean
+  // Canonical router path for a PUBLIC hit (/{handle}/{space-slug}/{id}/{slug}).
+  // Server-computed — the client can't derive a space's owning handle. Absent on
+  // non-public hits, which open on the authed route.
+  public_path?: string
 }
 
 export function searchPages(

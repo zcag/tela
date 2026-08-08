@@ -10,3 +10,8 @@ backups/
 mdview-*.png
 .playwright-mcp/
 app-*.png
+
+# Local Go build output (`go build` in backend/) and Vite's dep cache. Both are
+# regenerated artifacts that a `git add -A` would otherwise sweep into a commit.
+backend/tela
+backend/.vite/

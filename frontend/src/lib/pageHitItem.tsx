@@ -16,6 +16,8 @@ export interface PageHit {
   // Such a row must open in the no-login reader — the authed route 403s.
   // Tier-1/tier-3 hits come from member-only indexes, so they omit it.
   isPublic?: boolean
+  // Canonical reader path for a public hit, straight from the server.
+  publicPath?: string
 }
 
 export interface PageHitItemOptions {
@@ -51,9 +53,16 @@ function composeBreadcrumb(
 export function navigateToPage(
   spaceId: number,
   pageId: number,
-  opts?: { isPublic?: boolean; title?: string },
+  opts?: { isPublic?: boolean; title?: string; publicPath?: string },
 ) {
   if (opts?.isPublic) {
+    // Prefer the server's canonical /{handle}/{space-slug}/{id}/{slug}; the id
+    // route below is the fallback when the caller has no path (it works, but
+    // canonicalizes elsewhere, so the address bar would show the old form).
+    if (opts.publicPath) {
+      void router.navigate({ to: opts.publicPath })
+      return
+    }
     void router.navigate({
       to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
       params: { spaceId, pageId, slug: pageSlug(opts.title ?? '') || undefined },
@@ -82,6 +91,7 @@ export function pageHitToCommandItem(
     onSelect: () =>
       navigateToPage(hit.spaceId, hit.pageId, {
         isPublic: hit.isPublic,
+        publicPath: hit.publicPath,
         title: hit.title,
       }),
   }

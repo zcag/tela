@@ -276,6 +276,7 @@ export function AppCommandHost() {
             title: r.title,
             breadcrumb: r.breadcrumb,
             isPublic: r.public,
+            publicPath: r.public_path,
           },
           {
             idPrefix: 'page-t2',

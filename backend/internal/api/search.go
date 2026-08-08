@@ -60,6 +60,11 @@ type searchHit struct {
 	// URL is the human-shareable in-app link, used by the search-results widget
 	// (click-through) and as the ChatGPT search/fetch `url` field.
 	URL string `json:"url"`
+	// Path is URL without the origin — the same link as a router-navigable path.
+	// Set for PUBLIC hits only, so the palette opens them at the canonical
+	// /{handle}/{space-slug}/{id}/{slug} instead of re-deriving the id form (the
+	// client has no way to know a space's owning handle).
+	Path string `json:"public_path,omitempty"`
 	// ID + Text are ChatGPT Deep-Research compatibility aliases: that connector
 	// drives `fetch` off result `id` and reads the snippet from `text`. They mirror
 	// PageID (as a string) and Snippet so one `search` tool serves both surfaces.
@@ -191,6 +196,7 @@ func (s *Server) searchCore(ctx context.Context, u *auth.User, k *auth.APIKey, q
 			Breadcrumb: bc,
 			Public:     public,
 			URL:        canonicalBaseURL() + path,
+			Path:       publicOnly(public, path),
 			ID:         strconv.FormatInt(h.ID, 10),
 			Text:       h.Snippet,
 		})
@@ -225,4 +231,13 @@ func pageBreadcrumb(ctx context.Context, db *sql.DB, pageID int64) ([]string, er
 		titles = append(titles, t)
 	}
 	return titles, rows.Err()
+}
+
+// publicOnly returns path when the hit is public, "" otherwise — the palette
+// only needs a router path for hits it must open in the no-login reader.
+func publicOnly(public bool, path string) string {
+	if public {
+		return path
+	}
+	return ""
 }
