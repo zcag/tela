@@ -153,6 +153,9 @@ export interface ByHandleSpace {
 export interface ByHandlePost extends BlogCardMeta {
   space_id: number
   space_name: string
+  // Slug of the space the post lives in — with the home's handle this builds the
+  // canonical /{handle}/{space-slug}/{id}/{slug} link.
+  space_slug: string
   id: number
   title: string
   created_at: string

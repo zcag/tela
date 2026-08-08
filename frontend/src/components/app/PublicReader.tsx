@@ -180,7 +180,7 @@ export function PublicReaderView({
   const articleFooter =
     childPosts.length > 0 || hasPostNav ? (
       <>
-        <ChildGallery spaceId={space.id} posts={childPosts} />
+        <ChildGallery spaceId={space.id} handle={handle} spaceSlug={spaceSlug} posts={childPosts} />
         {hasPostNav ? (
           <nav className="reader-postnav" aria-label="More posts">
             {postNav!.older ? (

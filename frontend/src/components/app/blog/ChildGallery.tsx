@@ -8,9 +8,15 @@ import { PostCard, type BlogPost } from './PostCard'
 // not newest-first like the index posts. Reuses the index's PostCard.
 export function ChildGallery({
   spaceId,
+  handle,
+  spaceSlug,
   posts,
 }: {
   spaceId: number
+  // Owning handle + space slug, so the cards link at the canonical
+  // /{handle}/{space-slug}/{id}/{slug} like every other link in the reader.
+  handle?: string
+  spaceSlug?: string
   posts: BlogPost[]
 }) {
   if (posts.length === 0) return null
@@ -19,7 +25,14 @@ export function ChildGallery({
       <h2 className="reader-childgallery-title">In this section</h2>
       <div className="reader-childgallery-grid">
         {posts.map((p) => (
-          <PostCard key={p.id} spaceId={spaceId} post={p} headingLevel={3} />
+          <PostCard
+            key={p.id}
+            spaceId={spaceId}
+            handle={handle}
+            spaceSlug={spaceSlug}
+            post={p}
+            headingLevel={3}
+          />
         ))}
       </div>
     </section>

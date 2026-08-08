@@ -50,7 +50,13 @@ export function PublicHandleHome({ data }: { data: ByHandleResponse }) {
       {posts.length > 0 ? (
         <div className="mt-[var(--space-4)] grid grid-cols-1 gap-[var(--space-5)] sm:grid-cols-2">
           {posts.map((p) => (
-            <PostCard key={`${p.space_id}-${p.id}`} spaceId={p.space_id} post={p} />
+            <PostCard
+              key={`${p.space_id}-${p.id}`}
+              spaceId={p.space_id}
+              handle={handle}
+              spaceSlug={p.space_slug}
+              post={p}
+            />
           ))}
         </div>
       ) : null}

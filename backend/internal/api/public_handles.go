@@ -235,6 +235,9 @@ func handleOwnerWhere(kind string) string {
 type handlePostDTO struct {
 	SpaceID   int64  `json:"space_id"`
 	SpaceName string `json:"space_name"`
+	// SpaceSlug lets the home's cards link at the canonical
+	// /{handle}/{space-slug}/{id}/{slug} — the handle is the home's own.
+	SpaceSlug string `json:"space_slug"`
 	ID        int64  `json:"id"`
 	Title     string `json:"title"`
 	CreatedAt string `json:"created_at"`
@@ -248,7 +251,7 @@ type handlePostDTO struct {
 func (s *Server) recentPostsForHandle(r *http.Request, kind string, ownerID int64, limit int) ([]handlePostDTO, error) {
 	where := handleOwnerWhere(kind)
 	rows, err := s.DB.QueryContext(r.Context(), `
-		SELECT s.id, s.name, p.id, p.title, p.body, p.props, p.created_at, p.updated_at
+		SELECT s.id, s.name, s.slug, p.id, p.title, p.body, p.props, p.created_at, p.updated_at
 		  FROM pages p JOIN spaces s ON s.id = p.space_id
 		 WHERE s.visibility = 'public' AND p.parent_id IS NULL AND p.deleted_at IS NULL AND `+where+`
 		 ORDER BY p.created_at DESC, p.id DESC
@@ -265,7 +268,7 @@ func (s *Server) recentPostsForHandle(r *http.Request, kind string, ownerID int6
 			body     string
 			propsRaw []byte
 		)
-		if err := rows.Scan(&d.SpaceID, &d.SpaceName, &d.ID, &d.Title, &body, &propsRaw, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.SpaceID, &d.SpaceName, &d.SpaceSlug, &d.ID, &d.Title, &body, &propsRaw, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		d.blogCardMeta = blogMetaFor(body, decodeProps(propsRaw))
