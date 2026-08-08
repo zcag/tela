@@ -288,25 +288,21 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
   // link, a semantic-search hit — none of which know the space is public.
   // MUST stay above the early returns (hook-count stability, React #310).
   const pageError = page.error instanceof ApiError ? page.error : null
-  // Parsed into route params rather than navigated as a raw string: the router
-  // is typed on its route ids, and a server-supplied path is untrusted input.
-  // A shape we don't recognise falls through to the normal 403 wall.
-  const publicTarget = useMemo(() => {
-    const m = /^\/public\/spaces\/(\d+)\/pages\/(\d+)(?:\/([^/?#]+))?$/.exec(
-      pageError?.publicPath ?? '',
-    )
-    return m
-      ? { spaceId: Number(m[1]), pageId: Number(m[2]), slug: m[3] }
+  // Navigated as the server's path verbatim — the canonical public URL shape is
+  // the backend's to decide (it alone knows the owning handle), and it HAS
+  // changed: this used to parse /public/spaces/{id}/pages/{id} into typed route
+  // params, which silently stopped matching the day the canonical form became
+  // /{handle}/{space-slug}/{id}/{slug} and quietly restored the 403 wall. Only
+  // a same-origin absolute path is followed, so the value can't become an
+  // off-site redirect if the field is ever wrong.
+  const publicPath =
+    pageError?.publicPath?.startsWith('/') &&
+    !pageError.publicPath.startsWith('//')
+      ? pageError.publicPath
       : null
-  }, [pageError])
   useEffect(() => {
-    if (!publicTarget) return
-    void navigate({
-      to: '/public/spaces/$spaceId/pages/$pageId/{-$slug}',
-      params: publicTarget,
-      replace: true,
-    })
-  }, [publicTarget, navigate])
+    if (publicPath) void navigate({ to: publicPath, replace: true })
+  }, [publicPath, navigate])
 
   // queryClient's reporting policy drops every non-401 4xx as "handled by the
   // UI" — right in general, but a 403 here is NOT handled: it's a dead end the
@@ -316,7 +312,7 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
   // forbidden_public is excluded — it self-heals into a redirect, so reporting
   // it would file a bug on the fix working.
   const forbiddenPageId =
-    page.isError && pageError?.status === 403 && !publicTarget ? pageId : null
+    page.isError && pageError?.status === 403 && !publicPath ? pageId : null
   useEffect(() => {
     if (forbiddenPageId == null) return
     reportClientError({
@@ -332,7 +328,7 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
     const status = pageError?.status ?? null
     if (status === 404) return <PageNotFound spaceId={spaceId} />
     // Redirect to the public reader is in flight — don't flash the wall.
-    if (publicTarget) return <PageLoading />
+    if (publicPath) return <PageLoading />
     // A permission denial is not a server failure: saying "something went wrong,
     // try again" sent a locked-out user chasing a non-existent outage, and Retry
     // can never succeed.
