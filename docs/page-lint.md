@@ -129,6 +129,16 @@ cheap and universally usable. `image` (and `both`) take a second gotenberg call
 via the screenshot route — a full-height JPEG, capped, since a long page's
 screenshot would otherwise dominate a tool result.
 
+**The screenshot must request `emulatedMediaType: print`.** tela's desktop shell
+is fixed-height (`h-dvh`, content scrolling inner `overflow-y` frames — see the
+two-scroll-models gotcha in CLAUDE.md), so under screen media the *document* is
+exactly one viewport tall and Chromium cannot capture what lives inside an inner
+scroller. A "full page" capture then returns the first screenful and nothing
+says so — it shipped that way for one deploy and looked entirely plausible.
+Print media is what releases the content to flow, which is why `renderPDF` never
+had the problem. Verified: 1100×600 before, 1100×4306 after, callout backgrounds
+and tables intact.
+
 Deck and sheet pages are refused by every entry point (`wrongBodyKind`), with a
 pointer to the validator that owns them. This is not tidiness: a sweep of the
 live docs space ran the prose rules over a real deck and produced ~30
