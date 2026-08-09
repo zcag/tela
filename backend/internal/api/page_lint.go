@@ -64,8 +64,27 @@ var (
 	fileRefRE = regexp.MustCompile(`/api/files/([0-9]+)/([A-Za-z0-9._-]+)`)
 )
 
+// wrongBodyKind rejects a page whose body isn't prose. A deck's body is Slidev
+// markdown and a sheet's is a Defter grid; the prose rules are meaningless there
+// and actively wrong — a deck legitimately contains tahta components like
+// `<callout>` and `<stat>`, which the raw-HTML rule would report as dropped,
+// dozens of times, on a page that is perfectly fine. Each kind has its own
+// validator, so point at it instead of guessing.
+func wrongBodyKind(p models.Page) *apiErr {
+	switch {
+	case isDeckBag(p.Props):
+		return &apiErr{http.StatusBadRequest, "wrong_tool",
+			"this page is a deck — its body is Slidev markdown, not prose. Call lint_deck / preview_deck instead."}
+	case isSheetBag(p.Props):
+		return &apiErr{http.StatusBadRequest, "wrong_tool",
+			"this page is a sheet — its body is a Defter grid, not prose. Call sheet_authoring_guide for its rules; edit_sheet validates on write."}
+	}
+	return nil
+}
+
 // lintPage runs every check over a page body and returns one merged report.
 // `body` is passed separately from `p` so the editor can lint an unsaved draft.
+// Callers must reject non-prose bodies with wrongBodyKind first.
 func (s *Server) lintPage(ctx context.Context, p models.Page, body string) pageLintOut {
 	var issues []pageLintIssue
 	for _, is := range pagelint.Lint(body, pageLintVocab) {
@@ -234,8 +253,8 @@ func (s *Server) spaceFileExists(ctx context.Context, name string) bool {
 //
 // Best-effort: a lint failure must never turn a successful write into an error.
 func (s *Server) writeAdvisory(ctx context.Context, p models.Page) string {
-	if isDeckBag(p.Props) || isSheetBag(p.Props) {
-		return "" // both have their own gate/lint on the way in
+	if wrongBodyKind(p) != nil {
+		return "" // deck/sheet — both have their own gate/lint on the way in
 	}
 	return lintAdvisory(s.lintPage(ctx, p, p.Body))
 }
@@ -270,6 +289,10 @@ func lintAdvisory(out pageLintOut) string {
 func (s *Server) PostPageLint(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requirePageRead(w, r)
 	if !ok {
+		return
+	}
+	if ae := wrongBodyKind(p); ae != nil {
+		writeError(w, ae.Status, ae.Code, ae.Message)
 		return
 	}
 	draft, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))

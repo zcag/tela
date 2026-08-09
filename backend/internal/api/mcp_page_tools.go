@@ -35,6 +35,9 @@ func (s *Server) mcpLintPage(ctx context.Context, req *mcp.CallToolRequest, in l
 	if ae != nil {
 		return mcpErr(ae), pageLintOut{}, nil
 	}
+	if ae := wrongBodyKind(p); ae != nil {
+		return mcpErr(ae), pageLintOut{}, nil
+	}
 	return nil, s.lintPage(ctx, p, p.Body), nil
 }
 
@@ -61,9 +64,8 @@ func (s *Server) mcpPreviewPage(ctx context.Context, req *mcp.CallToolRequest, i
 	}
 	// A deck's body is Slidev markdown and a sheet's is a grid; neither reads as
 	// prose through this path, and both have a preview of their own.
-	if isDeckBag(p.Props) {
-		return mcpErr(&apiErr{http.StatusBadRequest, "wrong_tool",
-			"this page is a deck — call preview_deck to see its slides"}), nil, nil
+	if ae := wrongBodyKind(p); ae != nil {
+		return mcpErr(ae), nil, nil
 	}
 
 	wantText := in.Format != "image"

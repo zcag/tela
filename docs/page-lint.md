@@ -129,8 +129,12 @@ cheap and universally usable. `image` (and `both`) take a second gotenberg call
 via the screenshot route — a full-height JPEG, capped, since a long page's
 screenshot would otherwise dominate a tool result.
 
-Deck pages are refused with a pointer to `preview_deck`; their body is Slidev
-markdown and would come back as a wall of headmatter.
+Deck and sheet pages are refused by every entry point (`wrongBodyKind`), with a
+pointer to the validator that owns them. This is not tidiness: a sweep of the
+live docs space ran the prose rules over a real deck and produced ~30
+`dropped-html` reports against tahta components (`<callout>`, `<stat>`,
+`<badge>`) that are entirely correct in Slidev markdown. A lint that cries wolf
+on a good page is worse than none.
 
 The text arrives via the PDF text layer, so it carries **layout** artifacts —
 ligatures (`ﬁ`), hyphenation, line breaks around inline code. The result says so

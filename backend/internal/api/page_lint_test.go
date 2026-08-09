@@ -156,3 +156,21 @@ func TestWriteAdvisory(t *testing.T) {
 		t.Fatalf("deck advisory = %q, want empty (lint_deck owns decks)", got)
 	}
 }
+
+// A deck body is Slidev markdown: tahta components like <callout> and <stat>
+// are correct there, and running the prose rules over one produced dozens of
+// dropped-html reports against a perfectly good page. Every entry point must
+// refuse a non-prose body rather than lint it.
+func TestWrongBodyKind(t *testing.T) {
+	if wrongBodyKind(models.Page{}) != nil {
+		t.Error("a prose page must be lintable")
+	}
+	deck := wrongBodyKind(models.Page{Props: map[string]any{"deck": true}})
+	if deck == nil || !strings.Contains(deck.Message, "lint_deck") {
+		t.Errorf("deck should be refused with a pointer to lint_deck, got %+v", deck)
+	}
+	sheet := wrongBodyKind(models.Page{Props: map[string]any{"sheet": true}})
+	if sheet == nil || !strings.Contains(sheet.Message, "sheet") {
+		t.Errorf("sheet should be refused, got %+v", sheet)
+	}
+}
