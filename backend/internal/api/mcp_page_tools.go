@@ -81,8 +81,13 @@ func (s *Server) mcpPreviewPage(ctx context.Context, req *mcp.CallToolRequest, i
 			return mcpErr(&apiErr{http.StatusBadGateway, "preview_failed",
 				"the page rendered but no text could be read back from it"}), nil, nil
 		}
+		// The caveat is load-bearing: the text comes out of a PDF layer, so
+		// ligatures and line breaks are artifacts of the extraction, not of the
+		// page. Without saying so, an agent diffing intent against output chases
+		// "ﬁlter" as a rendering defect.
 		content = append(content, &mcp.TextContent{Text: fmt.Sprintf(
-			"%q as the reader renders it. Compare this against what you wrote — anything missing here is missing on the page.\n\n%s",
+			"%q as the reader renders it. Compare this against what you wrote — anything MISSING here is missing on the page, and anything reworded or reordered really is reworded or reordered.\n\n"+
+				"Ignore typographic noise: this is read back from a rendered document, so ligatures (ﬁ, ﬂ), hyphenation and line breaks come from the layout, not your markdown.\n\n%s",
 			p.Title, strings.TrimSpace(text))})
 	}
 	if wantImage {

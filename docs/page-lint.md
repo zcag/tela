@@ -132,6 +132,12 @@ screenshot would otherwise dominate a tool result.
 Deck pages are refused with a pointer to `preview_deck`; their body is Slidev
 markdown and would come back as a wall of headmatter.
 
+The text arrives via the PDF text layer, so it carries **layout** artifacts —
+ligatures (`ﬁ`), hyphenation, line breaks around inline code. The result says so
+explicitly, because an agent asked to diff intent against output will otherwise
+report `ﬁlter` as a rendering defect. What the preview is good for is presence,
+wording and order: anything missing there is genuinely missing on the page.
+
 ## Gotchas
 
 - **The reader drops raw HTML.** `MarkdownView`'s `case 'html': return null`
