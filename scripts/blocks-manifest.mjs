@@ -7,7 +7,15 @@
 //   node scripts/blocks-manifest.mjs --check    # verify in sync + full coverage (CI)
 //
 // SOURCE  frontend/src/components/app/blocks-manifest.json
+//         frontend/src/lib/markdown/transforms/unknown-directives.ts  (directive names)
+//         frontend/src/lib/markdown/transforms/callouts.ts            (callout types)
 // GEN     backend/internal/api/blocks_gen.json   (go:embed can't reach into frontend/)
+//
+// The two name lists ride along because the backend page lint (internal/pagelint)
+// has to know which `:::name` / `> [!TYPE]` the RENDERER recognizes: an unlisted
+// one still parses, then silently unwraps to its bare children. Hand-copying the
+// lists into Go would drift exactly where the lint is meant to be authoritative,
+// so they're extracted from the frontend source and gate-checked like the blocks.
 //
 // Coverage: every frontend/src/components/app/milkdown-*.ts(x) is either an
 // authorable block (mapped to >=1 manifest id in PLUGIN_BLOCKS) or declared
@@ -22,6 +30,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = join(ROOT, 'frontend/src/components/app/blocks-manifest.json')
 const GEN = join(ROOT, 'backend/internal/api/blocks_gen.json')
 const PLUGIN_DIR = join(ROOT, 'frontend/src/components/app')
+const DIRECTIVES_SRC = join(ROOT, 'frontend/src/lib/markdown/transforms/unknown-directives.ts')
+const CALLOUTS_SRC = join(ROOT, 'frontend/src/lib/markdown/transforms/callouts.ts')
 
 // milkdown-* plugins that are NOT authorable blocks (no manifest entry expected).
 const INFRA = new Set([
@@ -105,9 +115,37 @@ function loadSource() {
   return raw.blocks
 }
 
+// Pull the string members out of a named array/Set literal in a TS source file.
+// Deliberately strict: if the declaration moves or changes shape the extraction
+// fails loudly here rather than silently emitting an empty list, which would
+// make the backend lint quietly stop flagging unknown names.
+function extractStringList(file, decl) {
+  const src = readFileSync(file, 'utf8')
+  const at = src.indexOf(decl)
+  if (at < 0) fail(`${file} no longer declares ${decl} — update scripts/blocks-manifest.mjs`)
+  const open = src.indexOf('[', at)
+  const close = src.indexOf(']', open)
+  if (open < 0 || close < 0) fail(`${file}: could not read the array literal after ${decl}`)
+  const names = [...src.slice(open + 1, close).matchAll(/'([^']+)'|"([^"]+)"/g)].map(
+    (m) => m[1] ?? m[2],
+  )
+  if (names.length === 0) fail(`${file}: ${decl} extracted as empty`)
+  return names
+}
+
 // Deterministic serialization for a stable git diff (2-space indent, trailing nl).
 function render(blocks) {
-  return JSON.stringify({ blocks }, null, 2) + '\n'
+  return (
+    JSON.stringify(
+      {
+        blocks,
+        directives: extractStringList(DIRECTIVES_SRC, 'KNOWN_DIRECTIVE_NAMES'),
+        calloutTypes: extractStringList(CALLOUTS_SRC, 'CALLOUT_TYPES'),
+      },
+      null,
+      2,
+    ) + '\n'
+  )
 }
 
 function fail(msg) {

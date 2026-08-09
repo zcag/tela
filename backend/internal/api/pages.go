@@ -1616,20 +1616,32 @@ func parseWikiLinks(body string) []int64 {
 // heading suffix is trimmed before resolution.
 var wikiBracketRE = regexp.MustCompile(`\[\[([^\[\]]+?)\]\]`)
 
-// parseWikiTitleSlugs extracts `[[Name]]` wikilink names from body and reduces
-// each to a page slug, so `[[Route Analyze]]`, `[[route-analyze]]` and
-// `[[route-analyze|alias]]` all normalise to "route-analyze". Returns unique,
-// non-empty slugs; the canonical `tela://page/{id}` links are parsed separately
-// by parseWikiLinks.
-func parseWikiTitleSlugs(body string) []string {
-	matches := wikiBracketRE.FindAllStringSubmatch(body, -1)
-	if len(matches) == 0 {
+// wikiRef is one `[[Name]]` occurrence: the name as written (for messages that
+// quote the author's own text back), its resolution slug, and the 1-based line
+// it sits on.
+type wikiRef struct {
+	Raw  string
+	Slug string
+	Line int
+}
+
+// parseWikiTitleRefs extracts every `[[Name]]` occurrence from body, reducing
+// each to a page slug so `[[Route Analyze]]`, `[[route-analyze]]` and
+// `[[route-analyze|alias]]` all normalise to "route-analyze". Occurrences are
+// returned in source order WITH duplicates — callers that only want the link
+// targets dedupe (parseWikiTitleSlugs), callers that report to a human need
+// each site.
+func parseWikiTitleRefs(body string) []wikiRef {
+	idx := wikiBracketRE.FindAllStringSubmatchIndex(body, -1)
+	if len(idx) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(matches))
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		name := m[1]
+	out := make([]wikiRef, 0, len(idx))
+	line, scanned := 1, 0
+	for _, m := range idx {
+		line += strings.Count(body[scanned:m[0]], "\n")
+		scanned = m[0]
+		name := body[m[2]:m[3]]
 		if i := strings.IndexAny(name, "|#"); i >= 0 {
 			name = name[:i]
 		}
@@ -1637,21 +1649,34 @@ func parseWikiTitleSlugs(body string) []string {
 		if s == "" {
 			continue
 		}
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
+		out = append(out, wikiRef{Raw: strings.TrimSpace(name), Slug: s, Line: line})
 	}
 	return out
 }
 
-// resolveWikiTitleSlugs maps each `[[Name]]` slug to a target page id within
-// sourceID's space, matching on the slug-normalised page title (lowest id wins
-// on a title clash). Resolution is space-scoped so a name can't link across a
-// membership boundary; names that match no page are dropped (nothing to link).
-func resolveWikiTitleSlugs(ctx context.Context, tx *sql.Tx, sourceID int64, slugs []string) ([]int64, error) {
-	rows, err := tx.QueryContext(ctx, `
+// parseWikiTitleSlugs returns the unique, non-empty slugs referenced by body's
+// `[[Name]]` wikilinks. The canonical `tela://page/{id}` links are parsed
+// separately by parseWikiLinks.
+func parseWikiTitleSlugs(body string) []string {
+	refs := parseWikiTitleRefs(body)
+	seen := make(map[string]struct{}, len(refs))
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		if _, ok := seen[r.Slug]; ok {
+			continue
+		}
+		seen[r.Slug] = struct{}{}
+		out = append(out, r.Slug)
+	}
+	return out
+}
+
+// spaceTitleSlugIndex maps every live page title in sourceID's space to its id,
+// slug-normalised (lowest id wins on a title clash). Scoped to the space so a
+// name can never resolve across a membership boundary. Shared by link syncing
+// and by the lint, so "what does [[Name]] resolve to" has exactly one answer.
+func spaceTitleSlugIndex(ctx context.Context, q queryer, sourceID int64) (map[string]int64, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT id, title FROM pages
 		WHERE space_id = (SELECT space_id FROM pages WHERE id = $1) AND deleted_at IS NULL
 		ORDER BY id ASC`, sourceID)
@@ -1674,6 +1699,16 @@ func resolveWikiTitleSlugs(ctx context.Context, tx *sql.Tx, sourceID int64, slug
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate pages for wikilink resolution: %w", err)
+	}
+	return bySlug, nil
+}
+
+// resolveWikiTitleSlugs maps each `[[Name]]` slug to a target page id within
+// sourceID's space. Names that match no page are dropped (nothing to link).
+func resolveWikiTitleSlugs(ctx context.Context, tx *sql.Tx, sourceID int64, slugs []string) ([]int64, error) {
+	bySlug, err := spaceTitleSlugIndex(ctx, tx, sourceID)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]int64, 0, len(slugs))
 	for _, s := range slugs {

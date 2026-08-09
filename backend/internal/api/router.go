@@ -197,6 +197,8 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/pages/{id}/deck/outline", srv.GetPageDeckOutline)
 	mux.HandleFunc("POST /api/pages/{id}/deck/parse", srv.PostPageDeckParse)
 	mux.HandleFunc("POST /api/pages/{id}/deck/lint", srv.PostPageDeckLint)
+	// Prose-page counterpart to deck/lint: renders-vs-source divergences, advisory.
+	mux.HandleFunc("POST /api/pages/{id}/lint", srv.PostPageLint)
 	mux.HandleFunc("GET /api/pages/{id}/deck.pdf", srv.ExportPageDeckPDF)
 	mux.HandleFunc("GET /api/pages/{id}/deck.pptx", srv.ExportPageDeckPPTX)
 	mux.HandleFunc("GET /api/pages/{id}/deck.md", srv.ExportPageDeckMarkdown)

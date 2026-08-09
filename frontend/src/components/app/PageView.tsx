@@ -93,6 +93,9 @@ const noopBodyChange = () => {}
 const DeckEditorOutline = lazy(() =>
   import('./DeckEditorOutline').then((m) => ({ default: m.DeckEditorOutline })),
 )
+const PageLintNotice = lazy(() =>
+  import('./PageLintNotice').then((m) => ({ default: m.PageLintNotice })),
+)
 import {
   prefetchPage,
   useAllPages,
@@ -1854,6 +1857,15 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
         ) : (
           <EditorFallback />
         )}
+
+        {/* Decks and sheets have their own validators (DeckEditorOutline / the
+            grid); this is for prose bodies, and stays invisible unless the
+            render would differ from what's written. */}
+        {!isDeck && !isSheet && !isViewer ? (
+          <Suspense fallback={null}>
+            <PageLintNotice body={body} pageId={page.id} />
+          </Suspense>
+        ) : null}
 
         <ChildPagesSection
           spaceId={spaceId}

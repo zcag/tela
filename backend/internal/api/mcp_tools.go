@@ -210,6 +210,20 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	}, s.mcpPreviewDeck)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "lint_page",
+		Title:       "Lint page",
+		Description: "Check a page for places where the READER renders something different from what the markdown says — an unknown `:::block` or `[!CALLOUT]` that silently unwraps, raw HTML the reader drops, a collapsible whose blank lines are missing so its body vanishes, a `[[wikilink]]` that matches no page, a broken link or attachment, a ragged table. These are invisible when you re-read your own source, which is why re-reading it is not a substitute for calling this. Run it after writing or editing a page.",
+		Annotations: readOnly,
+	}, s.mcpLintPage)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "preview_page",
+		Title:       "Preview page",
+		Description: "Render a page and read it back as the reader actually shows it — the same render the PDF export uses, so callouts, tables, math, mermaid and diagrams are all resolved. Use it to check that what you wrote is what appears (text you can diff against your intent), and after any edit whose result you can't be sure of from the markdown alone. `format`: \"text\" (default), \"image\" for a screenshot, \"both\". For a deck page, call preview_deck instead.",
+		Annotations: readOnly,
+	}, s.mcpPreviewPage)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "patch_page",
 		Title:       "Patch page section",
 		Description: "Surgically edit ONE section of a page instead of rewriting the whole body (editor+). First call get_page format:\"map\" to see the section paths, then patch the target. Cheaper and safer than update_page on a long page — it never touches the rest of the document. Snapshots a revision like any edit.",
@@ -591,6 +605,15 @@ type createdPage struct {
 
 type createPageOut struct {
 	Page createdPage `json:"page"`
+	Lint string      `json:"lint,omitempty"`
+}
+
+// writePageOut is update_page's result: get_page's envelope plus the same
+// advisory. update_page can't just return getPageOut any more, because the
+// lint has to ride along on the WRITE and not on every read.
+type writePageOut struct {
+	Page mcpPage `json:"page"`
+	Lint string  `json:"lint,omitempty"`
 }
 
 func (s *Server) newCreatedPage(ctx context.Context, p models.Page) createdPage {
@@ -970,7 +993,7 @@ func (s *Server) mcpCreatePage(ctx context.Context, req *mcp.CallToolRequest, in
 		if ae != nil {
 			return mcpErr(ae), createPageOut{}, nil
 		}
-		return nil, createPageOut{Page: s.newCreatedPage(ctx, p)}, nil
+		return nil, createPageOut{Page: s.newCreatedPage(ctx, p), Lint: s.writeAdvisory(ctx, p)}, nil
 	})
 }
 
@@ -983,21 +1006,21 @@ type updatePageIn struct {
 	Props map[string]any `json:"props,omitempty" jsonschema:"replace the whole properties bag (omit to leave unchanged); reserved keys are ignored"`
 }
 
-func (s *Server) mcpUpdatePage(ctx context.Context, req *mcp.CallToolRequest, in updatePageIn) (*mcp.CallToolResult, getPageOut, error) {
+func (s *Server) mcpUpdatePage(ctx context.Context, req *mcp.CallToolRequest, in updatePageIn) (*mcp.CallToolResult, writePageOut, error) {
 	u, k := mcpIdentity(req)
 	if u == nil {
-		return mcpUnauthErr(), getPageOut{}, nil
+		return mcpUnauthErr(), writePageOut{}, nil
 	}
 	if ae := mcpRequireWrite(k); ae != nil {
-		return mcpErr(ae), getPageOut{}, nil
+		return mcpErr(ae), writePageOut{}, nil
 	}
 	// agentWrite=true: an agent rewriting the body must invalidate the Yjs collab
 	// overlay so live/next editors see it instead of stale CRDT state.
 	p, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Title: in.Title, Body: in.Body, Props: in.Props}, true)
 	if ae != nil {
-		return mcpErr(ae), getPageOut{}, nil
+		return mcpErr(ae), writePageOut{}, nil
 	}
-	out := getPageOut{Page: mcpPage{Page: p, URL: s.mcpPageURL(ctx, p)}}
+	out := writePageOut{Page: mcpPage{Page: p, URL: s.mcpPageURL(ctx, p)}, Lint: s.writeAdvisory(ctx, p)}
 	return nil, out, nil
 }
 

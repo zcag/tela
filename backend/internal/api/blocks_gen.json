@@ -527,5 +527,23 @@
       ],
       "syntax": ":rocket:"
     }
+  ],
+  "directives": [
+    "quote",
+    "tabs",
+    "kanban",
+    "stats",
+    "embed",
+    "file",
+    "calendar",
+    "timeline",
+    "poll"
+  ],
+  "calloutTypes": [
+    "note",
+    "tip",
+    "important",
+    "warning",
+    "caution"
   ]
 }

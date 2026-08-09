@@ -26,10 +26,11 @@ import (
 	"strings"
 )
 
-// queryer is the read surface shared by *sql.DB and *sql.Tx, so a counter can run
-// against either without duplication.
+// queryer is the read surface shared by *sql.DB and *sql.Tx, so a counter or a
+// lookup can run against either without duplication.
 type queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 const (

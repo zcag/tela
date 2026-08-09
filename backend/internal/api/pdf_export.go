@@ -247,36 +247,62 @@ func (s *Server) streamPDF(w http.ResponseWriter, r *http.Request, pageURL, titl
 // window.__telaPdfReady flag so async content (mermaid/katex/diagrams/fonts) is
 // painted before capture, and uploads a footer template (page title + N of M).
 func renderPDF(ctx context.Context, pageURL, title string) ([]byte, error) {
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	fields := map[string]string{
+	return gotenbergRender(ctx, "/forms/chromium/convert/url", map[string]string{
 		"url":               pageURL,
 		"emulatedMediaType": "print",
 		"printBackground":   "true",
-		"waitForExpression": "window.__telaPdfReady === true",
+		"waitForExpression": pdfReadyExpr,
 		"marginTop":         "0.55",
 		"marginBottom":      "0.7",
 		"marginLeft":        "0.6",
 		"marginRight":       "0.6",
-	}
+	}, map[string][]byte{"footer.html": []byte(footerHTML(title))})
+}
+
+// renderScreenshot captures the same reader page as a full-height JPEG, for
+// preview_page's image mode. Screen media (not print) so what comes back is the
+// page as a reader sees it, and JPEG at a modest width because a long page's
+// screenshot is base64'd into a tool result.
+func renderScreenshot(ctx context.Context, pageURL string) ([]byte, error) {
+	return gotenbergRender(ctx, "/forms/chromium/screenshot/url", map[string]string{
+		"url":               pageURL,
+		"format":            "jpeg",
+		"quality":           "70",
+		"width":             "1100",
+		"waitForExpression": pdfReadyExpr,
+	}, nil)
+}
+
+// pdfReadyExpr is the reader's own "async content is painted" flag — mermaid,
+// katex, diagrams and fonts all settle before it flips, so a render never
+// captures a half-drawn page.
+const pdfReadyExpr = "window.__telaPdfReady === true"
+
+// gotenbergRender POSTs a multipart form to one of gotenberg's chromium routes
+// and returns the rendered bytes. Plain client (internal trusted service, so no
+// SSRF guard needed).
+func gotenbergRender(ctx context.Context, route string, fields map[string]string, files map[string][]byte) ([]byte, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
 	for k, v := range fields {
 		if err := mw.WriteField(k, v); err != nil {
 			return nil, err
 		}
 	}
-	fw, err := mw.CreateFormFile("files", "footer.html")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := fw.Write([]byte(footerHTML(title))); err != nil {
-		return nil, err
+	for name, data := range files {
+		fw, err := mw.CreateFormFile("files", name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fw.Write(data); err != nil {
+			return nil, err
+		}
 	}
 	if err := mw.Close(); err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		gotenbergBaseURL()+"/forms/chromium/convert/url", &buf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gotenbergBaseURL()+route, &buf)
 	if err != nil {
 		return nil, err
 	}
