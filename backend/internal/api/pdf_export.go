@@ -259,16 +259,25 @@ func renderPDF(ctx context.Context, pageURL, title string) ([]byte, error) {
 	}, map[string][]byte{"footer.html": []byte(footerHTML(title))})
 }
 
-// renderScreenshot captures the same reader page as a full-height JPEG, for
-// preview_page's image mode. Screen media (not print) so what comes back is the
-// page as a reader sees it, and JPEG at a modest width because a long page's
-// screenshot is base64'd into a tool result.
+// renderScreenshot captures the reader page as a full-height JPEG for
+// preview_page's image mode. JPEG at a modest width because the result is
+// base64'd into a tool result.
+//
+// `emulatedMediaType: print` is load-bearing, not copied from renderPDF: tela's
+// desktop shell is FIXED height (`h-dvh`, content scrolling inner overflow-y
+// frames), so under screen media the document itself is exactly one viewport
+// tall and Chromium cannot capture what sits inside an inner scroller — a
+// "full page" screenshot silently comes back as the first screenful. Print
+// media is what releases the content to flow, which is why the PDF has never
+// had this problem.
 func renderScreenshot(ctx context.Context, pageURL string) ([]byte, error) {
 	return gotenbergRender(ctx, "/forms/chromium/screenshot/url", map[string]string{
 		"url":               pageURL,
 		"format":            "jpeg",
 		"quality":           "70",
 		"width":             "1100",
+		"emulatedMediaType": "print",
+		"clip":              "false", // capture beyond the viewport, not just the device box
 		"waitForExpression": pdfReadyExpr,
 	}, nil)
 }
