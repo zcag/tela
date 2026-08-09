@@ -112,7 +112,7 @@ func draftNarrative(ctx context.Context, rc *RunContext, p *core.Page) (string, 
 	if rc.Source != nil && rc.Source.Type == core.SourceJira {
 		user = draftUserJira(p.Title, p.Summary, ctxStr)
 	}
-	body, err := rc.LLM.Chat(ctx, draftSystem, user, 0.3)
+	body, err := chatBody(ctx, rc, draftSystem, user, 0.3)
 	if err != nil {
 		return "", err
 	}
@@ -172,7 +172,7 @@ func draftReference(ctx context.Context, rc *RunContext, p *core.Page) (string, 
 		if err != nil {
 			return "", err
 		}
-		body, err := rc.LLM.Chat(ctx, refSystem, refUser(p.Title, list, assembleContext(chunks), i, len(batches)), 0.2)
+		body, err := chatBody(ctx, rc, refSystem, refUser(p.Title, list, assembleContext(chunks), i, len(batches)), 0.2)
 		if err != nil {
 			return "", err
 		}

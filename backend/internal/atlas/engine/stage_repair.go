@@ -152,7 +152,7 @@ Do not add commentary, headings, or code fences around your answer — output on
 // redraftMermaid asks the model to rewrite a page, repairing its mermaid blocks.
 func redraftMermaid(ctx context.Context, rc *RunContext, p *core.Page) (string, error) {
 	user := "PAGE TITLE: " + p.Title + "\n\nREWRITE THIS PAGE, fixing only its Mermaid diagrams per the rules:\n\n" + p.Body
-	body, err := rc.LLM.Chat(ctx, mermaidRepairSystem, user, 0.2)
+	body, err := chatBody(ctx, rc, mermaidRepairSystem, user, 0.2)
 	return sanitizePage(body), err
 }
 
@@ -186,7 +186,7 @@ func redraftReference(ctx context.Context, rc *RunContext, p *core.Page, miss []
 			prompt = "CRITICAL: the previous draft OMITTED these items. They MUST each appear in your output:\n" +
 				emph.String() + "\n" + prompt
 		}
-		body, err := rc.LLM.Chat(ctx, refSystem, prompt, 0.2)
+		body, err := chatBody(ctx, rc, refSystem, prompt, 0.2)
 		if err != nil {
 			return "", err
 		}

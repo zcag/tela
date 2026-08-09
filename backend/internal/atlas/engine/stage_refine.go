@@ -49,7 +49,7 @@ func (refineStage) Run(ctx context.Context, rc *RunContext) error {
 		if rc.Source != nil && rc.Source.Type == core.SourceJira {
 			user = refineUserJira(p.Title, p.Body, assembleContext(chunks))
 		}
-		improved, err := rc.LLM.Chat(ctx, refineSystem, user, 0.3)
+		improved, err := chatBody(ctx, rc, refineSystem, user, 0.3)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
