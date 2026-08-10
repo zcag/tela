@@ -141,10 +141,11 @@ nobody gates on them) — keep generous, cap only for abuse.
 | Who | Trying tela | Individual power user | Any team (the real business) | Compliance / scale |
 | Price | **$0** | **$8/mo** ($72/yr → $6/mo) | **$10/seat/mo** ($96/yr → $8/seat/mo) | Custom (contact-sales, no published price) |
 | Seats | 1 | 1 | 2+ | Negotiated |
-| Built-in AI answers / mo | 50 | 1,000 | 2,000 pooled (+credits) | Negotiated |
+| Built-in AI answers / mo | 50 | 3,000 | 5,000 pooled (+credits) | Negotiated |
 | Your own agent (MCP) | Unlimited | Unlimited | Unlimited | Unlimited |
 | Atlas sources | 1 | 5 | 20 | Unlimited |
-| Atlas refresh | Manual | Automatic | Automatic | Automatic |
+| Atlas refresh | Manual | Scheduled (daily/weekly/monthly) | Scheduled (daily/weekly/monthly) | Scheduled (hourly available) |
+| Atlas indexing / mo | 3h | 15h | 30h | Unlimited |
 | Wiki / decks / public spaces / WebDAV / MCP | ✅ | ✅ | ✅ | ✅ |
 | Pages / spaces / storage | Soft ceiling | Generous | Generous | Unlimited |
 | Custom domain | — | ✅ | ✅ | ✅ |

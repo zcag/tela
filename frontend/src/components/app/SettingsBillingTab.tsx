@@ -352,13 +352,25 @@ function UsageCard({
   )
 }
 
+
+// Atlas indexing budget in the unit people think in. Minutes read as precision
+// the estimate doesn't have; hours read as a budget.
+function formatAtlasMinutes(min: number | null | undefined): string {
+  if (min == null) return 'Unlimited'
+  return min >= 60 ? `${Math.round(min / 60)}h` : `${min} min`
+}
+
 // A compact spec line for a plan in the comparison grid.
 function planSpecs(p: Plan): string[] {
   // Tiers are metered on AI (Atlas sources + monthly answers) and, for orgs,
   // seats — not pages/spaces (unlimited on every tier now). Storage is a quiet
   // backstop, shown as a usage line, not sold.
   const specs = [
-    `${formatCount(p.max_atlas_sources)} Atlas source${p.max_atlas_sources === 1 ? '' : 's'} · ${p.features?.atlas_scheduled ? 'auto-refresh' : 'manual refresh'}`,
+    `${formatCount(p.max_atlas_sources)} Atlas source${p.max_atlas_sources === 1 ? '' : 's'} · ${p.features?.atlas_scheduled ? 'scheduled refresh' : 'manual refresh'}`,
+    // The indexing budget is the limit that actually binds — a source count says
+    // nothing about cost, since a run ranges 5-80 minutes. Read from the plans
+    // API so it cannot drift from the backend the way hardcoded copy does.
+    `${formatAtlasMinutes(p.max_atlas_minutes_per_month)} of Atlas indexing / mo`,
     `${formatCount(p.max_llm_calls_per_month)} built-in AI answers / mo`,
     `Unlimited with your own agent (MCP)`,
     `${formatStorageLimit(p.max_storage_bytes)} attachments`,

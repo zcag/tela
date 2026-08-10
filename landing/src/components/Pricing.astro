@@ -5,7 +5,10 @@
 // add team/enterprise controls — NOT page/space/storage caps. Managed AI is included on
 // every cloud plan; self-host is BYO AI and lives on the dedicated /pricing detail.
 // Indigo is earned on the one recommended Team tier + the Atlas flagship band.
-// Numbers (AI answers/month + Atlas sources + dollars) mirror docs/editions-and-pricing.md
+// Numbers (AI answers/month + Atlas sources + indexing hours + dollars) mirror
+// docs/editions-and-pricing.md and the backend `plans` table. The indexing budget
+// is the cap that actually binds — a source count says nothing about cost, since
+// one run ranges 5-80 minutes.
 // and the backend plans table — keep in sync.
 //
 // Props: selfHostLink — where the "run it yourself" callout points (default: the
@@ -44,7 +47,7 @@ const cloud = [
     periodYear: null,
     saveYear: null,
     blurb: 'Personal notes and trying tela.',
-    specs: ['Unlimited with your own agent (MCP)', '50 built-in AI answers / mo', '1 Atlas source · manual refresh', 'Unlimited pages & spaces'],
+    specs: ['Unlimited with your own agent (MCP)', '50 built-in AI answers / mo', '1 Atlas source · manual refresh · 3h indexing / mo', 'Unlimited pages & spaces'],
     cta: 'Get started',
     href: REGISTER_URL,
     action: 'app',
@@ -58,7 +61,7 @@ const cloud = [
     periodYear: '/mo',
     saveYear: 'Billed annually — $72/yr, save $24',
     blurb: 'For power users who live in their wiki.',
-    specs: ['5 Atlas sources · auto-refreshed', '1,000 built-in AI answers / mo', 'Custom domain & public spaces', 'Everything in Free'],
+    specs: ['5 Atlas sources · scheduled refresh · 15h indexing / mo', '3,000 built-in AI answers / mo', 'Custom domain & public spaces', 'Everything in Free'],
     cta: 'Get Personal',
     href: UPGRADE_URL,
     action: 'buy',
@@ -72,7 +75,7 @@ const cloud = [
     periodYear: 'per seat / mo',
     saveYear: 'Billed annually — $96/seat/yr, save $24',
     blurb: 'A team that runs on its docs.',
-    specs: ['20 Atlas sources · auto-refreshed', '2,000 built-in answers / mo, pooled', 'Roles & member management', 'Everything in Personal'],
+    specs: ['20 Atlas sources · scheduled refresh · 30h indexing / mo', '5,000 built-in answers / mo, pooled', 'Roles & member management', 'Everything in Personal'],
     cta: 'Get Team',
     href: UPGRADE_URL,
     action: 'buy',
@@ -100,7 +103,7 @@ const cloud = [
     <h2 class="h2">Simple plans. Your markdown either way.</h2>
     <p class="lede">
       One ladder, the whole product on every tier — <strong>Atlas, semantic search, ask-your-docs, and the agent connector</strong>.
-      Paid tiers raise your AI — how many sources Atlas keeps fresh and how many answers a month — and add team controls.
+      Paid tiers raise your AI — how many sources Atlas keeps fresh, how much indexing time a month, and how many answers — and add team controls.
       Managed AI is included on every cloud plan.
     </p>
   </div>

@@ -7,6 +7,7 @@ import { Input } from '../../ui/input'
 import { Select } from '../../ui/select'
 import { EmptyState } from '../../ui/empty-state'
 import { AtlasBudgetNotice } from './AtlasBudgetNotice'
+import { useAtlasBudget } from '../../../lib/queries/atlas'
 import { useSpaces } from '../../../lib/queries/spaces'
 import { usePages } from '../../../lib/queries/pages'
 import {
@@ -31,6 +32,16 @@ export function AtlasProjectSettings() {
   const navigate = useNavigate()
   const q = useAtlasProject(projectId)
   const project = q.data?.project
+  // Hourly is 730 runs/month, which cannot fit ANY capped plan for any repo
+  // (even a 2.5-minute run costs 1,825 min against the most generous 1,800 cap),
+  // so the server refuses it. Hiding it here means the user never picks a value
+  // that is guaranteed to be rejected — but a project already ON hourly (an
+  // unlimited plan, or legacy data) keeps seeing its own setting.
+  const budgetQ = useAtlasBudget()
+  const ownerBudget = budgetQ.data?.budgets.find((b) =>
+    b.projects.some((p) => p.id === Number(projectId)),
+  )
+  const hourlyAllowed = ownerBudget ? ownerBudget.cap_minutes == null : true
 
   const spacesQ = useSpaces()
   const patch = usePatchProject()
@@ -108,7 +119,9 @@ export function AtlasProjectSettings() {
             {project.scheduled_allowed ? (
               <Field label="Refresh" hint="How often Atlas re-runs this project to keep its docs current.">
                 <Select value={cadence} onChange={(e) => setCadence(e.target.value as AtlasCadence)}>
-                  {CADENCES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  {CADENCES.filter((c) => c.value !== 'hourly' || hourlyAllowed || cadence === 'hourly').map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
                 </Select>
                 {/* Right under the control that causes it: the cost of a cadence
                     is invisible from the label, and this is the moment to say so. */}

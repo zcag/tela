@@ -196,6 +196,9 @@ export interface Plan {
   max_atlas_files_per_run: number | null
   max_atlas_runs_per_month: number | null
   max_embed_tokens_per_month: number | null
+  // GPU minutes — the cap that actually binds, since a run ranges 5-80 min and
+  // a source count says nothing about cost.
+  max_atlas_minutes_per_month: number | null
 }
 
 // GET /api/usage and /api/orgs/{id}/usage. members is present for orgs only.

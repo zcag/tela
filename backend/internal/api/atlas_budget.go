@@ -276,3 +276,37 @@ func (s *Server) GetAtlasBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"budgets": budgets})
 }
+
+// hourlyRunsPerMonth is what "hourly" actually commits an account to. Kept
+// beside the affordability rule below because that rule is only true given this
+// number.
+const hourlyRunsPerMonth = 730
+
+// checkCadenceAffordable refuses a cadence the account's plan can never pay for.
+//
+// This is a floor, not a projection: at 730 runs a month, even a 2.5-minute run
+// costs 1,825 minutes — more than the most generous capped plan (org_team, 1800).
+// So `hourly` cannot fit ANY plan with a minutes cap, for any repo, ever. It is
+// not "probably too much"; it is arithmetically impossible.
+//
+// Offering it anyway is what produced the incident this all came from: hourly was
+// the hardcoded default with no control in the create dialog, every project got
+// it, and the first signal was a 402 after the allowance was gone. Refusing it at
+// the seam means the pricing copy can describe the cadence list truthfully
+// instead of advertising an option that always fails.
+//
+// Uncapped plans (personal_unlimited, org_enterprise, self-host) keep hourly.
+func (s *Server) checkCadenceAffordable(ctx context.Context, acct account, cadence string) *apiErr {
+	if cadence != "hourly" {
+		return nil
+	}
+	p, err := planFor(ctx, s.DB, acct)
+	if err != nil {
+		return nil // can't read the plan: don't block a config change on our lookup
+	}
+	if p.MaxAtlasMinutesPerMonth == nil {
+		return nil
+	}
+	return quotaErr("hourly refresh needs more indexing time than the %s plan includes (%d minutes a month — hourly is %d runs). Choose daily, weekly or monthly, or upgrade.",
+		p.Name, *p.MaxAtlasMinutesPerMonth, hourlyRunsPerMonth)
+}

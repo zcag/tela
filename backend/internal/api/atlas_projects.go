@@ -299,6 +299,10 @@ func (s *Server) CreateAtlasProject(w http.ResponseWriter, r *http.Request) {
 	if cadence == "" && autoUpdate {
 		cadence = "daily"
 	}
+	if ae := s.checkCadenceAffordable(r.Context(), account{Kind: req.OwnerKind, ID: req.OwnerID}, cadence); ae != nil {
+		writeError(w, ae.Status, ae.Code, ae.Message)
+		return
+	}
 
 	// Resolve the output space. An explicit space must be writable by the caller; a
 	// new_space_name is materialized now; neither defers to the first run.
@@ -438,6 +442,17 @@ func (s *Server) PatchAtlasProject(w http.ResponseWriter, r *http.Request) {
 	if req.Cadence != nil {
 		if !atlasCadences[*req.Cadence] {
 			writeError(w, http.StatusBadRequest, "invalid_cadence", "cadence must be hourly|daily|weekly|monthly or empty")
+			return
+		}
+		// A cadence the plan can never pay for is refused here rather than
+		// discovered as a 402 once the month's allowance is gone.
+		acct, ae := s.atlas.ownerAccount(r.Context(), projectID)
+		if ae != nil {
+			writeError(w, ae.Status, ae.Code, ae.Message)
+			return
+		}
+		if ae := s.checkCadenceAffordable(r.Context(), acct, *req.Cadence); ae != nil {
+			writeError(w, ae.Status, ae.Code, ae.Message)
 			return
 		}
 		if _, err := s.DB.ExecContext(r.Context(), `UPDATE atlas_projects SET cadence=$1 WHERE id=$2`, *req.Cadence, projectID); err != nil {

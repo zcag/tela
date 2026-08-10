@@ -275,3 +275,60 @@ func TestAtlasBudget_OwnerScopeMatchesProjectListing(t *testing.T) {
 		}
 	}
 }
+
+// TestCadenceFloor_HourlyImpossibleOnAnyCappedPlan pins the arithmetic the floor
+// rests on: at 730 runs a month even a 2.5-minute run costs 1,825 minutes, more
+// than the most generous capped plan (org_team, 1800). So hourly cannot fit ANY
+// capped plan for ANY repo — it is not "usually too much", it is impossible, and
+// that is what makes refusing it up front honest rather than paternalistic.
+func TestCadenceFloor_HourlyImpossibleOnAnyCappedPlan(t *testing.T) {
+	const cheapestConceivableRunMin = 2.5
+	for _, cap := range []int64{180, 900, 1800} { // free, plus, org_team
+		if cost := hourlyRunsPerMonth * cheapestConceivableRunMin; cost <= float64(cap) {
+			t.Fatalf("hourly at %.1f min/run costs %.0f min, which FITS a %d cap — the floor's premise is wrong",
+				cheapestConceivableRunMin, cost, cap)
+		}
+	}
+}
+
+func TestCadenceFloor_RefusesHourlyButAllowsSlower(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "cadence-floor", "pw", false)
+	if _, err := d.ExecContext(ctx,
+		`UPDATE users SET plan_key='personal_plus', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	acct := account{Kind: accountUser, ID: uid}
+
+	ae := s.checkCadenceAffordable(ctx, acct, "hourly")
+	if ae == nil {
+		t.Fatal("hourly allowed on a capped plan")
+	}
+	if ae.Status != 402 {
+		t.Fatalf("status %d, want 402", ae.Status)
+	}
+	for _, c := range []string{"daily", "weekly", "monthly", ""} {
+		if ae := s.checkCadenceAffordable(ctx, acct, c); ae != nil {
+			t.Fatalf("refused %q, which the plan can afford: %s", c, ae.Message)
+		}
+	}
+}
+
+// Uncapped plans keep hourly — the floor is about affordability, not taste.
+func TestCadenceFloor_UncappedPlanKeepsHourly(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "cadence-unlimited", "pw", false)
+	if _, err := d.ExecContext(ctx,
+		`UPDATE users SET plan_key='personal_unlimited', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	if ae := s.checkCadenceAffordable(ctx, account{Kind: accountUser, ID: uid}, "hourly"); ae != nil {
+		t.Fatalf("refused hourly on an unlimited plan: %s", ae.Message)
+	}
+}
