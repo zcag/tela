@@ -1,6 +1,7 @@
 package pagelint
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -90,9 +91,47 @@ func TestDroppedHTML(t *testing.T) {
 	if !strings.Contains(is[0].Message, "<div>") {
 		t.Errorf("should name the tag: %q", is[0].Message)
 	}
-	wants(t, "line one<br>line two\n", "dropped-html")
-	// Same tag twice on a line reports once.
-	wants(t, "<span>a</span> and <span>b</span>\n", "dropped-html")
+}
+
+// `<br>` is dropped like any other raw HTML, but nothing visible goes wrong —
+// markdown already flows a single newline as a space — so reporting it was pure
+// noise that buried the findings that matter.
+func TestBrIsNotReported(t *testing.T) {
+	wants(t, "line one<br>line two\n")
+	wants(t, "cell<br />more\n")
+	wants(t, "a<wbr>b\n")
+}
+
+// A tag repeated down a page is ONE thing to fix. Reporting each occurrence
+// turned a single mistake into a wall of identical warnings.
+func TestDroppedHTMLIsReportedOncePerTag(t *testing.T) {
+	body := "<span>a</span> and <span>b</span>\n\nmore <span>c</span> here\n\n<div>x</div>\n"
+	got := Lint(body, vocab)
+	if len(got) != 2 {
+		t.Fatalf("want one issue per tag (span, div), got %d: %+v", len(got), got)
+	}
+	if got[0].Line != 1 || !strings.Contains(got[0].Message, "appears 3 times") {
+		t.Errorf("span should anchor at its first line and carry a count: %+v", got[0])
+	}
+	if strings.Contains(got[1].Message, "appears") {
+		t.Errorf("a single occurrence should not carry a count: %q", got[1].Message)
+	}
+}
+
+// A placeholder like <org>/<commit>/<all> is DELETED from the page — there's no
+// inner text to survive — so it gets the "this vanishes, use backticks" message
+// rather than the styling one.
+func TestPlaceholderTagsGetTheirOwnMessage(t *testing.T) {
+	is := wants(t, "run it against <all> repos\n", "dropped-html")
+	if !strings.Contains(is[0].Message, "deleted from the page") ||
+		!strings.Contains(is[0].Message, "backticks") {
+		t.Errorf("placeholder message should say it vanishes + how to fix: %q", is[0].Message)
+	}
+	// A real element with attributes keeps the styling message.
+	is = wants(t, `a <span style="color:red">word</span>`+"\n", "dropped-html")
+	if !strings.Contains(is[0].Message, "text between the tags survives") {
+		t.Errorf("element message should say inner text survives: %q", is[0].Message)
+	}
 }
 
 // The rules must not fire on code samples, autolinks, or comparisons — the
@@ -156,8 +195,11 @@ func TestIssuesAreOrderedByLine(t *testing.T) {
 }
 
 func TestIssueCap(t *testing.T) {
-	body := strings.Repeat("<div>x</div>\n\n", maxIssues+20)
-	if got := len(Lint(body, vocab)); got != maxIssues {
+	var b strings.Builder
+	for i := 0; i < maxIssues+20; i++ {
+		fmt.Fprintf(&b, "a claim.[^%d]\n\n", i)
+	}
+	if got := len(Lint(b.String(), vocab)); got != maxIssues {
 		t.Fatalf("len = %d, want the cap %d", got, maxIssues)
 	}
 }

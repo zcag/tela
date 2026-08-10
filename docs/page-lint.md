@@ -47,7 +47,7 @@ the block's chrome doesn't.
 | `chart-invalid` | error | dead/blank chart frame |
 | `unknown-directive` | warning | unwraps to bare contents; frame, labels and attributes gone |
 | `unknown-callout` | warning | renders as a plain quote with the literal `[!TYPE]` in it |
-| `dropped-html` | warning | tag and its styling vanish; inner text survives as prose |
+| `dropped-html` | warning | a real element's tag and styling vanish (inner text survives); a placeholder like `<all>`/`<org>` is deleted outright |
 | `collapsible-closer-joined` | warning | no collapsible forms; body renders as plain text |
 | `empty-block` | warning | a `:::tabs`/`:::kanban`/`:::stats` with no `###` renders empty |
 | `undefined-footnote` | warning | renders as the literal `[^1]` |
@@ -56,6 +56,19 @@ the block's chrome doesn't.
 | `dangling-wikilink` | warning | `[[Name]]` matching no page renders as plain text |
 | `broken-page-link` | warning | the link goes nowhere |
 | `missing-attachment` | warning | broken image / dead download |
+
+Two deliberate exclusions keep the noise down. **`<br>`/`<wbr>` are not
+reported**: they're dropped like any raw HTML, but markdown already flows a
+single newline as a space, so nothing visibly goes wrong — and being the most
+common tag carried over from GitHub markdown, flagging them buried the reports
+that matter. And **`dropped-html` reports once per tag NAME per page**, anchored
+at the first occurrence with a count, because a tag repeated down a page is one
+thing to fix, not twelve.
+
+The two shapes of `dropped-html` also read differently on purpose. `<span style>`
+loses its styling but keeps its text; a placeholder like `<all>` or `<commit>`
+has no inner text, so the word is **deleted from the page** — that message says
+so and tells the author to use backticks.
 
 The table above was **verified against the live reader**, not derived from
 reading the renderer. That mattered: `ragged-table`'s first message claimed the

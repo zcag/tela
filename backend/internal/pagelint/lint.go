@@ -72,8 +72,42 @@ var headingSectioned = map[string]string{
 // HTML tags the reader honors. Everything else is dropped on the floor by
 // MarkdownView's `case 'html': return null` — the tag AND its styling vanish
 // while any text between the tags survives as plain prose, so the page silently
-// loses emphasis, line breaks or images with no trace in the source.
+// loses emphasis or images with no trace in the source.
 var renderedHTMLTags = map[string]bool{"details": true, "summary": true}
+
+// `<br>` is dropped like any other raw HTML, but reporting it fails this
+// package's own bar: there is nothing for the reader to SEE go wrong. Markdown
+// already collapses a single newline into a space, so a dropped `<br>` just
+// leaves the text flowing the way the surrounding prose does — no mangling, no
+// missing content, nothing an author would recognize as a defect. It is also
+// the most common raw tag people carry over from GitHub-flavored markdown, so
+// flagging it buried the reports that do matter.
+var cosmeticHTMLTags = map[string]bool{"br": true, "wbr": true}
+
+// Real HTML element names authors actually reach for. Anything OUTSIDE this set
+// that carries no attributes reads as a prose placeholder — `<org>`, `<commit>`,
+// `<all>` — and CommonMark parses it as a tag just the same, so the word is
+// deleted from the rendered page outright. That's a different (and worse)
+// problem from `<span style>` losing its styling, and it needs different advice:
+// wrap it in backticks. Same rule, two messages.
+var htmlElements = map[string]bool{
+	"a": true, "abbr": true, "article": true, "aside": true, "audio": true,
+	"b": true, "blockquote": true, "button": true, "canvas": true, "caption": true,
+	"center": true, "code": true, "col": true, "colgroup": true, "dd": true,
+	"del": true, "div": true, "dl": true, "dt": true, "em": true, "embed": true,
+	"fieldset": true, "figcaption": true, "figure": true, "font": true,
+	"footer": true, "form": true, "h1": true, "h2": true, "h3": true, "h4": true,
+	"h5": true, "h6": true, "header": true, "hr": true, "i": true, "iframe": true,
+	"img": true, "input": true, "ins": true, "kbd": true, "label": true,
+	"legend": true, "li": true, "main": true, "mark": true, "nav": true,
+	"object": true, "ol": true, "option": true, "p": true, "picture": true,
+	"pre": true, "q": true, "s": true, "samp": true, "script": true,
+	"section": true, "select": true, "small": true, "source": true, "span": true,
+	"strike": true, "strong": true, "style": true, "sub": true, "sup": true,
+	"svg": true, "table": true, "tbody": true, "td": true, "textarea": true,
+	"tfoot": true, "th": true, "thead": true, "time": true, "tr": true,
+	"track": true, "u": true, "ul": true, "var": true, "video": true,
+}
 
 var (
 	// The second group is the WHOLE rest of the line, not just the language: a
@@ -369,21 +403,31 @@ func (l *linter) checkFootnotes() {
 // scan() builds, so it runs after it.
 func (l *linter) checkInline() {
 	inTable := false
+	// Collected page-wide, not per line: the same tag repeated down a page is ONE
+	// thing to fix, and emitting a row per occurrence buried the other rules under
+	// a wall of identical warnings.
+	html := map[string]*htmlHit{}
 	for idx, i := range l.prose {
 		line := l.lines[i]
 		n := i + 1
 		masked := l.masked[i]
 
 		// Raw HTML the reader drops.
-		reported := map[string]bool{}
 		for _, m := range htmlTagRE.FindAllString(masked, -1) {
 			tag := strings.ToLower(htmlNameRE.FindStringSubmatch(m)[1])
-			if renderedHTMLTags[tag] || reported[tag] {
+			if renderedHTMLTags[tag] || cosmeticHTMLTags[tag] {
 				continue
 			}
-			reported[tag] = true
-			l.add(n, LevelWarning, "dropped-html", fmt.Sprintf(
-				"<%s> is raw HTML, which the reader drops — the tag and anything it styles disappear (text between the tags survives as plain prose). Use markdown or a tela block instead.", tag))
+			hit := html[tag]
+			if hit == nil {
+				hit = &htmlHit{line: n, placeholder: !htmlElements[tag] && !strings.ContainsAny(m, " \t")}
+				html[tag] = hit
+			}
+			// Count opening tags only — `<span>x</span>` is one mistake, not two —
+			// while still registering a lone stray closer.
+			if !strings.HasPrefix(m, "</") {
+				hit.count++
+			}
 		}
 
 		// Prose captured inside `$$…$$`.
@@ -408,6 +452,40 @@ func (l *linter) checkInline() {
 		if inTable && strings.TrimSpace(line) == "" {
 			inTable = false
 		}
+	}
+	l.reportHTML(html)
+}
+
+// htmlHit is one raw tag name seen on a page: where it first appeared, how often,
+// and whether it reads as a prose placeholder rather than a real element.
+type htmlHit struct {
+	line        int
+	count       int
+	placeholder bool
+}
+
+// reportHTML emits one issue per tag name, anchored at its first occurrence.
+func (l *linter) reportHTML(html map[string]*htmlHit) {
+	tags := make([]string, 0, len(html))
+	for tag := range html {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags) // map order is random; the report must not be
+	for _, tag := range tags {
+		hit := html[tag]
+		times := ""
+		if hit.count > 1 {
+			times = fmt.Sprintf(" It appears %d times on this page.", hit.count)
+		}
+		if hit.placeholder {
+			l.add(hit.line, LevelWarning, "dropped-html", fmt.Sprintf(
+				"`<%s>` is read as an HTML tag, so it is deleted from the page — the reader shows nothing where you wrote it. Put it in backticks (`` `<%s>` ``) to keep it visible.%s",
+				tag, tag, times))
+			continue
+		}
+		l.add(hit.line, LevelWarning, "dropped-html", fmt.Sprintf(
+			"<%s> is raw HTML, which the reader drops — the tag and anything it styles disappear, though text between the tags survives as plain prose. Use markdown or a tela block instead.%s",
+			tag, times))
 	}
 }
 
