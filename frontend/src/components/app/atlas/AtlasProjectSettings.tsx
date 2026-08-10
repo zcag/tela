@@ -6,6 +6,7 @@ import { Card, CardBody, CardHeader, CardTitle } from '../../ui/card'
 import { Input } from '../../ui/input'
 import { Select } from '../../ui/select'
 import { EmptyState } from '../../ui/empty-state'
+import { AtlasBudgetNotice } from './AtlasBudgetNotice'
 import { useSpaces } from '../../../lib/queries/spaces'
 import { usePages } from '../../../lib/queries/pages'
 import {
@@ -109,6 +110,9 @@ export function AtlasProjectSettings() {
                 <Select value={cadence} onChange={(e) => setCadence(e.target.value as AtlasCadence)}>
                   {CADENCES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </Select>
+                {/* Right under the control that causes it: the cost of a cadence
+                    is invisible from the label, and this is the moment to say so. */}
+                <div className="mt-[var(--space-2)]"><AtlasBudgetNotice projectId={project.id} /></div>
               </Field>
             ) : (
               <Field label="Refresh" hint="Run this project manually any time from its page. Scheduled auto-refresh is available on paid plans.">

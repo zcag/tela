@@ -1,0 +1,194 @@
+package api
+
+import (
+	"context"
+	"testing"
+
+	"github.com/zcag/tela/backend/internal/testdb"
+)
+
+// TestAtlasBudget_ProjectsTheIncidentConfig reproduces the config that started
+// all this — one source, hourly, ~50 min/run — and asserts the projection lands
+// on the number measured in production (36,706 min/month against a 900 cap).
+// If this drifts, the warning is lying about the thing it exists to warn about.
+func TestAtlasBudget_ProjectsTheIncidentConfig(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "budget-incident", "pw", false)
+	pid := seedAtlasProject(t, d, "test", accountUser, uid, 0, 0)
+	src := seedAtlasSource(t, d, pid, "https://example.com/repowise", "ref1")
+	if _, err := d.ExecContext(ctx,
+		`UPDATE atlas_projects SET cadence='hourly', auto_update=1 WHERE id=$1`, pid); err != nil {
+		t.Fatalf("set cadence: %v", err)
+	}
+	if _, err := d.ExecContext(ctx,
+		`UPDATE users SET plan_key='personal_plus', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	// Three finished runs at 50.3 min — enough history to be trusted, not estimated.
+	for i := 0; i < 3; i++ {
+		stampRunDuration(t, d, seedAtlasRun(t, d, src, "done"), 3018)
+	}
+
+	b, err := s.atlasBudgetFor(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("budget: %v", err)
+	}
+	if b.CapMinutes == nil || *b.CapMinutes != 900 {
+		t.Fatalf("cap = %v, want 900", b.CapMinutes)
+	}
+	if b.Estimated {
+		t.Fatal("marked estimated despite 3 finished runs of real history")
+	}
+	// 730 runs/month x 50.3 min = 36,719 (production measured 36,706 from a
+	// slightly different mean; within a rounding of each other).
+	if b.Projected < 36000 || b.Projected > 37500 {
+		t.Fatalf("projected %.0f min, want ~36,700", b.Projected)
+	}
+	if !b.Over {
+		t.Fatal("36,700 projected against a 900 cap did not register as over")
+	}
+	if b.Suggestion == nil {
+		t.Fatal("no suggestion offered for a config 40x over cap")
+	}
+	// 4.3 runs/month x 50.3 = 216 min — weekly is the fastest cadence that fits.
+	if b.Suggestion.Cadence != "weekly" {
+		t.Fatalf("suggested %q, want weekly (daily would be 1,509 min, still over)",
+			b.Suggestion.Cadence)
+	}
+	if b.Suggestion.Projected > 900 {
+		t.Fatalf("suggestion projects %.0f min, which is still over the 900 cap", b.Suggestion.Projected)
+	}
+	if len(b.Suggestion.AppliesTo) != 1 || b.Suggestion.AppliesTo[0] != pid {
+		t.Fatalf("applies_to = %v, want [%d]", b.Suggestion.AppliesTo, pid)
+	}
+}
+
+// A small repo on daily must NOT be warned about: 30 runs x 7 min = 210 of 900.
+// This is the false-positive guard — a warning that fires on a fine config is
+// the failure mode that makes people ignore the real one.
+func TestAtlasBudget_SmallRepoOnDailyIsNotWarned(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "budget-small", "pw", false)
+	pid := seedAtlasProject(t, d, "small", accountUser, uid, 0, 0)
+	src := seedAtlasSource(t, d, pid, "https://example.com/small", "ref1")
+	if _, err := d.ExecContext(ctx,
+		`UPDATE atlas_projects SET cadence='daily', auto_update=1 WHERE id=$1`, pid); err != nil {
+		t.Fatalf("set cadence: %v", err)
+	}
+	if _, err := d.ExecContext(ctx,
+		`UPDATE users SET plan_key='personal_plus', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		stampRunDuration(t, d, seedAtlasRun(t, d, src, "done"), 420) // 7 min
+	}
+
+	b, err := s.atlasBudgetFor(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("budget: %v", err)
+	}
+	if b.Over || b.Suggestion != nil {
+		t.Fatalf("warned about %.0f min against a 900 cap — false positive", b.Projected)
+	}
+}
+
+// A project with no run history must be flagged `estimated` rather than
+// projected from nothing, and must not silently read as 0 cost.
+func TestAtlasBudget_NoHistoryIsEstimatedNotZero(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "budget-fresh", "pw", false)
+	pid := seedAtlasProject(t, d, "fresh", accountUser, uid, 0, 0)
+	seedAtlasSource(t, d, pid, "https://example.com/fresh", "ref1")
+	if _, err := d.ExecContext(ctx,
+		`UPDATE atlas_projects SET cadence='daily', auto_update=1 WHERE id=$1`, pid); err != nil {
+		t.Fatalf("set cadence: %v", err)
+	}
+
+	b, err := s.atlasBudgetFor(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("budget: %v", err)
+	}
+	if !b.Estimated {
+		t.Fatal("a project with zero runs was not flagged as estimated")
+	}
+	if b.Projected <= 0 {
+		t.Fatal("a project with zero runs projected 0 minutes — it must cost the corpus median, not nothing")
+	}
+}
+
+// Manual-only projects (auto_update off) predict nothing and must never warn.
+func TestAtlasBudget_ManualProjectCostsNothing(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "budget-manual", "pw", false)
+	pid := seedAtlasProject(t, d, "manual", accountUser, uid, 0, 0)
+	src := seedAtlasSource(t, d, pid, "https://example.com/manual", "ref1")
+	if _, err := d.ExecContext(ctx,
+		`UPDATE atlas_projects SET cadence='', auto_update=0 WHERE id=$1`, pid); err != nil {
+		t.Fatalf("set cadence: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		stampRunDuration(t, d, seedAtlasRun(t, d, src, "done"), 4812) // 80 min each
+	}
+
+	b, err := s.atlasBudgetFor(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("budget: %v", err)
+	}
+	if b.Projected != 0 || b.Over {
+		t.Fatalf("manual project projected %.0f min; scheduled cost of an unscheduled project must be 0", b.Projected)
+	}
+}
+
+// The suggester must never propose speeding a project UP as a "fix", and must
+// leave already-slower projects out of applies_to.
+func TestAtlasBudget_SuggestionNeverSpeedsUpOrTouchesSlowerProjects(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "budget-mixed", "pw", false)
+	if _, err := d.ExecContext(ctx,
+		`UPDATE users SET plan_key='personal_plus', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	// One hourly offender, one already on monthly.
+	fast := seedAtlasProject(t, d, "fast", accountUser, uid, 0, 0)
+	fastSrc := seedAtlasSource(t, d, fast, "https://example.com/fast", "r")
+	slow := seedAtlasProject(t, d, "slow", accountUser, uid, 0, 0)
+	slowSrc := seedAtlasSource(t, d, slow, "https://example.com/slow", "r")
+	if _, err := d.ExecContext(ctx, `UPDATE atlas_projects SET cadence='hourly', auto_update=1 WHERE id=$1`, fast); err != nil {
+		t.Fatalf("cadence: %v", err)
+	}
+	if _, err := d.ExecContext(ctx, `UPDATE atlas_projects SET cadence='monthly', auto_update=1 WHERE id=$1`, slow); err != nil {
+		t.Fatalf("cadence: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		stampRunDuration(t, d, seedAtlasRun(t, d, fastSrc, "done"), 3018)
+		stampRunDuration(t, d, seedAtlasRun(t, d, slowSrc, "done"), 3018)
+	}
+
+	b, err := s.atlasBudgetFor(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("budget: %v", err)
+	}
+	if b.Suggestion == nil {
+		t.Fatal("no suggestion for an over-cap account")
+	}
+	for _, id := range b.Suggestion.AppliesTo {
+		if id == slow {
+			t.Fatal("suggestion would change a project already slower than the recommendation")
+		}
+	}
+}

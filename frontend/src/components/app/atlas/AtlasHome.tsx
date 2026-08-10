@@ -20,6 +20,7 @@ import {
 import { NewProjectDialog } from './NewProjectDialog'
 import { CredentialsDialog } from './CredentialsDialog'
 import { AtlasQuotaBar } from './AtlasQuotaBar'
+import { AtlasBudgetNotice } from './AtlasBudgetNotice'
 
 function freshnessOf(p: AtlasProject): { f: Freshness; label: string } {
   const r = p.last_run
@@ -101,6 +102,11 @@ export function AtlasHome() {
               ? 'Living documentation, generated from your systems and kept current.'
               : `${projects.length} project${projects.length === 1 ? '' : 's'} · ${counts.fresh} fresh${counts.stale ? ` · ${counts.stale} stale` : ''}${counts.running ? ` · ${counts.running} generating` : ''}${counts.failed ? ` · ${counts.failed} failed` : ''}`}
           </p>
+          {/* Account-level, because the budget is per account: a user with three
+              projects cannot tell from any one of them whether the total fits. */}
+          {projects.length > 0 && (
+            <div className="mt-[var(--space-3)] max-w-[34rem]"><AtlasBudgetNotice /></div>
+          )}
         </div>
         <div className="flex items-center gap-[var(--space-2)]">
           <Button variant="ghost" onClick={() => setCredsOpen(true)}>

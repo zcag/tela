@@ -146,6 +146,7 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/atlas/credentials", srv.CreateAtlasCredential)
 	mux.HandleFunc("DELETE /api/atlas/credentials/{id}", srv.DeleteAtlasCredential)
 
+	mux.HandleFunc("GET /api/atlas/budget", srv.GetAtlasBudget)
 	mux.HandleFunc("GET /api/atlas/projects", srv.ListAtlasProjects)
 	mux.HandleFunc("POST /api/atlas/projects", srv.CreateAtlasProject)
 	mux.HandleFunc("GET /api/atlas/projects/{id}", srv.GetAtlasProject)

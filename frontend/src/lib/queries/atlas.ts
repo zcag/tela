@@ -15,6 +15,32 @@ import { api } from '../api'
 export type AtlasOwnerKind = 'user' | 'org'
 export type AtlasSourceType = 'git' | 'jira'
 export type AtlasCadence = '' | 'hourly' | 'daily' | 'weekly' | 'monthly'
+// Projected monthly Atlas GPU spend against the plan cap (GET /api/atlas/budget).
+// cap_minutes null = unlimited plan. `estimated` means at least one project had
+// too little run history to cost from its own past, so the corpus median stood
+// in — the UI must say so rather than present it as measured.
+export type AtlasBudgetProject = {
+  id: number
+  name: string
+  cadence: string
+  auto_update: boolean
+  sources: number
+  minutes_per_run: number
+  runs_per_month: number
+  projected_minutes: number
+  estimated: boolean
+}
+
+export type AtlasBudget = {
+  cap_minutes: number | null
+  used_minutes: number
+  projected_minutes: number
+  over: boolean
+  estimated: boolean
+  projects: AtlasBudgetProject[]
+  suggestion: { cadence: string; projected_minutes: number; applies_to: number[] } | null
+}
+
 export type AtlasRunStatus =
   | 'pending'
   | 'running'
@@ -305,6 +331,7 @@ export const atlasKeys = {
   sourceRuns: (sourceId: number) =>
     [...atlasKeys.all, 'source-runs', sourceId] as const,
   run: (runId: number) => [...atlasKeys.all, 'run', runId] as const,
+  budget: () => [...atlasKeys.all, 'budget'] as const,
 }
 
 // ── queries ───────────────────────────────────────────────────────────────────
@@ -316,6 +343,19 @@ export function useAtlasProjects() {
   return useQuery({
     queryKey: atlasKeys.projects(),
     queryFn: () => api<{ projects: AtlasProject[] }>('/api/atlas/projects'),
+    staleTime: 30_000,
+  })
+}
+
+// Projected monthly Atlas GPU spend for the caller's personal account, against
+// their plan cap. Drives the budget warning: the cap is denominated in GPU
+// minutes while the user configures sources + cadence, so nobody can do this
+// arithmetic themselves. Refetched on focus because changing a cadence in
+// another tab should not leave a stale verdict on screen.
+export function useAtlasBudget() {
+  return useQuery({
+    queryKey: atlasKeys.budget(),
+    queryFn: () => api<AtlasBudget>('/api/atlas/budget'),
     staleTime: 30_000,
   })
 }

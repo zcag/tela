@@ -1,0 +1,224 @@
+// atlas_budget.go — projects an account's Atlas GPU spend against its plan cap,
+// so a user finds out their cadence is unaffordable BEFORE it silently eats the
+// month's allowance rather than after a 402.
+//
+// WHY THIS EXISTS. The cap is denominated in GPU minutes (plans
+// .max_atlas_minutes_per_month) but a user configures SOURCES and a CADENCE —
+// two steps removed from the unit they're charged in, with a per-repo run cost
+// they've never been shown. Nobody can do that arithmetic in their head: the
+// same "daily" costs 210 min/month on a small repo and 1,500 on a large one.
+// Until 2026-08-10 every project defaulted to hourly, and all five auto-update
+// accounts projected between 5,403 and 109,581 minutes against a 900 cap without
+// a single one of them having chosen anything.
+//
+// WHAT MAKES THE PROJECTION HONEST rather than a scare:
+//   - It costs each source from THAT SOURCE's own finished runs, not a global
+//     guess. Measured spread is 4.7 to 80.2 minutes; one threshold would be
+//     wrong for nearly everyone.
+//   - Run duration is genuinely noisy (per-source stddev is comparable to the
+//     mean, because it depends on how busy the box is, not just repo size), so
+//     the estimate is a median and the API says `estimated` when it is thin.
+//   - With fewer than minRunsForEstimate finished runs it falls back to the
+//     corpus median and flags it, instead of extrapolating from one sample.
+//   - The remedy is COMPUTED, not gestured at: it solves for the fastest cadence
+//     that actually fits the remaining budget and returns it, so the UI can offer
+//     a concrete "switch to weekly" rather than "consider reducing frequency".
+package api
+
+import (
+	"context"
+	"database/sql"
+	"net/http"
+)
+
+// runsPerMonth converts a cadence preset into a monthly run count. Mirrors
+// atlasCadenceIntervals; a cadence with no entry (or "") never fires, so 0.
+var runsPerMonth = map[string]float64{
+	"hourly":  730,
+	"daily":   30,
+	"weekly":  4.3,
+	"monthly": 1,
+}
+
+// cadencesSlowestFirst is the order the suggester walks when looking for
+// something that fits — fastest first, so it recommends the LEAST disruptive
+// change that works rather than jumping straight to monthly.
+var cadencesFastestFirst = []string{"hourly", "daily", "weekly", "monthly"}
+
+// minRunsForEstimate is how many finished runs a source needs before its own
+// history is trusted over the corpus median. Two is deliberately low: with the
+// variance seen here a third sample barely narrows the interval, and refusing to
+// estimate is worse than estimating and saying so.
+const minRunsForEstimate = 2
+
+// corpusMedianMinutes backs a source with too little history. Measured across
+// all runs with stats (median 27.2 min). It is a starting point, not a claim
+// about any particular repo — responses built on it set Estimated.
+const corpusMedianMinutes = 27.0
+
+type atlasBudgetProject struct {
+	ID            int64   `json:"id"`
+	Name          string  `json:"name"`
+	Cadence       string  `json:"cadence"`
+	AutoUpdate    bool    `json:"auto_update"`
+	Sources       int     `json:"sources"`
+	MinutesPerRun float64 `json:"minutes_per_run"`
+	RunsPerMonth  float64 `json:"runs_per_month"`
+	Projected     float64 `json:"projected_minutes"`
+	Estimated     bool    `json:"estimated"`
+}
+
+type atlasBudget struct {
+	// CapMinutes nil = unlimited plan; the UI shows usage without a warning.
+	CapMinutes  *int64               `json:"cap_minutes"`
+	UsedMinutes int64                `json:"used_minutes"`
+	Projected   float64              `json:"projected_minutes"`
+	Over        bool                 `json:"over"`
+	Estimated   bool                 `json:"estimated"`
+	Projects    []atlasBudgetProject `json:"projects"`
+	// Suggestion is the fastest cadence that would fit, with what it'd cost.
+	// Empty Cadence = nothing to suggest (already fitting, or unlimited).
+	Suggestion *atlasBudgetSuggestion `json:"suggestion"`
+}
+
+type atlasBudgetSuggestion struct {
+	Cadence   string  `json:"cadence"`
+	Projected float64 `json:"projected_minutes"`
+	// AppliesTo lists the projects that would change, so the UI never implies it
+	// is about to touch a project the user already set slower than the suggestion.
+	AppliesTo []int64 `json:"applies_to"`
+}
+
+// atlasBudgetFor computes the account's projected monthly Atlas spend.
+//
+// Projection is steady-state ("if nothing changes, a month of this config costs
+// X"), deliberately NOT a to-end-of-month forecast: the user is deciding on a
+// cadence, and a number that shrinks as the month runs out would make the same
+// setting look affordable on the 28th and not on the 2nd.
+func (s *Server) atlasBudgetFor(ctx context.Context, acct account) (atlasBudget, error) {
+	out := atlasBudget{Projects: []atlasBudgetProject{}}
+
+	p, err := planFor(ctx, s.DB, acct)
+	if err != nil {
+		return out, err
+	}
+	out.CapMinutes = p.MaxAtlasMinutesPerMonth
+
+	if out.UsedMinutes, err = sumAtlasMinutesThisMonth(ctx, s.DB, acct); err != nil {
+		return out, err
+	}
+
+	// Per project: its cadence, how many sources it has, and the median finished
+	// run cost across those sources. LEFT JOIN so a project whose sources have
+	// never run still appears (it is exactly the case a user needs warned about).
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT pr.id, pr.name, pr.cadence, pr.auto_update,
+		       COUNT(DISTINCT src.id) AS sources,
+		       COUNT(r.id)            AS finished_runs,
+		       COALESCE(percentile_cont(0.5) WITHIN GROUP (
+		           ORDER BY (r.stats_json::jsonb->>'duration_sec')::float8), 0) AS median_sec
+		  FROM atlas_projects pr
+		  LEFT JOIN atlas_sources src ON src.project_id = pr.id
+		  LEFT JOIN atlas_runs r ON r.source_id = src.id
+		       AND r.status <> 'failed' AND r.stats_json <> ''
+		 WHERE pr.owner_kind = $1 AND pr.owner_id = $2
+		 GROUP BY pr.id, pr.name, pr.cadence, pr.auto_update
+		 ORDER BY pr.id`, acct.Kind, acct.ID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var b atlasBudgetProject
+		var auto int
+		var finishedRuns int
+		var medianSec float64
+		if err := rows.Scan(&b.ID, &b.Name, &b.Cadence, &auto, &b.Sources, &finishedRuns, &medianSec); err != nil {
+			return out, err
+		}
+		b.AutoUpdate = auto == 1
+
+		// Cost is per RUN, and a run covers one source — so a project with three
+		// sources costs three runs each time its cadence fires.
+		perRun := medianSec / 60
+		if finishedRuns < minRunsForEstimate || perRun <= 0 {
+			perRun, b.Estimated = corpusMedianMinutes, true
+			out.Estimated = true
+		}
+		sources := float64(b.Sources)
+		if sources == 0 {
+			sources = 1 // a project with no source yet still costs this much once one lands
+		}
+		b.MinutesPerRun = round1(perRun)
+		b.RunsPerMonth = runsPerMonth[b.Cadence] * sources
+		if !b.AutoUpdate {
+			b.RunsPerMonth = 0 // manual-only: predicts nothing, and must not warn
+		}
+		b.Projected = round1(b.RunsPerMonth * perRun)
+		out.Projected += b.Projected
+		out.Projects = append(out.Projects, b)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	out.Projected = round1(out.Projected)
+
+	if out.CapMinutes != nil && out.Projected > float64(*out.CapMinutes) {
+		out.Over = true
+		out.Suggestion = suggestCadence(out.Projects, float64(*out.CapMinutes))
+	}
+	return out, nil
+}
+
+// suggestCadence finds the fastest single cadence that, applied to the
+// auto-updating projects currently faster than it, brings the total inside cap.
+//
+// One cadence for all of them rather than a per-project optimum: the UI offers a
+// single button, and a mixed recommendation the user can't reason about is worse
+// than a slightly conservative one they can. Projects already slower than the
+// suggestion keep their setting and are left out of AppliesTo.
+func suggestCadence(projects []atlasBudgetProject, cap float64) *atlasBudgetSuggestion {
+	for _, cad := range cadencesFastestFirst {
+		total, applies := 0.0, []int64{}
+		for _, p := range projects {
+			if !p.AutoUpdate {
+				continue
+			}
+			cur, want := runsPerMonth[p.Cadence], runsPerMonth[cad]
+			// Never speed a project UP as a "fix".
+			if cur <= want {
+				total += p.Projected
+				continue
+			}
+			sources := float64(p.Sources)
+			if sources == 0 {
+				sources = 1
+			}
+			total += want * sources * p.MinutesPerRun
+			applies = append(applies, p.ID)
+		}
+		if total <= cap && len(applies) > 0 {
+			return &atlasBudgetSuggestion{Cadence: cad, Projected: round1(total), AppliesTo: applies}
+		}
+	}
+	return nil // even monthly doesn't fit — the plan, not the cadence, is the problem
+}
+
+func round1(f float64) float64 { return float64(int64(f*10+0.5)) / 10 }
+
+// GetAtlasBudget serves the projection for the personal account of the caller.
+// Org-owned projects are budgeted against the org, so this is the personal view;
+// the org view arrives with the org Atlas UI.
+func (s *Server) GetAtlasBudget(w http.ResponseWriter, r *http.Request) {
+	u, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	b, err := s.atlasBudgetFor(r.Context(), account{Kind: accountUser, ID: u.ID})
+	if err != nil && err != sql.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "internal", "budget lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
