@@ -77,8 +77,10 @@ func TestCollapsibles(t *testing.T) {
 	wants(t, "<details><summary>S</summary>\nbody\n</details>\n", "collapsible-not-split")
 	// Body absorbed into the opener; the collapsible renders empty.
 	wants(t, "<details><summary>S</summary>\nbody\n\n</details>\n", "collapsible-body-absorbed")
-	// Closer joined to the body paragraph; no collapsible forms.
-	wants(t, "<details><summary>S</summary>\n\nbody\n</details>\n", "collapsible-closer-joined")
+	// Closer joined to the body paragraph: this WORKS. `</details>` is a
+	// type-6 HTML block, which may interrupt a paragraph, so it still becomes
+	// its own node — verified in the reader, summary and body both render.
+	wants(t, "<details><summary>S</summary>\n\nbody\n</details>\n")
 	// Never closed.
 	wants(t, "<details><summary>S</summary>\n\nbody\n", "unclosed-collapsible")
 	// The documented, correct form.

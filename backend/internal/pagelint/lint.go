@@ -339,16 +339,16 @@ func (l *linter) checkDetails(start int) {
 			"this collapsible's body is on the same block as `<details>`, so it's absorbed into the opening tag and the collapsible renders empty. Put a blank line after `</summary>`.")
 		return
 	}
-	// Find the closer and make sure it stands alone.
+	// A closer anywhere below is enough. It does NOT need a blank line before it:
+	// `</details>` is a CommonMark type-6 HTML block, which may interrupt a
+	// paragraph, so it always becomes its own node and the collapsible still
+	// pairs up. This package used to warn about that and was wrong 66 times
+	// across the live wiki — measured in the reader: summary AND body both
+	// render. Only the two cases above lose content.
 	for i := end + 1; i < len(l.lines); i++ {
-		if !detailsCloseRE.MatchString(l.lines[i]) {
-			continue
+		if detailsCloseRE.MatchString(l.lines[i]) {
+			return
 		}
-		if strings.TrimSpace(l.lines[i]) != "</details>" || (i > 0 && strings.TrimSpace(l.lines[i-1]) != "") {
-			l.add(i+1, LevelWarning, "collapsible-closer-joined",
-				"`</details>` is part of the paragraph above it, so the collapsible never forms — the body renders as plain text with no toggle. Put a blank line before it.")
-		}
-		return
 	}
 	l.add(start+1, LevelError, "unclosed-collapsible",
 		"this `<details>` is never closed, so the reader drops the opening tag and the body renders as loose text with no toggle.")
@@ -587,16 +587,25 @@ func MaskCode(body string) string {
 		}
 	}
 	// Code spans only after fences are gone, so a stray backtick inside a code
-	// block can't open a span that swallows real prose below it. Escapes last,
-	// since a backslash inside code is literal, not an escape.
-	return escapedPunctRE.ReplaceAllString(maskCodeSpans(strings.Join(lines, "\n")), "  ")
+	// block can't open a span that swallows real prose below it.
+	//
+	// Escapes are deliberately NOT blanked here. This is the mask the wikilink
+	// resolver in internal/api runs over too, and `[[Page\|alias]]` — the form
+	// the editor writes inside a table — carries an escaped pipe that IS the
+	// alias separator. Blanking it turned every aliased wikilink in a table into
+	// a bogus "matches no page" report. Escapes are masked per-rule instead, in
+	// buildMasked.
+	return maskCodeSpans(strings.Join(lines, "\n"))
 }
 
 func blank(s string) string { return strings.Repeat(" ", len([]rune(s))) }
 
-// buildMasked caches the masked body per line for the inline checks.
+// buildMasked caches the masked body per line for the inline checks: code
+// blanked, plus backslash escapes, since `\<all>` is literal text to those
+// rules. Only the inline rules get the escape pass — see MaskCode.
 func (l *linter) buildMasked() {
-	l.masked = strings.Split(MaskCode(strings.Join(l.lines, "\n")), "\n")
+	masked := escapedPunctRE.ReplaceAllString(MaskCode(strings.Join(l.lines, "\n")), "  ")
+	l.masked = strings.Split(masked, "\n")
 }
 
 // maskCodeSpans blanks every `…` span, honoring CommonMark's rule that a span

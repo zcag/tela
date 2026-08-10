@@ -44,11 +44,18 @@ the block's chrome doesn't.
 | `collapsible-not-split` | error | the whole `<details>` is dropped — nothing inside appears |
 | `collapsible-body-absorbed` | error | the collapsible renders empty |
 | `unclosed-collapsible` | error | opening tag dropped, body loose with no toggle |
+
+There is deliberately **no rule about a blank line before `</details>`**. An
+earlier version warned that a closer joined to the body paragraph broke the
+collapsible; it fired 66 times across the live wiki and was wrong every time.
+`</details>` is a CommonMark type-6 HTML block, which *may interrupt a
+paragraph*, so it always becomes its own node and the collapsible pairs up
+fine. Measured in the reader across all four spacings: only "body absorbed
+into the opener" and "everything on one line" actually lose content.
 | `chart-invalid` | error | dead/blank chart frame |
 | `unknown-directive` | warning | unwraps to bare contents; frame, labels and attributes gone |
 | `unknown-callout` | warning | renders as a plain quote with the literal `[!TYPE]` in it |
 | `dropped-html` | warning | a real element's tag and styling vanish (inner text survives); a placeholder like `<all>`/`<org>` is deleted outright |
-| `collapsible-closer-joined` | warning | no collapsible forms; body renders as plain text |
 | `empty-block` | warning | a `:::tabs`/`:::kanban`/`:::stats` with no `###` renders empty |
 | `undefined-footnote` | warning | renders as the literal `[^1]` |
 | `prose-as-math` | warning | prose inside `$$…$$` renders as a formula |
