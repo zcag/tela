@@ -57,13 +57,24 @@ the block's chrome doesn't.
 | `broken-page-link` | warning | the link goes nowhere |
 | `missing-attachment` | warning | broken image / dead download |
 
-Two deliberate exclusions keep the noise down. **`<br>`/`<wbr>` are not
-reported**: they're dropped like any raw HTML, but markdown already flows a
-single newline as a space, so nothing visibly goes wrong — and being the most
-common tag carried over from GitHub markdown, flagging them buried the reports
-that matter. And **`dropped-html` reports once per tag NAME per page**, anchored
-at the first occurrence with a count, because a tag repeated down a page is one
-thing to fix, not twelve.
+Three exclusions keep the noise down, and two of them exist because the first
+version of this rule blamed authors for tela's own behaviour.
+
+**Backslash escapes are honoured.** `\<all>` is literal text, not a tag — and
+tela's editor EMITS those escapes when it serializes, so every page a person
+typed in the browser arrived here pre-escaped and got reported anyway. Scanning
+raw text meant flagging the editor's correct output. `MaskCode` now blanks
+`\`+punctuation along with code.
+
+**`<br>`/`<wbr>` are never reported.** Not because they're minor: the editor's
+commonmark preset serializes every *empty paragraph* as `<br />`
+(`remarkPreserveEmptyLinePlugin`). A page whose author added no markup at all
+comes back full of them. Nothing visible goes wrong either, so there is no
+finding to make.
+
+**`dropped-html` reports once per tag NAME per page**, anchored at the first
+occurrence with a count, because a tag repeated down a page is one thing to fix,
+not twelve.
 
 The two shapes of `dropped-html` also read differently on purpose. `<span style>`
 loses its styling but keeps its text; a placeholder like `<all>` or `<commit>`

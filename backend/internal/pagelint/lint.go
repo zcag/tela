@@ -75,13 +75,13 @@ var headingSectioned = map[string]string{
 // loses emphasis or images with no trace in the source.
 var renderedHTMLTags = map[string]bool{"details": true, "summary": true}
 
-// `<br>` is dropped like any other raw HTML, but reporting it fails this
-// package's own bar: there is nothing for the reader to SEE go wrong. Markdown
-// already collapses a single newline into a space, so a dropped `<br>` just
-// leaves the text flowing the way the surrounding prose does — no mangling, no
-// missing content, nothing an author would recognize as a defect. It is also
-// the most common raw tag people carry over from GitHub-flavored markdown, so
-// flagging it buried the reports that do matter.
+// `<br />` is written by TELA ITSELF: the editor's commonmark preset serializes
+// every empty paragraph as `<br />` (`remarkPreserveEmptyLinePlugin`, see the
+// note in milkdown-editor.tsx). So a page someone typed in the browser, adding
+// no markup whatsoever, comes back full of them — and reporting that is the
+// product blaming the author for its own output. Nothing visible goes wrong
+// either (markdown already flows a single newline as a space), so there is no
+// finding here at all, only noise on top of noise.
 var cosmeticHTMLTags = map[string]bool{"br": true, "wbr": true}
 
 // Real HTML element names authors actually reach for. Anything OUTSIDE this set
@@ -139,6 +139,14 @@ var (
 	mathishRE = regexp.MustCompile(`[\\^_{}=+*/<>|~]|\\frac|\d`)
 
 	tableDelimRE = regexp.MustCompile(`^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$`)
+
+	// A CommonMark backslash escape makes the next punctuation character
+	// LITERAL, so `\<all>` renders as visible text and is not a tag at all.
+	// tela's own editor emits these escapes when it serializes, which means
+	// anything a person typed in the browser arrives here already escaped —
+	// scanning the raw text reported the editor's correct output as a defect.
+	// Matching `\\` as one unit is what keeps `\\<div>` a real tag.
+	escapedPunctRE = regexp.MustCompile(`\\[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_` + "`" + `{|}~]`)
 )
 
 // Lint reports every divergence found in a page body, in source order.
@@ -579,8 +587,9 @@ func MaskCode(body string) string {
 		}
 	}
 	// Code spans only after fences are gone, so a stray backtick inside a code
-	// block can't open a span that swallows real prose below it.
-	return maskCodeSpans(strings.Join(lines, "\n"))
+	// block can't open a span that swallows real prose below it. Escapes last,
+	// since a backslash inside code is literal, not an escape.
+	return escapedPunctRE.ReplaceAllString(maskCodeSpans(strings.Join(lines, "\n")), "  ")
 }
 
 func blank(s string) string { return strings.Repeat(" ", len([]rune(s))) }

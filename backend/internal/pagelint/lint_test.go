@@ -93,6 +93,20 @@ func TestDroppedHTML(t *testing.T) {
 	}
 }
 
+// A backslash escape makes the character literal, so `\<all>` renders as
+// visible text and is not a tag. tela's OWN editor emits these escapes when it
+// serializes, so scanning the raw text meant reporting the editor's correct
+// output as a defect on every page a person had typed in the browser.
+func TestEscapedPunctuationIsNotSyntax(t *testing.T) {
+	wants(t, "cap: \\[‘netconf \\<all>‘]\n")
+	wants(t, "the \\<org> placeholder is escaped\n")
+	wants(t, "a claim.\\[^1]\n")
+	// The unescaped form is still a real defect — that text does vanish.
+	wants(t, "the <org> placeholder is bare\n", "dropped-html")
+	// `\\` is an escaped BACKSLASH, so the tag after it is real.
+	wants(t, "a literal \\\\<div>x</div>\n", "dropped-html")
+}
+
 // `<br>` is dropped like any other raw HTML, but nothing visible goes wrong —
 // markdown already flows a single newline as a space — so reporting it was pure
 // noise that buried the findings that matter.
