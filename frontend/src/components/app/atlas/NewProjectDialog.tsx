@@ -62,11 +62,19 @@ export function NewProjectDialog({
         owner_kind: owner.kind,
         owner_id: owner.id,
         output: out,
-        // Default to automatic hourly refresh. On paid/trial plans the scheduler
-        // regenerates only sources that actually moved; on Free it's a no-op the
-        // server skips (drift is still detected, so the stale badge prompts a
-        // manual run) and it activates automatically on upgrade. Editable in settings.
-        cadence: 'hourly',
+        // Default to automatic WEEKLY refresh. The scheduler regenerates only
+        // sources that actually moved; on Free it's a no-op the server skips
+        // (drift is still detected, so the stale badge prompts a manual run) and
+        // it activates automatically on upgrade. Editable in settings.
+        //
+        // This was 'hourly' until 2026-08-10, which re-indexed the whole repo
+        // every hour for anyone who never opened settings — and since the plan
+        // meters GPU minutes, hourly spent a month's budget in about a day and
+        // then paused updates until the 1st. Weekly costs a fraction of that and
+        // keeps refreshing all month, so it is the better default in the user's
+        // interest as well as the box's. Keep it in step with the DB default
+        // (migration 0074) if either changes.
+        cadence: 'weekly',
         auto_update: true,
       })
       onOpenChange(false)

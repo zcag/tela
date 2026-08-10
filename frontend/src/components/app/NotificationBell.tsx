@@ -49,6 +49,14 @@ function describe(n: NotificationItem): string {
       const summary = typeof n.data.summary === 'string' ? n.data.summary : ''
       return summary ? `${t} — ${summary}` : t
     }
+    case 'atlas_cadence_changed': {
+      // Backend-rendered like atlas_run: the copy describes a change we made, so
+      // it is written where the change is (migration 0074) rather than assembled
+      // from fields here.
+      const t = typeof n.data.title === 'string' ? n.data.title : 'Atlas refresh cadence changed'
+      const summary = typeof n.data.summary === 'string' ? n.data.summary : ''
+      return summary ? `${t} — ${summary}` : t
+    }
     default:
       return `${actor} sent you a notification`
   }

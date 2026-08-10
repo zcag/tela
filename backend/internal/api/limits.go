@@ -175,8 +175,14 @@ func planFor(ctx context.Context, q queryer, acct account) (plan, error) {
 		// softly (the banner warns through this window). Text-datetime comparison
 		// is chronological for the fixed format; expiry needs no job — a far-past
 		// trial_ends_at simply stops winning the CASE.
+		// NULLIF guards the empty string specifically: ''::timestamp RAISES in
+		// Postgres, and '' is this schema's convention for an empty TEXT datetime
+		// (atlas_runs.finished_at, atlas_projects.last_refresh_at both default to
+		// it). No row holds '' today — the column is nullable and every writer
+		// uses NULL — but one stray '' would turn every quota check for that user
+		// into a 500, and the whole point of a quota gate is to fail predictably.
 		src = `SELECT ` + planCols + ` FROM plans p JOIN users u ON p.key = CASE
-			WHEN u.trial_ends_at IS NOT NULL
+			WHEN NULLIF(u.trial_ends_at, '') IS NOT NULL
 			 AND u.trial_ends_at::timestamp + interval '7 days' > (now() AT TIME ZONE 'UTC')
 			THEN u.trial_plan_key
 			ELSE u.plan_key END

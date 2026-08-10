@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/zcag/tela/backend/internal/testdb"
@@ -143,5 +144,72 @@ func TestAtlasMinutes_PlanValues(t *testing.T) {
 		if got.Valid {
 			t.Fatalf("%s has a minutes cap of %d; unlimited tiers must stay NULL", key, got.Int64)
 		}
+	}
+}
+
+// TestAtlasMinutes_GateRefusesWhenOverBudget is the end-to-end proof that the
+// meter is actually wired to a refusal, not just computed. It exists because
+// production could not demonstrate it: the account that motivated the cap sits
+// over budget, but regenProject only starts a delta for a source whose
+// stale_since is set, and that repo stopped changing — so the gate is never
+// reached and "no run happened" proves nothing either way.
+func TestAtlasMinutes_GateRefusesWhenOverBudget(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "over-budget", "pw", false)
+	src := seedQuotaSource(t, d, uid)
+	acct := account{Kind: accountUser, ID: uid}
+
+	// personal_free caps 180 minutes; spend 200 across two finished runs. NULL,
+	// not '', is how "no trial" is stored — planFor's CASE reads trial_ends_at as
+	// a timestamp, and '' would exercise a state no writer produces.
+	if _, err := d.ExecContext(ctx, `UPDATE users SET plan_key='personal_free', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	stampRunDuration(t, d, seedAtlasRun(t, d, src, "done"), 6000) // 100 min
+	stampRunDuration(t, d, seedAtlasRun(t, d, src, "done"), 6000) // 100 min
+
+	ae := s.checkAtlasRunQuota(ctx, acct)
+	if ae == nil {
+		t.Fatal("quota gate allowed a run at 200 of 180 minutes — the meter is not wired to a refusal")
+	}
+	if ae.Status != 402 || ae.Code != "quota_exceeded" {
+		t.Fatalf("got %d/%s, want 402/quota_exceeded", ae.Status, ae.Code)
+	}
+	if !strings.Contains(ae.Message, "minutes") {
+		t.Fatalf("refusal doesn't mention minutes, so the user can't tell which limit bit: %q", ae.Message)
+	}
+
+	// And it must NOT refuse an account comfortably inside the budget.
+	uid2 := seedUser(t, d, "under-budget", "pw", false)
+	src2 := seedQuotaSource(t, d, uid2)
+	if _, err := d.ExecContext(ctx, `UPDATE users SET plan_key='personal_free', trial_plan_key=NULL, trial_ends_at=NULL WHERE id=$1`, uid2); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	stampRunDuration(t, d, seedAtlasRun(t, d, src2, "done"), 600) // 10 min
+	if ae := s.checkAtlasRunQuota(ctx, account{Kind: accountUser, ID: uid2}); ae != nil {
+		t.Fatalf("refused an account at 10 of 180 minutes: %v", ae.Message)
+	}
+}
+
+// An empty-string trial_ends_at must not blow up the gate. '' is this schema's
+// convention for an empty TEXT datetime elsewhere, and ''::timestamp raises in
+// Postgres — without the NULLIF guard in planFor this returns 500 instead of a
+// clean allow/refuse, which is how a quota check silently becomes an outage.
+func TestAtlasQuota_EmptyTrialEndsAtDoesNotBreakTheGate(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "empty-trial", "pw", false)
+	seedQuotaSource(t, d, uid)
+	if _, err := d.ExecContext(ctx,
+		`UPDATE users SET plan_key='personal_free', trial_plan_key=NULL, trial_ends_at='' WHERE id=$1`, uid); err != nil {
+		t.Fatalf("set plan: %v", err)
+	}
+	if ae := s.checkAtlasRunQuota(ctx, account{Kind: accountUser, ID: uid}); ae != nil && ae.Status == 500 {
+		t.Fatalf("empty trial_ends_at produced a 500: %s", ae.Message)
 	}
 }
