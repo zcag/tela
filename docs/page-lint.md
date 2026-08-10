@@ -60,7 +60,7 @@ into the opener" and "everything on one line" actually lose content.
 | `undefined-footnote` | warning | renders as the literal `[^1]` |
 | `prose-as-math` | warning | prose inside `$$…$$` renders as a formula |
 | `ragged-table` | warning | a stray column the header doesn't cover, or a short row |
-| `dangling-wikilink` | warning | `[[Name]]` matching no page renders as plain text |
+| `dangling-wikilink` | warning | renders as a broken link that goes nowhere (**agent-only**, see below) |
 | `broken-page-link` | warning | the link goes nowhere |
 | `missing-attachment` | warning | broken image / dead download |
 
@@ -93,6 +93,20 @@ reading the renderer. That mattered: `ragged-table`'s first message claimed the
 extra cells were dropped (what the GFM spec says); the reader actually renders
 them as a stray column. A lint that misdescribes the render is worse than no lint,
 because its whole value is being trusted about something the author can't see.
+
+### Who is the finding for?
+
+A rule earns a place in the EDITOR panel only if the author can't already see
+the problem. `dangling-wikilink` fails that: an unresolved `[[Name]]` renders as
+a **red** broken link (`tela-wikilink--broken`) in the body itself, and linking
+before creating is normal wiki practice. Warning about it produced 166 of the
+live wiki's 179 findings — 93% — burying the 13 real ones.
+
+An agent sees markdown, not colour, so the finding is genuine for them. Hence
+`rulesTheReaderAlreadyShows`: the MCP report and the write advisory keep it, the
+REST route strips it via `forHumans` and recounts. The general principle — a
+true finding is not automatically a useful one; what earns a row is whether the
+audience could have seen it otherwise.
 
 ## Two halves, two homes
 

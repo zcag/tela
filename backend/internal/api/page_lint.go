@@ -82,6 +82,19 @@ func wrongBodyKind(p models.Page) *apiErr {
 	return nil
 }
 
+// rulesTheReaderAlreadyShows are findings a HUMAN must not be told about,
+// because the app already marks them in the page itself — telling them again in
+// a warning list is nagging about something they can see.
+//
+// `dangling-wikilink` is the case: an unresolved `[[Name]]` renders as a RED
+// broken link (`tela-wikilink--broken`) right there in the body. It is the most
+// visible thing on the page, and linking-before-creating is normal wiki
+// practice, so warning about it made 166 of the wiki's 179 findings — 93% —
+// noise that buried the 13 real ones. An AGENT sees markdown, not colour, so
+// for them it stays a genuine finding; hence the audience split rather than
+// deleting the rule.
+var rulesTheReaderAlreadyShows = map[string]bool{"dangling-wikilink": true}
+
 // lintPage runs every check over a page body and returns one merged report.
 // `body` is passed separately from `p` so the editor can lint an unsaved draft.
 // Callers must reject non-prose bodies with wrongBodyKind first.
@@ -130,7 +143,7 @@ func (s *Server) lintPageRefs(ctx context.Context, p models.Page, body string) [
 				}
 				seen[r.Slug] = true
 				issues = append(issues, pageLintIssue{r.Line, pagelint.LevelWarning, "dangling-wikilink", fmt.Sprintf(
-					"[[%s]] matches no page title in this space, so it renders as plain text instead of a link. Create the page first, or link an existing one by its exact title.", r.Raw)})
+					"[[%s]] matches no page title in this space, so it renders as a broken link that goes nowhere (red in the app, unstyled for readers). Create the page, or link an existing one by its exact title.", r.Raw)})
 			}
 		}
 	}
@@ -305,5 +318,29 @@ func (s *Server) PostPageLint(w http.ResponseWriter, r *http.Request) {
 		body = string(draft)
 	}
 	noStore(w)
-	writeJSON(w, http.StatusOK, s.lintPage(r.Context(), p, body))
+	writeJSON(w, http.StatusOK, forHumans(s.lintPage(r.Context(), p, body)))
+}
+
+// forHumans drops the findings the app already shows in the page itself and
+// recounts, so the editor panel only carries things the author cannot see.
+func forHumans(out pageLintOut) pageLintOut {
+	kept := make([]pageLintIssue, 0, len(out.Issues))
+	for _, is := range out.Issues {
+		if !rulesTheReaderAlreadyShows[is.Rule] {
+			kept = append(kept, is)
+		}
+	}
+	res := pageLintOut{Issues: kept, Hint: out.Hint}
+	for _, is := range kept {
+		if is.Level == pagelint.LevelError {
+			res.Errors++
+		} else {
+			res.Warnings++
+		}
+	}
+	res.OK = res.Errors == 0 && res.Warnings == 0
+	if res.OK {
+		res.Hint = ""
+	}
+	return res
 }

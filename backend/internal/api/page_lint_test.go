@@ -157,6 +157,31 @@ func TestWriteAdvisory(t *testing.T) {
 	}
 }
 
+// An unresolved [[wikilink]] renders as a RED broken link in the app, so the
+// author already sees it — repeating it in the editor panel was 93% of all
+// findings across the wiki. Agents can't see colour, so the MCP report keeps it.
+func TestForHumansDropsWhatTheReaderAlreadyShows(t *testing.T) {
+	s, p := seedLintPage(t, "Home")
+	body := "a [[Missing Page]] link and a <div>tag</div>\n"
+	full := s.lintPage(context.Background(), p, body)
+	if len(full.Issues) != 2 {
+		t.Fatalf("agent report should keep both, got %+v", full.Issues)
+	}
+	human := forHumans(full)
+	if got := lintRules(human); len(got) != 1 || got[0] != "dropped-html" {
+		t.Fatalf("editor report = %v, want [dropped-html] only", got)
+	}
+	if human.Warnings != 1 || human.OK {
+		t.Errorf("counts should be recomputed after filtering: %+v", human)
+	}
+
+	// A page whose ONLY finding is a dangling link is clean for a human.
+	clean := forHumans(s.lintPage(context.Background(), p, "just a [[Missing Page]] link\n"))
+	if !clean.OK || len(clean.Issues) != 0 || clean.Hint != "" {
+		t.Fatalf("want a clean human report, got %+v", clean)
+	}
+}
+
 // A deck body is Slidev markdown: tahta components like <callout> and <stat>
 // are correct there, and running the prose rules over one produced dozens of
 // dropped-html reports against a perfectly good page. Every entry point must
