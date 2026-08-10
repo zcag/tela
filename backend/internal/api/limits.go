@@ -82,6 +82,13 @@ type plan struct {
 	MaxAtlasFilesPerRun    *int64 `json:"max_atlas_files_per_run"`
 	MaxAtlasRunsPerMonth   *int64 `json:"max_atlas_runs_per_month"`
 	MaxEmbedTokensPerMonth *int64 `json:"max_embed_tokens_per_month"`
+	// MaxAtlasMinutesPerMonth is the cap that meters the scarce resource: GPU
+	// time. The others are proxies that misprice it — runs charges a 4.7-minute
+	// run and an 80-minute one the same, and embed tokens charge almost entirely
+	// for the INITIAL index while every later refresh burns comparable GPU for a
+	// fraction of the tokens. Sourced from stats_json.duration_sec, which the
+	// engine already writes for every run.
+	MaxAtlasMinutesPerMonth *int64 `json:"max_atlas_minutes_per_month"`
 }
 
 func nullToPtr(n sql.NullInt64) *int64 {
@@ -96,17 +103,17 @@ func nullToPtr(n sql.NullInt64) *int64 {
 // `name` column with orgs — every query selecting these must alias plans as p.
 // listed is INTEGER 0/1 (SQLite-era convention) — scanned into an int, not a
 // bool, because pgx is strict about the integer→bool mismatch.
-const planCols = `p.key, p.account_kind, p.name, p.max_spaces, p.max_pages_per_space, p.max_storage_bytes, p.max_members, p.listed, p.price_cents, p.price_period, p.features, p.max_llm_calls_per_month, p.max_atlas_sources, p.price_cents_yearly, p.max_atlas_files_per_run, p.max_atlas_runs_per_month, p.max_embed_tokens_per_month`
+const planCols = `p.key, p.account_kind, p.name, p.max_spaces, p.max_pages_per_space, p.max_storage_bytes, p.max_members, p.listed, p.price_cents, p.price_period, p.features, p.max_llm_calls_per_month, p.max_atlas_sources, p.price_cents_yearly, p.max_atlas_files_per_run, p.max_atlas_runs_per_month, p.max_embed_tokens_per_month, p.max_atlas_minutes_per_month`
 
 func scanPlan(row interface{ Scan(...any) error }) (plan, error) {
 	var (
 		p                                                                      plan
 		spaces, pages, storage, members, cents, llmCalls, atlasSrcs, centsYear sql.NullInt64
-		atlasFiles, atlasRuns, embedTokens                                     sql.NullInt64
+		atlasFiles, atlasRuns, embedTokens, atlasMinutes                       sql.NullInt64
 		listed                                                                 int
 		featuresRaw                                                            []byte
 	)
-	if err := row.Scan(&p.Key, &p.AccountKind, &p.Name, &spaces, &pages, &storage, &members, &listed, &cents, &p.PricePeriod, &featuresRaw, &llmCalls, &atlasSrcs, &centsYear, &atlasFiles, &atlasRuns, &embedTokens); err != nil {
+	if err := row.Scan(&p.Key, &p.AccountKind, &p.Name, &spaces, &pages, &storage, &members, &listed, &cents, &p.PricePeriod, &featuresRaw, &llmCalls, &atlasSrcs, &centsYear, &atlasFiles, &atlasRuns, &embedTokens, &atlasMinutes); err != nil {
 		return plan{}, err
 	}
 	p.MaxSpaces, p.MaxPagesPerSpace = nullToPtr(spaces), nullToPtr(pages)
@@ -119,6 +126,7 @@ func scanPlan(row interface{ Scan(...any) error }) (plan, error) {
 	p.MaxAtlasFilesPerRun = nullToPtr(atlasFiles)
 	p.MaxAtlasRunsPerMonth = nullToPtr(atlasRuns)
 	p.MaxEmbedTokensPerMonth = nullToPtr(embedTokens)
+	p.MaxAtlasMinutesPerMonth = nullToPtr(atlasMinutes)
 	p.Features = map[string]bool{}
 	if len(featuresRaw) > 0 {
 		_ = json.Unmarshal(featuresRaw, &p.Features) // malformed JSON → empty map, never fatal
@@ -487,9 +495,36 @@ func sumEmbedTokensThisMonth(ctx context.Context, q queryer, acct account) (int6
 	return n.Int64, nil
 }
 
-// checkAtlasRunQuota gates STARTING a run: the monthly run count and the monthly
-// embed-token budget. The per-run file cap can't be checked here — the repo
-// isn't cloned yet — so it lives in the engine, right after inventory.
+// sumAtlasMinutesThisMonth totals GPU minutes across the account's runs this
+// month, from the duration_sec the engine records on every run.
+//
+// This is the meter that prices the scarce resource. Runs mis-price it (4.7 min
+// vs 80.2 min for one unit of quota, measured across the corpus) and embed
+// tokens mis-price it in the other direction: the initial full index was 78% of
+// one account's monthly tokens, while each later refresh burned comparable GPU
+// for a twentieth of the tokens. Minutes is the only one of the three that a
+// repeating refresh cannot cheat.
+//
+// A run still in flight has no duration_sec yet, so it contributes 0 until it
+// finishes. That's a bounded under-count of one run per source (StartRun/
+// StartDelta already refuse a second concurrent run), not a hole to drive
+// through.
+func sumAtlasMinutesThisMonth(ctx context.Context, q queryer, acct account) (int64, error) {
+	var n sql.NullFloat64
+	err := q.QueryRowContext(ctx,
+		`SELECT SUM((r.stats_json::jsonb->>'duration_sec')::float8) / 60 `+
+			atlasOwnerJoin+` AND r.stats_json <> '' AND r.status <> 'failed'`,
+		acct.Kind, acct.ID).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return int64(n.Float64), nil
+}
+
+// checkAtlasRunQuota gates STARTING a run: the monthly run count, the monthly
+// GPU-minute budget and the monthly embed-token budget. The per-run file cap
+// can't be checked here — the repo isn't cloned yet — so it lives in the engine,
+// right after inventory.
 func (s *Server) checkAtlasRunQuota(ctx context.Context, acct account) *apiErr {
 	p, err := planFor(ctx, s.DB, acct)
 	if err != nil {
@@ -503,6 +538,16 @@ func (s *Server) checkAtlasRunQuota(ctx context.Context, acct account) *apiErr {
 		if used+1 > *p.MaxAtlasRunsPerMonth {
 			return quotaErr("%s plan allows %d Atlas runs per month and %d have been used — the count resets on the 1st, or upgrade for more",
 				p.Name, *p.MaxAtlasRunsPerMonth, used)
+		}
+	}
+	if p.MaxAtlasMinutesPerMonth != nil {
+		used, err := sumAtlasMinutesThisMonth(ctx, s.DB, acct)
+		if err != nil {
+			return internalQuotaErr()
+		}
+		if used >= *p.MaxAtlasMinutesPerMonth {
+			return quotaErr("%s plan allows %d minutes of Atlas indexing per month and %d have been used — the budget resets on the 1st, or upgrade for more",
+				p.Name, *p.MaxAtlasMinutesPerMonth, used)
 		}
 	}
 	if p.MaxEmbedTokensPerMonth != nil {
