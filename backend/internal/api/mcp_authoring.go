@@ -27,6 +27,11 @@ type blockSpec struct {
 	Syntax   string   `json:"syntax"`
 	When     string   `json:"when"`
 	Note     string   `json:"note"`
+	// Directive is the `:::name` this block is written as, derived by the
+	// generator from Syntax. Empty for blocks that aren't directives. It is a
+	// DIFFERENT namespace from ID — the pull-quote block (id `pull-quote`) is
+	// written `:::quote`, and `quote` is already the plain blockquote's id.
+	Directive string `json:"directive,omitempty"`
 }
 
 var authoringBlocks, manifestDirectives, manifestCalloutTypes = loadBlocks()
@@ -46,6 +51,32 @@ func loadBlocks() ([]blockSpec, []string, []string) {
 	// build/codegen bug; degrade to no blocks rather than panicking the server.
 	_ = json.Unmarshal(blocksManifestJSON, &wrap)
 	return wrap.Blocks, wrap.Directives, wrap.CalloutTypes
+}
+
+// directiveAliases maps the names an author plausibly writes INSTEAD of the real
+// directive — the block's id and its slugified label — to the directive that
+// actually renders. `:::stat-grid` (the id) and `:::stat grid` (the label) both
+// resolve to `stats`.
+//
+// This exists because a live page had exactly that: someone reasonably guessed
+// the palette's name for the block was the name they should type. The lint can't
+// stop the guess, but it can make it self-correcting instead of a dead block.
+var directiveAliases = buildDirectiveAliases()
+
+func buildDirectiveAliases() map[string]string {
+	out := map[string]string{}
+	for _, b := range authoringBlocks {
+		if b.Directive == "" {
+			continue
+		}
+		for _, alias := range []string{b.ID, pageSlug(b.Label)} {
+			alias = strings.ToLower(alias)
+			if alias != "" && alias != b.Directive {
+				out[alias] = b.Directive
+			}
+		}
+	}
+	return out
 }
 
 // Category display order for the agent guide; unlisted categories follow in

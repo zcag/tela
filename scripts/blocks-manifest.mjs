@@ -133,12 +133,29 @@ function extractStringList(file, decl) {
   return names
 }
 
+// A block's DIRECTIVE name is whatever its own `syntax` opens with, derived
+// rather than hand-declared so it can't drift from the example agents are shown.
+//
+// It is deliberately NOT the same namespace as the block `id`: `quote` is the
+// plain markdown blockquote, while the pull-quote block (id `pull-quote`) writes
+// `:::quote`. Forcing the two names equal is impossible — they collide. Making
+// the relationship explicit and checked is the fix; the backend also uses it to
+// tell an author who wrote `:::stat-grid` (the id) that the directive is
+// `:::stats`, which is exactly the mistake found on a live page.
+function directiveOf(block) {
+  const m = /^:::([A-Za-z][A-Za-z0-9_-]*)/.exec(block.syntax ?? '')
+  return m ? m[1] : null
+}
+
 // Deterministic serialization for a stable git diff (2-space indent, trailing nl).
 function render(blocks) {
   return (
     JSON.stringify(
       {
-        blocks,
+        blocks: blocks.map((b) => {
+          const directive = directiveOf(b)
+          return directive ? { ...b, directive } : b
+        }),
         directives: extractStringList(DIRECTIVES_SRC, 'KNOWN_DIRECTIVE_NAMES'),
         calloutTypes: extractStringList(CALLOUTS_SRC, 'CALLOUT_TYPES'),
       },
@@ -187,6 +204,21 @@ function checkCoverage(blocks) {
       if (!b[k]) problems.push(`block "${b.id ?? '?'}" missing field "${k}"`)
     }
     if (b.agent && !b.when) problems.push(`agent block "${b.id}" missing "when"`)
+  }
+
+  // A block whose syntax is a `:::directive` must use a name the RENDERER
+  // recognizes. Otherwise the palette documents a block that parses and then
+  // silently unwraps to bare text — invisible in the source, and the exact
+  // failure `unknown-directive` reports.
+  const known = new Set(extractStringList(DIRECTIVES_SRC, 'KNOWN_DIRECTIVE_NAMES'))
+  for (const b of blocks) {
+    const d = directiveOf(b)
+    if (d && !known.has(d)) {
+      problems.push(
+        `block "${b.id}" documents \`:::${d}\`, which the renderer doesn't know — ` +
+          `add it to KNOWN_DIRECTIVE_NAMES (and give it a view renderer) or fix the syntax`,
+      )
+    }
   }
 
   // Every authorable block must declare a view-render status (rendered or

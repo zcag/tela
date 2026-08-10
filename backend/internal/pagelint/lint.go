@@ -59,6 +59,10 @@ type Issue struct {
 type Vocab struct {
 	Directives   []string
 	CalloutTypes []string
+	// DirectiveAliases maps a name an author plausibly writes instead of the
+	// real one (a block's id or label) to the directive that actually renders,
+	// so an unknown-directive report can name the fix instead of just the fault.
+	DirectiveAliases map[string]string
 }
 
 // Directives whose body is projected through `###` headings — an empty one
@@ -155,6 +159,7 @@ func Lint(body string, v Vocab) []Issue {
 		lines:    splitLines(body),
 		known:    toSet(v.Directives),
 		callouts: toSet(v.CalloutTypes),
+		aliases:  v.DirectiveAliases,
 	}
 	l.scan()
 	l.buildMasked()
@@ -172,6 +177,7 @@ type linter struct {
 	lines    []string
 	known    map[string]bool
 	callouts map[string]bool
+	aliases  map[string]string
 	issues   []Issue
 
 	// prose holds the indexes of lines that are neither fenced code nor block
@@ -257,9 +263,15 @@ func (l *linter) scan() {
 			}
 			name := m[2]
 			if len(l.known) > 0 && !l.known[name] {
-				l.add(n, LevelWarning, "unknown-directive", fmt.Sprintf(
-					":::%s isn't a block the reader knows, so it renders as its bare contents — the block's frame, labels and any attributes are dropped. Known directives: %s.",
-					name, l.knownList()))
+				if real := l.aliases[strings.ToLower(name)]; real != "" {
+					l.add(n, LevelWarning, "unknown-directive", fmt.Sprintf(
+						":::%s renders as its bare contents — %q is the block's name in the palette, not the directive you write. Use `:::%s`.",
+						name, name, real))
+				} else {
+					l.add(n, LevelWarning, "unknown-directive", fmt.Sprintf(
+						":::%s isn't a block the reader knows, so it renders as its bare contents — the block's frame, labels and any attributes are dropped. Known directives: %s.",
+						name, l.knownList()))
+				}
 			}
 			stack = append(stack, frame{name: name, line: n})
 			continue

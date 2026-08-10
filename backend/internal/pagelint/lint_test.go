@@ -48,6 +48,28 @@ func TestFenceMatching(t *testing.T) {
 	wants(t, "````\n```\nnested sample\n```\n````\n")
 }
 
+// A block's palette name and its directive are different namespaces — the
+// pull-quote block is written `:::quote`, and `quote` is already the plain
+// blockquote's id, so they can't simply be made equal. Writing the palette name
+// is therefore a natural mistake (it happened on a live page with
+// `:::stat-grid`), and the report names the fix instead of just the fault.
+func TestUnknownDirectiveSuggestsTheRealName(t *testing.T) {
+	v := vocab
+	v.DirectiveAliases = map[string]string{"stat-grid": "stats", "pull-quote": "quote"}
+	got := Lint(":::stat-grid\n- **78** files\n:::\n", v)
+	if len(got) != 1 || got[0].Rule != "unknown-directive" {
+		t.Fatalf("got %+v", got)
+	}
+	if !strings.Contains(got[0].Message, "`:::stats`") {
+		t.Errorf("should name the real directive: %q", got[0].Message)
+	}
+	// A name with no alias keeps the generic message listing what IS valid.
+	got = Lint(":::nonsense\nx\n:::\n", v)
+	if !strings.Contains(got[0].Message, "Known directives:") {
+		t.Errorf("unaliased name should list the valid ones: %q", got[0].Message)
+	}
+}
+
 func TestUnknownDirectiveAndCallout(t *testing.T) {
 	is := wants(t, ":::callout\nbody\n:::\n", "unknown-directive")
 	if !strings.Contains(is[0].Message, "renders as its bare contents") {

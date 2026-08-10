@@ -53,8 +53,9 @@ type pageLintOut struct {
 // copied, because a stale list here means the lint confidently reports a valid
 // block as unknown.
 var pageLintVocab = pagelint.Vocab{
-	Directives:   manifestDirectives,
-	CalloutTypes: manifestCalloutTypes,
+	Directives:       manifestDirectives,
+	CalloutTypes:     manifestCalloutTypes,
+	DirectiveAliases: directiveAliases,
 }
 
 // Body references the reader resolves at render time. Both forms are checked;

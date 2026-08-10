@@ -133,6 +133,25 @@ a valid block as unknown. The extraction is deliberately strict — if the
 declarations move or change shape, generation fails loudly rather than emitting
 an empty list.
 
+### Palette names vs directive names
+
+A block's `id`/label and the `:::directive` it is written as are **different
+namespaces, and they can't be unified**: the pull-quote block (id `pull-quote`)
+is written `:::quote`, while `quote` is already the plain blockquote's id.
+Trying to make them equal collides.
+
+So the relationship is made explicit and checked instead. The generator derives
+each block's `directive` from its own `syntax` (never hand-declared, so it can't
+drift from the example agents are shown) and **fails the gate** if that name
+isn't one the renderer knows — a block can no longer document syntax that
+silently unwraps.
+
+Guessing the palette name is still natural, and did happen: a live page wrote
+`:::stat-grid`. That's now self-correcting rather than a dead block — the
+backend maps each block's id and slugified label to its real directive, so the
+report says *"`stat-grid` is the block's name in the palette, not the directive
+you write. Use `:::stats`."*
+
 ### Code is masked, once
 
 `pagelint.MaskCode` blanks fenced blocks and inline code spans (honoring

@@ -121,7 +121,8 @@
       ],
       "syntax": ":::quote{cite=\"Ada Lovelace\"}\nThe quoted text.\n:::",
       "when": "Feature a quotation or epigraph, set apart from body text.",
-      "note": "The cite attribute is optional."
+      "note": "The cite attribute is optional.",
+      "directive": "quote"
     },
     {
       "id": "callout",
@@ -177,7 +178,8 @@
       ],
       "syntax": ":::tabs\n### First tab\nContent for the first tab.\n\n### Second tab\nContent for the second tab.\n:::",
       "when": "Show alternative content in the same space (e.g. per-language examples).",
-      "note": "Each ### heading inside the block becomes a tab label."
+      "note": "Each ### heading inside the block becomes a tab label.",
+      "directive": "tabs"
     },
     {
       "id": "kanban",
@@ -195,7 +197,8 @@
       ],
       "syntax": ":::kanban\n### To do\n- [ ] A card\n\n### In progress\n- [ ] Another card\n:::",
       "when": "A board of columns holding draggable cards.",
-      "note": "Each ### heading is a column; bullet items are its cards."
+      "note": "Each ### heading is a column; bullet items are its cards.",
+      "directive": "kanban"
     },
     {
       "id": "stat-grid",
@@ -216,7 +219,8 @@
       ],
       "syntax": ":::stats\n### Solar PV LCOE\n**$43** /MWh\n\n↓ 90% since 2010\n\nGlobal weighted average (IRENA)\n:::",
       "when": "Show a row of headline numbers / KPIs, each with a label, value, and optional trend.",
-      "note": "Each ### heading is a tile. Inside it, separate lines with blank lines: a value (bold the number — any trailing text becomes a small unit), an optional trend line starting with ↑/↓/→ or +/- (rendered coloured — green up, red down), and an optional muted description line."
+      "note": "Each ### heading is a tile. Inside it, separate lines with blank lines: a value (bold the number — any trailing text becomes a small unit), an optional trend line starting with ↑/↓/→ or +/- (rendered coloured — green up, red down), and an optional muted description line.",
+      "directive": "stats"
     },
     {
       "id": "timeline",
@@ -235,7 +239,8 @@
       ],
       "syntax": ":::timeline\n- **2026-01-15** v1.0 shipped — first stable release\n- **2026-03-01** v1.1 — search + exports\n:::",
       "when": "Show a chronological sequence of dated events (roadmap, release history).",
-      "note": "Each bullet is an event; lead with a bold date. Put them in chronological order yourself."
+      "note": "Each bullet is an event; lead with a bold date. Put them in chronological order yourself.",
+      "directive": "timeline"
     },
     {
       "id": "calendar",
@@ -254,7 +259,8 @@
       ],
       "syntax": ":::calendar{month=2026-05}\n- 2026-05-04 Spec freeze\n- 2026-05-28 GA launch\n:::",
       "when": "Lay out dated, all-day events on a single month grid (schedules, launch plans).",
-      "note": "Set month=YYYY-MM on the directive. Each bullet is `YYYY-MM-DD Title` inside that month. One month per block; all-day only."
+      "note": "Set month=YYYY-MM on the directive. Each bullet is `YYYY-MM-DD Title` inside that month. One month per block; all-day only.",
+      "directive": "calendar"
     },
     {
       "id": "poll",
@@ -273,7 +279,8 @@
       ],
       "syntax": ":::poll{id=\"lunch\"}\n### Where for lunch?\n\n- Lisbon\n- Berlin\n- Barcelona\n:::",
       "when": "Let readers vote on a set of options; results show counts, bars, and who voted for what.",
-      "note": "Options are top-level list items. Give the block a unique `id`. Votes are recorded in the body as nested `- @username` items under an option — voting happens in the read view (editors only), so you normally don't hand-write voters. `closed` on the directive freezes results."
+      "note": "Options are top-level list items. Give the block a unique `id`. Votes are recorded in the body as nested `- @username` items under an option — voting happens in the read view (editors only), so you normally don't hand-write voters. `closed` on the directive freezes results.",
+      "directive": "poll"
     },
     {
       "id": "chart",
@@ -315,7 +322,8 @@
       ],
       "syntax": ":::embed\nhttps://www.youtube.com/watch?v=ID\n:::",
       "when": "Embed a video or external page inline.",
-      "note": "YouTube, Vimeo, and Loom render as players; other URLs become link cards."
+      "note": "YouTube, Vimeo, and Loom render as players; other URLs become link cards.",
+      "directive": "embed"
     },
     {
       "id": "mermaid",
@@ -381,7 +389,8 @@
       ],
       "syntax": ":::file{name=\"report.pdf\" size=\"248000\"}\nhttps://tela.example/api/files/9/<hash>.pdf\n:::",
       "when": "Embed a downloadable file (PDF, archive, dataset) as a card.",
-      "note": "In the editor, drag-drop or paste any non-image file to upload + insert this automatically. The URL must be a tela file URL (an existing attachment); images use the image block instead."
+      "note": "In the editor, drag-drop or paste any non-image file to upload + insert this automatically. The URL must be a tela file URL (an existing attachment); images use the image block instead.",
+      "directive": "file"
     },
     {
       "id": "code",
