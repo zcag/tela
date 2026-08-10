@@ -255,10 +255,17 @@ func (s *Service) Complete(ctx context.Context, systemPrompt, userPrompt string)
 	cl, release := s.pick(ctx)
 	defer release()
 	out, err := cl.Complete(ctx, systemPrompt, userPrompt)
-	if err == nil {
-		s.recordModel(cl.Model(), systemPrompt, userPrompt, out)
+	if err != nil {
+		return out, err
 	}
-	return out, err
+	// A 200 whose CONTENT is the provider's error is not a completion. Rejecting
+	// it here — at the seam every caller crosses — is what stops it being stored:
+	// see LooksLikeProviderError for the pages and digest emails that got it.
+	if LooksLikeProviderError(out) {
+		return "", ErrProviderError
+	}
+	s.recordModel(cl.Model(), systemPrompt, userPrompt, out)
+	return out, nil
 }
 
 // CompleteStream streams the completion token-by-token via onToken. If the active
@@ -288,6 +295,14 @@ func (s *Service) CompleteStream(ctx context.Context, systemPrompt, userPrompt s
 	out, err := cl.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return err
+	}
+	// Same guard as Complete. Note this covers only the NON-streaming fallback;
+	// a true stream has already forwarded its tokens by the time the answer is
+	// whole. That is acceptable because the streaming path feeds a live reader
+	// who can see something is wrong, while the paths that PERSIST an answer
+	// (digest gist, summaries, atlas bodies) all go through Complete.
+	if LooksLikeProviderError(out) {
+		return ErrProviderError
 	}
 	s.recordModel(cl.Model(), systemPrompt, userPrompt, out)
 	if out == "" {
