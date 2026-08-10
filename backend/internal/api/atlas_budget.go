@@ -29,23 +29,38 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"time"
 
 	"github.com/zcag/tela/backend/internal/auth"
 )
 
-// runsPerMonth converts a cadence preset into a monthly run count. Mirrors
-// atlasCadenceIntervals; a cadence with no entry (or "") never fires, so 0.
-var runsPerMonth = map[string]float64{
-	"hourly":  730,
-	"daily":   30,
-	"weekly":  4.3,
-	"monthly": 1,
+// budgetMonthDays is the month length the projection assumes. Matches the
+// "monthly" interval in atlasCadenceIntervals (30 days), so a monthly cadence
+// projects to exactly one run.
+const budgetMonthDays = 30
+
+// runsPerMonth is DERIVED from the scheduler's own interval table rather than
+// restating it. The first cut kept a second literal map here, which meant adding
+// a cadence to atlasCadenceIntervals would leave this one silently returning 0 —
+// the projection would price the new cadence at nothing and never warn about it.
+// A quota tool that silently under-reports is worse than none, and it is the same
+// two-sources-of-truth bug this whole day was spent unwinding.
+//
+// A cadence with no interval (or "") never fires, so it costs 0.
+func runsPerMonth(cadence string) float64 {
+	iv, ok := atlasCadenceIntervals[cadence]
+	if !ok || iv <= 0 {
+		return 0
+	}
+	return float64(budgetMonthDays*24*time.Hour) / float64(iv)
 }
 
-// cadencesSlowestFirst is the order the suggester walks when looking for
-// something that fits — fastest first, so it recommends the LEAST disruptive
-// change that works rather than jumping straight to monthly.
-var cadencesFastestFirst = []string{"hourly", "daily", "weekly", "monthly"}
+// cadencesFastestFirst is the order the suggester walks, so it recommends the
+// LEAST disruptive change that works rather than jumping straight to monthly.
+// "hourly" is deliberately absent: checkCadenceAffordable refuses it on every
+// capped plan, so suggesting it would recommend something the API rejects — and
+// only capped accounts ever reach the suggester.
+var cadencesFastestFirst = []string{"daily", "weekly", "monthly"}
 
 // minRunsForEstimate is how many finished runs a source needs before its own
 // history is trusted over the corpus median. Two is deliberately low: with the
@@ -153,7 +168,7 @@ func (s *Server) atlasBudgetFor(ctx context.Context, acct account) (atlasBudget,
 			sources = 1 // a project with no source yet still costs this much once one lands
 		}
 		b.MinutesPerRun = round1(perRun)
-		b.RunsPerMonth = runsPerMonth[b.Cadence] * sources
+		b.RunsPerMonth = runsPerMonth(b.Cadence) * sources
 		if !b.AutoUpdate {
 			b.RunsPerMonth = 0 // manual-only: predicts nothing, and must not warn
 		}
@@ -187,7 +202,7 @@ func suggestCadence(projects []atlasBudgetProject, cap float64) *atlasBudgetSugg
 			if !p.AutoUpdate {
 				continue
 			}
-			cur, want := runsPerMonth[p.Cadence], runsPerMonth[cad]
+			cur, want := runsPerMonth(p.Cadence), runsPerMonth(cad)
 			// Never speed a project UP as a "fix".
 			if cur <= want {
 				total += p.Projected
@@ -277,10 +292,9 @@ func (s *Server) GetAtlasBudget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"budgets": budgets})
 }
 
-// hourlyRunsPerMonth is what "hourly" actually commits an account to. Kept
-// beside the affordability rule below because that rule is only true given this
-// number.
-const hourlyRunsPerMonth = 730
+// hourlyRunsPerMonth is what "hourly" actually commits an account to, derived
+// from the same interval table as everything else.
+func hourlyRunsPerMonth() float64 { return runsPerMonth("hourly") }
 
 // checkCadenceAffordable refuses a cadence the account's plan can never pay for.
 //
@@ -308,5 +322,5 @@ func (s *Server) checkCadenceAffordable(ctx context.Context, acct account, caden
 		return nil
 	}
 	return quotaErr("hourly refresh needs more indexing time than the %s plan includes (%d minutes a month — hourly is %d runs). Choose daily, weekly or monthly, or upgrade.",
-		p.Name, *p.MaxAtlasMinutesPerMonth, hourlyRunsPerMonth)
+		p.Name, *p.MaxAtlasMinutesPerMonth, int(hourlyRunsPerMonth()))
 }

@@ -282,11 +282,43 @@ func TestAtlasBudget_OwnerScopeMatchesProjectListing(t *testing.T) {
 // capped plan for ANY repo — it is not "usually too much", it is impossible, and
 // that is what makes refusing it up front honest rather than paternalistic.
 func TestCadenceFloor_HourlyImpossibleOnAnyCappedPlan(t *testing.T) {
-	const cheapestConceivableRunMin = 2.5
+	// The FASTEST run ever measured across the whole corpus. Using a real floor
+	// rather than a hypothetical one keeps the claim honest: if hourly doesn't fit
+	// even at the cheapest run anyone has actually had, it fits nothing.
+	const fastestObservedRunMin = 4.7
 	for _, cap := range []int64{180, 900, 1800} { // free, plus, org_team
-		if cost := hourlyRunsPerMonth * cheapestConceivableRunMin; cost <= float64(cap) {
+		if cost := hourlyRunsPerMonth() * fastestObservedRunMin; cost <= float64(cap) {
 			t.Fatalf("hourly at %.1f min/run costs %.0f min, which FITS a %d cap — the floor's premise is wrong",
-				cheapestConceivableRunMin, cost, cap)
+				fastestObservedRunMin, cost, cap)
+		}
+	}
+}
+
+// The projection must agree with the SCHEDULER about how often a cadence fires.
+// They were two separate literal tables until 2026-08-10; a cadence added to one
+// and not the other would have been priced at zero and never warned about.
+func TestAtlasBudget_RunsPerMonthDerivesFromTheScheduler(t *testing.T) {
+	for cadence := range atlasCadenceIntervals {
+		if runsPerMonth(cadence) <= 0 {
+			t.Fatalf("cadence %q fires on the scheduler but costs 0 in the projection", cadence)
+		}
+	}
+	if got := runsPerMonth("daily"); got != 30 {
+		t.Fatalf("daily = %v runs/month, want 30", got)
+	}
+	if got := runsPerMonth("monthly"); got != 1 {
+		t.Fatalf("monthly = %v runs/month, want 1", got)
+	}
+	if runsPerMonth("") != 0 || runsPerMonth("fortnightly") != 0 {
+		t.Fatal("a cadence the scheduler never fires must cost 0")
+	}
+}
+
+// The suggester must never recommend a cadence the API would refuse.
+func TestAtlasBudget_SuggesterNeverRecommendsARefusedCadence(t *testing.T) {
+	for _, c := range cadencesFastestFirst {
+		if c == "hourly" {
+			t.Fatal("suggester can propose hourly, which checkCadenceAffordable refuses on every capped plan")
 		}
 	}
 }
