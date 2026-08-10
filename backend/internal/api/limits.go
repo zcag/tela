@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -188,7 +189,83 @@ func planFor(ctx context.Context, q queryer, acct account) (plan, error) {
 			ELSE u.plan_key END
 			WHERE u.id = $1`
 	}
-	return scanPlan(q.QueryRowContext(ctx, src, acct.ID))
+	p, err := scanPlan(q.QueryRowContext(ctx, src, acct.ID))
+	if err != nil {
+		return p, err
+	}
+	// Top-ups are applied HERE, at the one place every gate resolves a plan, so
+	// nothing downstream needs to know credits exist: the Atlas run gate, the
+	// cadence floor, the budget projection, the usage snapshot and the admin views
+	// all read p.Max* and get the effective allowance for free. The only reader
+	// that deliberately bypasses this is ListPlans, which renders the public tier
+	// CATALOG — that must show what a tier includes, not what one account happens
+	// to have been granted.
+	if err := applyCredits(ctx, q, acct, &p); err != nil {
+		// A credit lookup failure must not deny service on a limit the account may
+		// well be inside: fall back to the tier's own cap, which is never more
+		// generous than the truth.
+		slog.Warn("limits: credit lookup failed, using tier caps", "kind", acct.Kind, "id", acct.ID, "err", err)
+	}
+	return p, nil
+}
+
+// applyCredits adds this account's active top-ups to the tier's caps.
+//
+// A credit against an UNLIMITED (nil) cap is a no-op — there is nothing to raise,
+// and silently turning "unlimited" into a number would be a downgrade. A metric
+// that matches no known cap is also a no-op, which is why `metric` reuses the
+// plans column name: a typo grants nothing rather than the wrong meter.
+func applyCredits(ctx context.Context, q queryer, acct account, p *plan) error {
+	rows, err := q.QueryContext(ctx, `
+		SELECT metric, SUM(amount)
+		  FROM account_credits
+		 WHERE account_kind = $1 AND account_id = $2
+		   AND (period = '' OR period = to_char((now() AT TIME ZONE 'UTC'), 'YYYY-MM'))
+		 GROUP BY metric`, acct.Kind, acct.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	add := func(dst **int64, n int64) {
+		if *dst == nil {
+			return // unlimited stays unlimited
+		}
+		v := **dst + n
+		if v < 0 {
+			v = 0 // a negative grant can reduce an allowance, never below zero
+		}
+		*dst = &v
+	}
+	for rows.Next() {
+		var metric string
+		var amount int64
+		if err := rows.Scan(&metric, &amount); err != nil {
+			return err
+		}
+		switch metric {
+		case "max_atlas_minutes_per_month":
+			add(&p.MaxAtlasMinutesPerMonth, amount)
+		case "max_atlas_runs_per_month":
+			add(&p.MaxAtlasRunsPerMonth, amount)
+		case "max_atlas_files_per_run":
+			add(&p.MaxAtlasFilesPerRun, amount)
+		case "max_embed_tokens_per_month":
+			add(&p.MaxEmbedTokensPerMonth, amount)
+		case "max_llm_calls_per_month":
+			add(&p.MaxLLMCallsPerMonth, amount)
+		case "max_atlas_sources":
+			add(&p.MaxAtlasSources, amount)
+		case "max_spaces":
+			add(&p.MaxSpaces, amount)
+		case "max_pages_per_space":
+			add(&p.MaxPagesPerSpace, amount)
+		case "max_storage_bytes":
+			add(&p.MaxStorageBytes, amount)
+		case "max_members":
+			add(&p.MaxMembers, amount)
+		}
+	}
+	return rows.Err()
 }
 
 // featureEnabled reports whether acct's effective plan grants the named feature

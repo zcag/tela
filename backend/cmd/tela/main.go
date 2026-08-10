@@ -112,6 +112,12 @@ func main() {
 		case "set-plan":
 			runSetPlan(d, os.Args[2:])
 			return
+		case "grant":
+			runGrant(d, os.Args[2:])
+			return
+		case "credits":
+			runCredits(d, os.Args[2:])
+			return
 		case "list-users":
 			runListUsers(d)
 			return
@@ -119,7 +125,7 @@ func main() {
 			runDigest(d, os.Args[2:])
 			return
 		default:
-			fatal("unknown subcommand (known: reindex-all, summarize-all, rag-eval, ask-eval, create-admin, set-plan, list-users, digest)", "subcommand", os.Args[1])
+			fatal("unknown subcommand (known: reindex-all, summarize-all, rag-eval, ask-eval, create-admin, set-plan, grant, credits, list-users, digest)", "subcommand", os.Args[1])
 		}
 	}
 

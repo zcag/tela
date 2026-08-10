@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/zcag/tela/backend/internal/api"
 	"github.com/zcag/tela/backend/internal/auth"
@@ -75,6 +79,120 @@ func runSetPlan(d *sql.DB, args []string) {
 		fatal("set-plan: no matching row", "kind", kind, "id", idStr)
 	}
 	slog.Info("set-plan", "kind", kind, "id", idStr, "plan_key", planKey)
+}
+
+// creditMetrics are the plan columns a top-up may raise. Listed explicitly so a
+// typo is rejected at the CLI rather than becoming an inert row nobody notices —
+// applyCredits ignores unknown metrics by design, which is safe but silent.
+var creditMetrics = map[string]bool{
+	"max_atlas_minutes_per_month": true,
+	"max_atlas_runs_per_month":    true,
+	"max_atlas_files_per_run":     true,
+	"max_embed_tokens_per_month":  true,
+	"max_llm_calls_per_month":     true,
+	"max_atlas_sources":           true,
+	"max_spaces":                  true,
+	"max_pages_per_space":         true,
+	"max_storage_bytes":           true,
+	"max_members":                 true,
+}
+
+// runGrant: `tela grant <user|org> <id> <metric> <amount> <reason> [period]`
+// — add a per-account quota top-up.
+//
+// ADDITIVE to the account's tier cap, and scoped to one calendar month unless a
+// period is given (” would mean every period; pass "always" for that). A reason
+// is REQUIRED: an exception nobody can explain later is indistinguishable from a
+// mistake, and this is the only record that it was deliberate.
+func runGrant(d *sql.DB, args []string) {
+	if len(args) < 5 {
+		fatal("usage: tela grant <user|org> <id> <metric> <amount> <reason> [YYYY-MM|always]  (default period = current month)")
+	}
+	kind, idStr, metric, amountStr, reason := args[0], args[1], args[2], args[3], args[4]
+	if kind != "user" && kind != "org" {
+		fatal("grant: kind must be 'user' or 'org'")
+	}
+	if !creditMetrics[metric] {
+		keys := make([]string, 0, len(creditMetrics))
+		for k := range creditMetrics {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fatal("grant: unknown metric", "metric", metric, "known", strings.Join(keys, ", "))
+	}
+	amount, err := strconv.ParseInt(amountStr, 10, 64)
+	if err != nil {
+		fatal("grant: amount must be an integer", "amount", amountStr)
+	}
+	period := time.Now().UTC().Format("2006-01")
+	if len(args) >= 6 {
+		if args[5] == "always" {
+			period = ""
+		} else {
+			if _, err := time.Parse("2006-01", args[5]); err != nil {
+				fatal("grant: period must be YYYY-MM or 'always'", "period", args[5])
+			}
+			period = args[5]
+		}
+	}
+	ctx := context.Background()
+
+	// Verify the target exists — a grant against a typo'd id is silently inert.
+	table := "users"
+	if kind == "org" {
+		table = "orgs"
+	}
+	var exists int
+	if err := d.QueryRowContext(ctx, `SELECT 1 FROM `+table+` WHERE id = $1`, idStr).Scan(&exists); err != nil {
+		fatal("grant: no such account", "kind", kind, "id", idStr)
+	}
+	if _, err := d.ExecContext(ctx,
+		`INSERT INTO account_credits (account_kind, account_id, period, metric, amount, reason)
+		 VALUES ($1,$2,$3,$4,$5,$6)`, kind, idStr, period, metric, amount, reason); err != nil {
+		fatal("grant", "err", err)
+	}
+	shown := period
+	if shown == "" {
+		shown = "always"
+	}
+	slog.Info("grant: top-up recorded", "kind", kind, "id", idStr, "metric", metric,
+		"amount", amount, "period", shown, "reason", reason)
+}
+
+// runCredits: `tela credits [<user|org> <id>]` — list top-ups, newest first.
+func runCredits(d *sql.DB, args []string) {
+	ctx := context.Background()
+	q := `SELECT id, account_kind, account_id, period, metric, amount, reason, created_at
+	        FROM account_credits`
+	var rows *sql.Rows
+	var err error
+	if len(args) == 2 {
+		q += ` WHERE account_kind = $1 AND account_id = $2`
+		rows, err = d.QueryContext(ctx, q+` ORDER BY id DESC`, args[0], args[1])
+	} else {
+		rows, err = d.QueryContext(ctx, q+` ORDER BY id DESC`)
+	}
+	if err != nil {
+		fatal("credits", "err", err)
+	}
+	defer rows.Close()
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tACCOUNT\tPERIOD\tMETRIC\tAMOUNT\tREASON\tCREATED")
+	for rows.Next() {
+		var (
+			id, acctID, amount           int64
+			kind, period, metric, reason string
+			created                      string
+		)
+		if err := rows.Scan(&id, &kind, &acctID, &period, &metric, &amount, &reason, &created); err != nil {
+			fatal("credits: scan", "err", err)
+		}
+		if period == "" {
+			period = "always"
+		}
+		fmt.Fprintf(tw, "%d\t%s:%d\t%s\t%s\t%d\t%s\t%s\n", id, kind, acctID, period, metric, amount, reason, created)
+	}
+	tw.Flush()
 }
 
 // runListUsers: `tela list-users` — id, username, email, admin/active flags, plan.
