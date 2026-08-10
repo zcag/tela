@@ -31,6 +31,15 @@ export type AtlasBudgetProject = {
   estimated: boolean
 }
 
+// One entry per account the caller can see (their personal one + each org they
+// belong to). The cap is per ACCOUNT, so a project must be matched to the budget
+// that actually governs it rather than to "the" budget.
+export type AtlasBudgetEntry = AtlasBudget & {
+  owner_kind: 'user' | 'org'
+  owner_id: number
+  owner_name: string
+}
+
 export type AtlasBudget = {
   cap_minutes: number | null
   used_minutes: number
@@ -355,7 +364,7 @@ export function useAtlasProjects() {
 export function useAtlasBudget() {
   return useQuery({
     queryKey: atlasKeys.budget(),
-    queryFn: () => api<AtlasBudget>('/api/atlas/budget'),
+    queryFn: () => api<{ budgets: AtlasBudgetEntry[] }>('/api/atlas/budget'),
     staleTime: 30_000,
   })
 }

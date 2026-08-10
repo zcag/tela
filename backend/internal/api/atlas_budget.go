@@ -29,6 +29,8 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+
+	"github.com/zcag/tela/backend/internal/auth"
 )
 
 // runsPerMonth converts a cadence preset into a monthly run count. Mirrors
@@ -207,18 +209,70 @@ func suggestCadence(projects []atlasBudgetProject, cap float64) *atlasBudgetSugg
 
 func round1(f float64) float64 { return float64(int64(f*10+0.5)) / 10 }
 
-// GetAtlasBudget serves the projection for the personal account of the caller.
-// Org-owned projects are budgeted against the org, so this is the personal view;
-// the org view arrives with the org Atlas UI.
+// ownedAtlasAccounts lists every billable account whose Atlas budget the caller
+// can see: their personal one, plus each org they belong to. Mirrors the owner
+// scope of listAtlasProjectsFor exactly — Atlas home shows projects grouped by
+// owner, so a budget that covered only the personal account would leave an
+// org-team customer with projects on screen and no budget for them.
+func (s *Server) ownedAtlasAccounts(ctx context.Context, u *auth.User) ([]atlasBudgetOwner, error) {
+	out := []atlasBudgetOwner{{Kind: accountUser, ID: u.ID, Name: u.Username}}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT o.id, o.name FROM orgs o
+		   JOIN org_members om ON om.org_id = o.id AND om.user_id = $1
+		  ORDER BY o.id`, u.ID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var o atlasBudgetOwner
+		if err := rows.Scan(&o.ID, &o.Name); err != nil {
+			return out, err
+		}
+		o.Kind = accountOrg
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+type atlasBudgetOwner struct {
+	Kind string `json:"owner_kind"`
+	ID   int64  `json:"owner_id"`
+	Name string `json:"owner_name"`
+}
+
+// atlasBudgetEntry is one account's budget, tagged with whose it is so the UI can
+// match a project to the budget that actually governs it.
+type atlasBudgetEntry struct {
+	atlasBudgetOwner
+	atlasBudget
+}
+
+// GetAtlasBudget serves a projection per account the caller can see — their
+// personal account and every org they belong to. An account with no Atlas
+// projects still appears (with an empty projects list) so the UI can show the
+// meter rather than nothing.
 func (s *Server) GetAtlasBudget(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireUser(w, r)
 	if !ok {
 		return
 	}
-	b, err := s.atlasBudgetFor(r.Context(), account{Kind: accountUser, ID: u.ID})
-	if err != nil && err != sql.ErrNoRows {
+	owners, err := s.ownedAtlasAccounts(r.Context(), u)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "budget lookup failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, b)
+	budgets := []atlasBudgetEntry{}
+	for _, o := range owners {
+		b, err := s.atlasBudgetFor(r.Context(), account{Kind: o.Kind, ID: o.ID})
+		if err != nil {
+			if err == sql.ErrNoRows {
+				continue // account has no plan row; nothing meaningful to report
+			}
+			writeError(w, http.StatusInternalServerError, "internal", "budget lookup failed")
+			return
+		}
+		budgets = append(budgets, atlasBudgetEntry{atlasBudgetOwner: o, atlasBudget: b})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"budgets": budgets})
 }

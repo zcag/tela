@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/zcag/tela/backend/internal/auth"
 	"github.com/zcag/tela/backend/internal/testdb"
 )
 
@@ -189,6 +190,88 @@ func TestAtlasBudget_SuggestionNeverSpeedsUpOrTouchesSlowerProjects(t *testing.T
 	for _, id := range b.Suggestion.AppliesTo {
 		if id == slow {
 			t.Fatal("suggestion would change a project already slower than the recommendation")
+		}
+	}
+}
+
+// TestAtlasBudget_CoversOrgOwnedProjects is why the endpoint returns a budget
+// per account rather than one. Atlas home lists a user's personal projects AND
+// their orgs' projects together, so a personal-only budget left an org-team
+// customer looking at projects with no budget governing them — and if the UI had
+// matched them to the viewer's personal allowance instead, it would have judged
+// them against a cap that controls nothing about them.
+func TestAtlasBudget_CoversOrgOwnedProjects(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "org-budget-user", "pw", false)
+	orgID := seedOrg(t, d, "Acme", "acme")
+	seedOrgMember(t, d, orgID, uid, "admin")
+	if _, err := d.ExecContext(ctx, `UPDATE orgs SET plan_key='org_team' WHERE id=$1`, orgID); err != nil {
+		t.Fatalf("set org plan: %v", err)
+	}
+
+	pid := seedAtlasProject(t, d, "org-proj", accountOrg, orgID, 0, 0)
+	src := seedAtlasSource(t, d, pid, "https://example.com/org", "r")
+	if _, err := d.ExecContext(ctx,
+		`UPDATE atlas_projects SET cadence='hourly', auto_update=1 WHERE id=$1`, pid); err != nil {
+		t.Fatalf("cadence: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		stampRunDuration(t, d, seedAtlasRun(t, d, src, "done"), 3018) // 50.3 min
+	}
+
+	// The org's own budget must see the project and flag it.
+	b, err := s.atlasBudgetFor(ctx, account{Kind: accountOrg, ID: orgID})
+	if err != nil {
+		t.Fatalf("org budget: %v", err)
+	}
+	if len(b.Projects) != 1 {
+		t.Fatalf("org budget saw %d projects, want 1", len(b.Projects))
+	}
+	if b.CapMinutes == nil || *b.CapMinutes != 1800 {
+		t.Fatalf("org cap = %v, want 1800 (org_team)", b.CapMinutes)
+	}
+	if !b.Over || b.Suggestion == nil {
+		t.Fatalf("hourly at 50min/run projected %.0f against 1800 and did not warn", b.Projected)
+	}
+
+	// The member's PERSONAL budget must not claim the org's project.
+	personal, err := s.atlasBudgetFor(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("personal budget: %v", err)
+	}
+	if len(personal.Projects) != 0 {
+		t.Fatalf("personal budget claimed %d org project(s); the org's cap governs those",
+			len(personal.Projects))
+	}
+}
+
+// The caller's account list must span personal + every org they belong to, since
+// that is exactly the owner scope Atlas home renders.
+func TestAtlasBudget_OwnerScopeMatchesProjectListing(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	s := &Server{DB: d}
+
+	uid := seedUser(t, d, "scope-user", "pw", false)
+	a := seedOrg(t, d, "A", "a-org")
+	b := seedOrg(t, d, "B", "b-org")
+	seedOrgMember(t, d, a, uid, "admin")
+	seedOrgMember(t, d, b, uid, "member")
+	other := seedOrg(t, d, "NotMine", "not-mine") // caller is NOT a member
+
+	owners, err := s.ownedAtlasAccounts(ctx, &auth.User{ID: uid, Username: "scope-user"})
+	if err != nil {
+		t.Fatalf("owners: %v", err)
+	}
+	if len(owners) != 3 {
+		t.Fatalf("got %d accounts, want 3 (personal + 2 orgs)", len(owners))
+	}
+	for _, o := range owners {
+		if o.Kind == accountOrg && o.ID == other {
+			t.Fatal("returned a budget for an org the caller does not belong to")
 		}
 	}
 }

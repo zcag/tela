@@ -1,6 +1,6 @@
 import { AlertTriangle, Gauge } from 'lucide-react'
 import { useAtlasBudget } from '../../../lib/queries/atlas'
-import type { AtlasBudget } from '../../../lib/queries/atlas'
+import type { AtlasBudget, AtlasBudgetEntry } from '../../../lib/queries/atlas'
 
 // AtlasBudgetNotice — how much Atlas indexing this account's schedule will cost,
 // against what its plan allows.
@@ -37,17 +37,42 @@ const CADENCE_LABEL: Record<string, string> = {
 
 export function AtlasBudgetNotice({ projectId }: { projectId?: number }) {
   const { data } = useAtlasBudget()
-  if (!data || data.cap_minutes == null) return null
+  const budgets = data?.budgets ?? []
+  if (budgets.length === 0) return null
 
-  // Scope to one project where asked (the settings screen), but keep the
-  // ACCOUNT total as the verdict — the cap is per account, so a project that
-  // looks modest on its own can still be the one that tips the total over.
-  const scoped = projectId != null ? data.projects.find((p) => p.id === projectId) : undefined
-  if (projectId != null && scoped && !scoped.auto_update && !data.over) return null
+  // The cap is per ACCOUNT, so a project is judged by the budget that owns it —
+  // not by "the" budget. Without this an org project would be measured against
+  // the viewer's personal allowance, which governs nothing about it.
+  const relevant =
+    projectId != null
+      ? budgets.filter((b) => b.projects.some((p) => p.id === projectId))
+      : budgets.filter((b) => b.projects.length > 0)
 
-  const cap = data.cap_minutes
-  const overSpent = data.used_minutes >= cap
-  if (!data.over && !overSpent) return <BudgetMeter data={data} cap={cap} />
+  const shown = relevant.filter((b) => b.cap_minutes != null)
+  if (shown.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-[var(--space-2)]">
+      {shown.map((b) => (
+        <OneBudget
+          key={`${b.owner_kind}:${b.owner_id}`}
+          b={b}
+          // Only name the owner when there is more than one on screen; a solo
+          // personal budget saying "cagdas:" is noise.
+          showOwner={shown.length > 1}
+        />
+      ))}
+    </div>
+  )
+}
+
+function OneBudget({ b, showOwner }: { b: AtlasBudgetEntry; showOwner: boolean }) {
+  const cap = b.cap_minutes
+  if (cap == null) return null
+  const overSpent = b.used_minutes >= cap
+  const label = showOwner ? `${b.owner_name} · ` : ''
+
+  if (!b.over && !overSpent) return <BudgetMeter data={b} cap={cap} label={label} />
 
   return (
     <div
@@ -58,41 +83,43 @@ export function AtlasBudgetNotice({ projectId }: { projectId?: number }) {
         <AlertTriangle className="mt-[2px] size-[var(--space-4)] shrink-0 text-[var(--callout-warning-fg)]" />
         <div className="flex flex-col gap-[var(--space-1)]">
           <p className="text-[length:var(--text-sm)] font-medium text-[var(--text-primary)]">
+            {label}
             {overSpent
               ? 'This month’s Atlas budget is used up'
-              : 'This schedule will use more Atlas time than your plan allows'}
+              : 'This schedule will use more Atlas time than the plan allows'}
           </p>
           <p className="text-[length:var(--text-sm)] text-[var(--text-muted)]">
             {overSpent ? (
               <>
-                {fmtMinutes(data.used_minutes)} of {fmtMinutes(cap)} used. Scheduled refreshes
-                resume on the 1st.{' '}
+                {fmtMinutes(b.used_minutes)} of {fmtMinutes(cap)} used. Scheduled refreshes resume
+                on the 1st.{' '}
               </>
             ) : (
               <>
-                Your current schedule works out at about{' '}
+                This schedule works out at about{' '}
                 <strong className="text-[var(--text-primary)]">
-                  {fmtMinutes(data.projected_minutes)}
+                  {fmtMinutes(b.projected_minutes)}
                 </strong>{' '}
-                of indexing a month, against {fmtMinutes(cap)} on your plan.{' '}
+                of indexing a month, against {fmtMinutes(cap)} on the plan.{' '}
               </>
             )}
-            {data.estimated && 'Some projects have no run history yet, so this is an estimate. '}
+            {b.estimated && 'Some projects have no run history yet, so this is an estimate. '}
           </p>
 
-          {data.suggestion && (
+          {b.suggestion && (
             <p className="text-[length:var(--text-sm)] text-[var(--text-muted)]">
               Switching{' '}
-              {data.suggestion.applies_to.length === 1 ? 'it' : `${data.suggestion.applies_to.length} projects`}{' '}
-              to <strong className="text-[var(--text-primary)]">
-                {CADENCE_LABEL[data.suggestion.cadence] ?? data.suggestion.cadence}
+              {b.suggestion.applies_to.length === 1
+                ? 'it'
+                : `${b.suggestion.applies_to.length} projects`}{' '}
+              to{' '}
+              <strong className="text-[var(--text-primary)]">
+                {CADENCE_LABEL[b.suggestion.cadence] ?? b.suggestion.cadence}
               </strong>{' '}
-              would bring that to about {fmtMinutes(data.suggestion.projected_minutes)}.
+              would bring that to about {fmtMinutes(b.suggestion.projected_minutes)}.
             </p>
           )}
-          {!data.suggestion && !overSpent && (
-            // Even the slowest cadence doesn't fit — telling them to slow down
-            // would be wrong, so say what's actually true.
+          {!b.suggestion && !overSpent && (
             <p className="text-[length:var(--text-sm)] text-[var(--text-muted)]">
               Even monthly refreshes would exceed this plan’s budget, so a slower schedule won’t
               help — this needs fewer sources or more capacity.
@@ -106,13 +133,14 @@ export function AtlasBudgetNotice({ projectId }: { projectId?: number }) {
 
 // The quiet state: usage without alarm, so the budget is visible before it bites
 // rather than discovered when it does.
-function BudgetMeter({ data, cap }: { data: AtlasBudget; cap: number }) {
+function BudgetMeter({ data, cap, label }: { data: AtlasBudget; cap: number; label: string }) {
   const pct = Math.min(100, Math.round((data.used_minutes / cap) * 100))
   return (
     <div className="flex flex-col gap-[var(--space-1)]">
       <div className="flex items-center gap-[var(--space-2)] text-[length:var(--text-xs)] text-[var(--text-muted)]">
         <Gauge className="size-[var(--space-3)]" />
         <span>
+          {label}
           {fmtMinutes(data.used_minutes)} of {fmtMinutes(cap)} Atlas time used this month
           {data.projected_minutes > 0 && <> · this schedule ≈ {fmtMinutes(data.projected_minutes)}/mo</>}
         </span>
