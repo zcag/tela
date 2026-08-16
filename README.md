@@ -277,7 +277,9 @@ claude mcp add --transport http tela https://telawiki.com/api/mcp
 code --add-mcp '{"name":"tela","type":"http","url":"https://telawiki.com/api/mcp"}'
 ```
 
-**ChatGPT / Claude.ai** (OAuth connector) — add a custom connector and paste the URL; complete the sign-in:
+**ChatGPT** — install [Tela](https://chatgpt.com/plugins/plugin_asdk_app_6a22ce5f60dc8191a56bf3f66890b1cf) from the plugin directory and sign in. Nothing to paste, no Developer Mode. (The directory plugin talks to the hosted service; for a self-hosted instance add a custom connector with your own URL, as below.)
+
+**Claude.ai / self-hosted ChatGPT** (OAuth connector) — add a custom connector and paste the URL; complete the sign-in:
 
 ```
 https://telawiki.com/api/mcp

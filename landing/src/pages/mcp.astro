@@ -128,9 +128,18 @@ const shareTools = [
 
   <h3>ChatGPT</h3>
   <p>
-    In ChatGPT's connector / Developer Mode settings, add a connector with the
-    endpoint URL above and complete the OAuth sign-in. tela also exposes the
+    tela is listed in ChatGPT's plugin directory — open
+    <a href="https://chatgpt.com/plugins/plugin_asdk_app_6a22ce5f60dc8191a56bf3f66890b1cf"
+       target="_blank" rel="noopener">Tela</a>
+    and click <strong>Install plugin</strong>, then sign in with your tela
+    account. Nothing to paste, and no Developer Mode. tela also exposes the
     <code>search</code> + <code>fetch</code> pair used by Deep Research.
+  </p>
+  <p>
+    The directory plugin connects to the hosted service. To point ChatGPT at a
+    <strong>self-hosted</strong> instance, add a custom connector in ChatGPT's
+    Developer Mode settings with your own <code>/api/mcp</code> URL and complete
+    the OAuth sign-in.
   </p>
 
   <h3>Any MCP client (npm proxy)</h3>
@@ -193,7 +202,15 @@ const shareTools = [
   <p>Use the button above, or from the command line:</p>
   <pre tabindex="0" aria-label="VS Code install command"><code>{`code --add-mcp '{"name":"tela","type":"http","url":"https://telawiki.com/api/mcp"}'`}</code></pre>
 
-  <h4>ChatGPT / Claude.ai (OAuth connector)</h4>
+  <h4>ChatGPT (plugin directory)</h4>
+  <p>
+    Install
+    <a href="https://chatgpt.com/plugins/plugin_asdk_app_6a22ce5f60dc8191a56bf3f66890b1cf"
+       target="_blank" rel="noopener">Tela</a>
+    from the directory and sign in — no URL to paste.
+  </p>
+
+  <h4>Claude.ai / self-hosted ChatGPT (OAuth connector)</h4>
   <p>Add a custom connector, paste the URL, and complete the sign-in:</p>
   <pre tabindex="0" aria-label="OAuth connector URL"><code>{`https://telawiki.com/api/mcp`}</code></pre>
 

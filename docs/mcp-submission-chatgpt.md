@@ -1,5 +1,21 @@
 # Listing tela as a ChatGPT app (OpenAI Apps SDK / app directory)
 
+> **STATUS — LIVE (2026-08-16).** Approved by OpenAI 2026-08-14 and **published**.
+> Public listing: https://chatgpt.com/plugins/plugin_asdk_app_6a22ce5f60dc8191a56bf3f66890b1cf
+> App `asdk_app_6a22ce5f60dc8191a56bf3f66890b1cf`, version `1.0.0`, `mcp_url` pinned to
+> `https://telawiki.com/api/mcp`. Everything below is the historical submission
+> package — kept for the next version bump, not a to-do list.
+>
+> Two consequences worth remembering:
+> - **The directory app is hosted-only.** `mcp_url` is fixed, so self-hosters still need
+>   the manual custom-connector path. User docs say so (tela Docs space 16, *Connecting
+>   ChatGPT*); don't let a doc edit flatten that distinction.
+> - **The listing is frozen once released** — the dashboard only edits *draft* versions,
+>   so changing any listed field costs a new version + another review cycle. The branding
+>   URLs point at our own domain, so fixing *those* needs only a landing deploy.
+>   `demo_recording_url` (`https://telawiki.com/demo.mp4`) is **still a dead URL** —
+>   harmless today (reviewer-facing, review passed) but must be real before a resubmission.
+
 Submission payload, asset plan, and resolved research questions for publishing the
 tela MCP server (`https://telawiki.com/api/mcp`) in the ChatGPT app directory via
 the Apps SDK. Companion to `docs/mcp-directory-submission.md` (which covers both
