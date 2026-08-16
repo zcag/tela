@@ -21,6 +21,7 @@ const HINTS: Record<string, { changefreq: string; priority: string }> = {
   '/compare/': { changefreq: 'monthly', priority: '0.8' },
   '/privacy/': { changefreq: 'yearly', priority: '0.3' },
   '/terms/': { changefreq: 'yearly', priority: '0.3' },
+  '/support/': { changefreq: 'yearly', priority: '0.4' },
 };
 
 export const GET: APIRoute = () => {

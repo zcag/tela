@@ -300,7 +300,7 @@
 			header /_astro/* Cache-Control "public, max-age=31536000, immutable"
 			# HTML shell must revalidate so a redeploy/edit is picked up at once
 			# (the fingerprinted /_astro assets above stay immutable).
-			@landing_html path / /mcp /mcp/ /pricing /pricing/ /privacy /privacy/ /terms /terms/ /404 /404.html
+			@landing_html path / /mcp /mcp/ /pricing /pricing/ /privacy /privacy/ /terms /terms/ /support /support/ /404 /404.html
 			header @landing_html Cache-Control "no-cache"
 			file_server
 		}

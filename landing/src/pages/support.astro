@@ -1,0 +1,89 @@
+---
+import Prose from '../layouts/Prose.astro';
+---
+
+<Prose
+  title="Support — tela"
+  description="How to get help with tela: contact email, what to include in a report, and where to find docs for the hosted service and self-hosted deployments."
+  kicker="Help"
+  heading="Support"
+  updated="August 16, 2026"
+>
+  <p class="lead">
+    Questions, bug reports, billing problems, or trouble connecting an agent —
+    email <a href="mailto:tela@telawiki.com">tela@telawiki.com</a> and you'll get
+    a reply from a human, usually within two business days.
+  </p>
+
+  <h2>Before you write</h2>
+  <p>
+    Most answers are already in the docs, and they're faster than waiting on a
+    reply:
+  </p>
+  <ul>
+    <li>
+      <a href="https://telawiki.com/tela/docs">tela Docs</a> — the product
+      documentation: spaces, pages, sharing, sync, decks, settings.
+    </li>
+    <li>
+      <a href="/mcp/">MCP / connector</a> — connecting ChatGPT, Claude, or any
+      MCP host to your wiki, and the full tool surface.
+    </li>
+    <li>
+      <a href="/pricing/">Pricing</a> — plans, limits, and what counts toward
+      them.
+    </li>
+    <li>
+      <a href="https://github.com/zcag/tela#readme">README</a> — running tela
+      yourself, from the source.
+    </li>
+  </ul>
+
+  <h2>What to include</h2>
+  <p>
+    A report we can reproduce gets fixed much faster than one we can't. Where it
+    applies, tell us:
+  </p>
+  <ul>
+    <li>Your account email or username, and the space or page involved.</li>
+    <li>What you expected to happen, and what happened instead.</li>
+    <li>The URL you were on, and roughly when it happened.</li>
+    <li>For agent/MCP problems: which host (ChatGPT, Claude, an editor), and the tool that failed.</li>
+    <li>For self-hosted instances: your tela version and deployment shape.</li>
+  </ul>
+  <p>
+    Please don't paste passwords, personal access tokens, or API keys into a
+    support email — we never need them to help you.
+  </p>
+
+  <h2>Security reports</h2>
+  <div class="note">
+    <p>
+      Found a vulnerability? Email
+      <a href="mailto:tela@telawiki.com">tela@telawiki.com</a>
+      <strong>privately</strong> rather than filing it in public. Include the
+      steps to reproduce it. We'll confirm receipt and keep you posted on the
+      fix.
+    </p>
+  </div>
+
+  <h2>Account and data</h2>
+  <p>
+    To export your content, correct your account details, or delete your account
+    and its data, email <a href="mailto:tela@telawiki.com">tela@telawiki.com</a>.
+    What we store and how long we keep it is set out in the
+    <a href="/privacy/">privacy policy</a>; the rules of the service are in the
+    <a href="/terms/">terms of service</a>.
+  </p>
+
+  <h2>Self-hosted deployments</h2>
+  <p>
+    tela is open source, and if you run your own instance you operate it — we
+    can't see your data or your logs, and we can't reset anything for you. We're
+    still glad to help with the software itself. Public discussion, bug reports,
+    and feature requests live on
+    <a href="https://github.com/zcag/tela">github.com/zcag/tela</a>, which is
+    usually the better venue: the answer stays searchable for whoever hits the
+    same thing next.
+  </p>
+</Prose>
