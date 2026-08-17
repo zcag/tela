@@ -52,44 +52,12 @@ func (s *Service) ReindexFile(ctx context.Context, fileID int64) (int, error) {
 	}
 
 	model := s.emb.Model()
-	type row struct {
-		ord                    int
-		hp, content, hash, emb string
-	}
-	rows := make([]row, 0, len(chunks))
-	for _, c := range chunks {
-		hash := chunkHash(model, c.EmbedText)
-		emb, ok := cached[hash]
-		if !ok {
-			vec, err := s.emb.Embed(ctx, c.EmbedText)
-			if err != nil {
-				return 0, fmt.Errorf("embed chunk %d of file %d: %w", c.Ord, fileID, err)
-			}
-			emb = vecLiteral(vec)
-		}
-		rows = append(rows, row{c.Ord, c.HeadingPath, c.Content, hash, emb})
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
+	rows := planRows(chunks, cached, model)
+	if err := s.writeChunks(ctx, fileChunks, fileID, rows, model); err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM file_chunks WHERE space_file_id = $1`, fileID); err != nil {
-		return 0, err
-	}
-	for _, r := range rows {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO file_chunks
-			  (space_file_id, ord, heading_path, content, content_hash, embedding, embed_model)
-			VALUES ($1, $2, $3, $4, $5, $6::vector, $7)`,
-			fileID, r.ord, r.hp, r.content, r.hash, r.emb, model,
-		); err != nil {
-			return 0, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
+	if embedded, err := s.fillEmbeddings(ctx, fileChunks, fileID, chunks, rows); err != nil {
+		return embedded, err
 	}
 	return len(rows), nil
 }

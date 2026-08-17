@@ -234,13 +234,18 @@ func withFastWindows(t *testing.T) {
 	})
 }
 
-// waitForChunks polls until the page has ≥1 chunk or the deadline passes.
+// waitForChunks polls until the page has ≥1 EMBEDDED chunk or the deadline
+// passes. The embedding filter is load-bearing: a reindex writes its chunk rows
+// before it embeds them (so the work survives a failure), so a bare row count
+// goes true the instant a reindex starts — including one that then fails — and
+// every test built on it would pass without an embedder ever succeeding.
 func waitForChunks(t *testing.T, d *sql.DB, page int64, within time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
 		var n int
-		if err := d.QueryRow(`SELECT count(*) FROM page_chunks WHERE page_id=$1`, page).Scan(&n); err != nil {
+		if err := d.QueryRow(
+			`SELECT count(*) FROM page_chunks WHERE page_id=$1 AND embedding IS NOT NULL`, page).Scan(&n); err != nil {
 			t.Fatalf("count chunks: %v", err)
 		}
 		if n > 0 {

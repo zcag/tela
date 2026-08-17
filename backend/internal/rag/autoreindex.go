@@ -29,6 +29,11 @@ var (
 	// reindexTick is how often the worker checks for pages whose debounce elapsed.
 	reindexTick = 1 * time.Second
 	// reindexTimeout caps a single page's reindex (chunk + embed round-trips).
+	// It bounds how much work ONE attempt does, not how much a page needs: a
+	// reindex commits each embedded batch as it goes, so a page too big to finish
+	// in one window resumes from where it stopped instead of starting over. This
+	// is why the cap can stay flat and modest — before that, it was the line past
+	// which a page could never index at all, however many times it retried.
 	reindexTimeout = 2 * time.Minute
 	// reindexRetryBase / reindexRetryMax bound the exponential backoff applied to
 	// a page whose reindex just failed: base * 2^(attempts-1), capped at max. A
@@ -60,6 +65,31 @@ func (s *Service) QueueReindex(pageID int64) {
 	}
 	s.pending[pageID] = time.Now().Add(reindexDebounce)
 	delete(s.attempts, pageID)
+}
+
+// queueReindexStale is QueueReindex for a page the SWEEP found stale, rather
+// than one a user just edited. It must not touch a page that is already queued:
+// clearing the retry counter and pulling the deadline forward is only right for
+// new content, and doing it every sweep defeats the backoff entirely — a page
+// that can never index (one too large to finish inside reindexTimeout) went
+// 30s → 1m → *sweep* → 30s → 1m → … forever instead of decaying to 10m, and
+// re-embedded itself around the clock for as long as it stayed stale.
+func (s *Service) queueReindexStale(pageID int64) {
+	if !s.Enabled() {
+		return
+	}
+	s.queueMu.Lock()
+	defer s.queueMu.Unlock()
+	if s.pending == nil {
+		return // worker not started
+	}
+	if _, queued := s.pending[pageID]; queued {
+		return // already waiting (possibly backing off) — leave its deadline alone
+	}
+	if s.attempts[pageID] > 0 {
+		return // failing page mid-attempt; its retry is the backoff's to schedule
+	}
+	s.pending[pageID] = time.Now().Add(reindexDebounce)
 }
 
 // StartAutoReindex launches the background reindex worker plus the stale-sweep
@@ -115,20 +145,20 @@ func (s *Service) reindexLoop(ctx context.Context) {
 			}
 			for _, id := range s.dueReindexes() {
 				rctx, cancel := context.WithTimeout(ctx, reindexTimeout)
-				_, err := s.ReindexPage(rctx, id)
+				embedded, err := s.ReindexPage(rctx, id)
 				cancel()
 				if err != nil {
-					s.requeueAfterFailure(id)
+					s.requeueAfterFailure(id, embedded, err)
 				} else {
 					s.clearAttempts(id)
 				}
 			}
 			for _, id := range s.dueFileReindexes() {
 				rctx, cancel := context.WithTimeout(ctx, reindexTimeout)
-				_, err := s.ReindexFile(rctx, id)
+				embedded, err := s.ReindexFile(rctx, id)
 				cancel()
 				if err != nil {
-					s.requeueFileAfterFailure(id)
+					s.requeueFileAfterFailure(id, embedded, err)
 				} else {
 					s.clearFileAttempts(id)
 				}
@@ -140,10 +170,25 @@ func (s *Service) reindexLoop(ctx context.Context) {
 // requeueAfterFailure re-enqueues a page whose reindex failed, with exponential
 // backoff keyed on its consecutive-failure count, and logs the failure with the
 // computed next-retry delay so an outage is visible without being noisy per-tick.
-func (s *Service) requeueAfterFailure(pageID int64) {
+//
+// embedded is how many chunks the failed run got through. Backoff is for a run
+// that achieved NOTHING (embedder down, bad page); a run that embedded some of
+// its chunks left them committed, so the next attempt has strictly less to do
+// and should start soon rather than wait out a doubling delay. Without this a
+// page needing several windows would crawl through the 30s→10m schedule even
+// though it was converging the whole time.
+func (s *Service) requeueAfterFailure(pageID int64, embedded int, cause error) {
 	s.queueMu.Lock()
 	if s.pending == nil { // worker stopped
 		s.queueMu.Unlock()
+		return
+	}
+	if embedded > 0 {
+		s.pending[pageID] = time.Now().Add(reindexRetryBase)
+		delete(s.attempts, pageID)
+		s.queueMu.Unlock()
+		slog.Info("rag: auto-reindex incomplete, resuming", "page_id", pageID, "embedded", embedded,
+			"retry_in", reindexRetryBase, "err", cause)
 		return
 	}
 	s.attempts[pageID]++
@@ -158,7 +203,7 @@ func (s *Service) requeueAfterFailure(pageID int64) {
 	}
 	s.pending[pageID] = time.Now().Add(backoff)
 	s.queueMu.Unlock()
-	slog.Warn("rag: auto-reindex failed, will retry", "page_id", pageID, "attempt", n, "retry_in", backoff)
+	slog.Warn("rag: auto-reindex failed, will retry", "page_id", pageID, "attempt", n, "retry_in", backoff, "err", cause)
 }
 
 func (s *Service) clearAttempts(pageID int64) {
@@ -184,10 +229,18 @@ func (s *Service) dueFileReindexes() []int64 {
 	return due
 }
 
-func (s *Service) requeueFileAfterFailure(fileID int64) {
+func (s *Service) requeueFileAfterFailure(fileID int64, embedded int, cause error) {
 	s.queueMu.Lock()
 	if s.pendingFiles == nil {
 		s.queueMu.Unlock()
+		return
+	}
+	if embedded > 0 { // made progress — resume soon instead of backing off
+		s.pendingFiles[fileID] = time.Now().Add(reindexRetryBase)
+		delete(s.fileAttempts, fileID)
+		s.queueMu.Unlock()
+		slog.Info("rag: file auto-reindex incomplete, resuming", "file_id", fileID, "embedded", embedded,
+			"retry_in", reindexRetryBase, "err", cause)
 		return
 	}
 	s.fileAttempts[fileID]++
@@ -202,7 +255,7 @@ func (s *Service) requeueFileAfterFailure(fileID int64) {
 	}
 	s.pendingFiles[fileID] = time.Now().Add(backoff)
 	s.queueMu.Unlock()
-	slog.Warn("rag: file auto-reindex failed, will retry", "file_id", fileID, "attempt", n, "retry_in", backoff)
+	slog.Warn("rag: file auto-reindex failed, will retry", "file_id", fileID, "attempt", n, "retry_in", backoff, "err", cause)
 }
 
 func (s *Service) clearFileAttempts(fileID int64) {
@@ -274,7 +327,7 @@ func (s *Service) sweepStale(ctx context.Context) {
 		return
 	}
 	for _, id := range ids {
-		s.QueueReindex(id)
+		s.queueReindexStale(id)
 	}
 	slog.Info("rag: stale-sweep enqueued", "pages", len(ids), "stale_total", h.StalePages)
 }

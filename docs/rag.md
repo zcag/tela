@@ -199,12 +199,34 @@ The index is best-effort but **self-healing** — an embedder outage degrades to
 
 - **Debounced auto-reindex.** Page writes call `QueueReindex`; the worker
   reindexes once edits settle (a save burst collapses to one reindex).
+- **Resumable by construction.** A reindex writes its chunk rows *first*
+  (`writeChunks`) with `embedding` NULL where it has no cached vector, then fills
+  the vectors in batches, **committing each batch** (`fillEmbeddings`). So an
+  attempt that runs out of time leaves its work behind and the next one starts
+  from there. `reindexTimeout` therefore bounds how much work *one attempt* does,
+  never whether a page can be indexed at all. It also puts chunk text in the
+  lexical index immediately, without waiting on the embed pass.
+- **"Indexed" is recorded, not inferred.** `pages.indexed_at` is stamped on a
+  successful reindex (migration `0076`); `staleExpr` keys on it. Inferring it
+  from "has ≥1 chunk row" is wrong in both directions: a page can index to *zero*
+  chunks legitimately (a drawing-only page is a heading plus an `excalidraw`
+  fence), and a page can hold a full set of rows while still being half-embedded.
+  The first read as never-indexed and was re-swept forever; the second would read
+  as fresh. `staleExpr` therefore also counts unembedded chunks.
 - **Retry with backoff.** A failed reindex is re-enqueued with exponential
-  backoff (30s → 10m), not dropped. A fresh edit clears the backoff.
+  backoff (30s → 10m), not dropped. A fresh edit clears the backoff — **the
+  sweep does not** (`queueReindexStale`). A run that embedded *some* chunks
+  counts as progress, not failure: it retries promptly instead of doubling.
 - **Stale sweep.** An independent loop periodically re-queues any page whose
   index is missing or out of date (`stalePageIDs` / the shared `staleExpr`). This
   recovers a backlog after an embedder outage *and* after a process restart
-  (which loses the in-memory queue but not the corpus).
+  (which loses the in-memory queue but not the corpus). It skips anything already
+  queued or mid-backoff, so it heals a backlog without overriding the retry
+  schedule.
+- **Batched embedding.** Uncached chunks go upstream `embedBatchSize` at a time
+  through `EmbedMany`, so the cost of a reindex is requests, not chunks (829
+  chunks = 26 round trips). Efficiency, not correctness — resumability is what
+  makes a big page indexable.
 - **Health logging.** Each sweep logs an `rag: index health` line —
   content/indexed/stale pages, chunk count, model drift — scrapeable by the ops
   stack (Loki/Grafana) without anyone polling the freshness API. `IndexHealth()`
@@ -215,6 +237,43 @@ The index is best-effort but **self-healing** — an embedder outage degrades to
 > queued reindex failed and was *dropped*, and the stale backlog was invisible
 > until someone checked freshness manually. The self-heal + health-log layer
 > turns that into "auto-recovers within a sweep, and shows up in the logs".
+
+> Lesson from a second real incident (2026-08-17): **a retry that cannot make
+> progress is not a retry, it is a loop.** A 376 KB page chunked to 829 chunks
+> and needed more embedder time than one `reindexTimeout` window allowed. It
+> timed out — and because every vector was held in memory and written only by the
+> closing transaction, the attempt persisted **nothing**, so its successor
+> re-embedded all 829 from scratch. The page never indexed once, in 30+ hours,
+> while re-embedding itself around the clock at ~30k tokens/min.
+>
+> **The root cause was all-or-nothing work, not the timeout.** Tuning the cap or
+> speeding up embedding only moves the size at which a page tips over; the
+> treadmill stays one slow embedder, one bigger page, or one restart away. The
+> fix is that work is durable the moment it is computed (`writeChunks` +
+> `fillEmbeddings` committing per batch), which the schema had allowed all along
+> — migration 0002 made `embedding` nullable *precisely* so "a chunk can exist
+> before it is embedded", and nothing had ever used it.
+>
+> Two amplifiers, each now guarded by a test: the reindex path never adopted the
+> batch transport (`EmbedMany`) that already existed for atlas ingest, so it paid
+> one HTTP request per chunk; and the stale sweep re-queued through
+> `QueueReindex`, which clears the attempt counter — so the backoff ran
+> 30s → 1m → *sweep* → 30s → 1m → … forever instead of decaying to 10m. It looked
+> correct in the code and was dead in practice.
+>
+> No alert fired for any of it: the embedder was *up* the whole time, just
+> permanently busy. Liveness cannot see this — watch the reindex failure log,
+> which now carries the underlying `err` (it did not before, which is most of why
+> the diagnosis was slow), and the stale-page count.
+>
+> And the stale count could not have raised it either, because a *second* page
+> was permanently stale for an unrelated reason: a drawing-only page chunks to
+> nothing, and "no chunk rows" was read as "never indexed", so it was re-queued
+> on every sweep since 2026-07-27. Cheap — it embeds nothing — but it pinned
+> `stale_pages` above zero forever, which is what let a genuinely stuck page hide
+> inside the count. **A health signal that can never read zero is not a signal.**
+> Hence `pages.indexed_at`: the indexer records that it ran instead of leaving it
+> to be guessed from its output.
 
 ## Retrieval quality choices
 

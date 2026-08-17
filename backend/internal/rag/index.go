@@ -20,6 +20,137 @@ func chunkHash(model, embedText string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// embedBatchSize is how many uncached chunks go upstream per request. The
+// embedder is a shared GPU, so the cost that matters is REQUESTS, not chunks:
+// at 32 a 829-chunk page is 26 round trips instead of 829. Sized to keep one
+// request's payload small enough that a batch failure (which degrades to
+// per-item inside embedMany) is cheap to redo.
+const embedBatchSize = 32
+
+// chunkTable names one of the two interchangeable chunk stores. page_chunks and
+// file_chunks have the same shape and the same lifecycle, so the reindex body
+// below is written once against this rather than twice against the two tables.
+// Both fields are compile-time constants — never interpolate anything else.
+type chunkTable struct{ table, idCol, label string }
+
+var (
+	pageChunks = chunkTable{"page_chunks", "page_id", "page"}
+	fileChunks = chunkTable{"file_chunks", "space_file_id", "file"}
+)
+
+// indexRow is one chunk ready to be written. emb is a pgvector literal "[...]",
+// or "" for a chunk whose vector hasn't been computed yet.
+type indexRow struct {
+	ord                    int
+	hp, content, hash, emb string
+}
+
+// planRows pairs each chunk with the vector already cached for its (model, text)
+// hash. A row with emb == "" still needs the embedder.
+func planRows(chunks []Chunk, cached map[string]string, model string) []indexRow {
+	rows := make([]indexRow, len(chunks))
+	for i, c := range chunks {
+		hash := chunkHash(model, c.EmbedText)
+		rows[i] = indexRow{c.Ord, c.HeadingPath, c.Content, hash, cached[hash]}
+	}
+	return rows
+}
+
+// writeChunks replaces every chunk row for one page/file in a single
+// transaction, storing whatever vectors we already have and leaving the rest
+// NULL for fillEmbeddings to complete. `embedding` is nullable precisely so a
+// chunk can exist before it is embedded (migration 0002) — this is the first
+// caller to use that.
+//
+// Writing the rows BEFORE embedding is what makes a reindex resumable, and that
+// is the fix for the runaway: embedding used to happen entirely in memory and
+// land only in a closing transaction, so a reindex that ran out of time wrote
+// NOTHING and its successor re-embedded every chunk from scratch. A page too big
+// to finish in one window could therefore never index — not once, ever — while
+// re-embedding itself around the clock. Now each completed batch is durable, so
+// every attempt starts where the last one stopped and the page converges.
+//
+// It also puts the chunk TEXT in the lexical index immediately, so keyword
+// search over new content no longer waits on the whole embed pass.
+func (s *Service) writeChunks(ctx context.Context, ct chunkTable, id int64, rows []indexRow, model string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM `+ct.table+` WHERE `+ct.idCol+` = $1`, id); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		var emb any // NULL, not "", for a chunk we haven't embedded yet
+		if r.emb != "" {
+			emb = r.emb
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO `+ct.table+`
+			  (`+ct.idCol+`, ord, heading_path, content, content_hash, embedding, embed_model)
+			VALUES ($1, $2, $3, $4, $5, $6::vector, $7)`,
+			id, r.ord, r.hp, r.content, r.hash, emb, model,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// fillEmbeddings embeds every row still missing a vector, in batches, COMMITTING
+// each batch before starting the next. It returns how many chunks it embedded —
+// including on failure, so the caller can tell a run that made progress from one
+// that got nowhere (see reindexLoop: progress means retry promptly rather than
+// backing off, since the work left shrinks every time).
+func (s *Service) fillEmbeddings(ctx context.Context, ct chunkTable, id int64, chunks []Chunk, rows []indexRow) (int, error) {
+	var todo []int // indexes into rows/chunks that still need a vector
+	for i := range rows {
+		if rows[i].emb == "" {
+			todo = append(todo, i)
+		}
+	}
+
+	done := 0
+	for start := 0; start < len(todo); start += embedBatchSize {
+		batch := todo[start:min(start+embedBatchSize, len(todo))]
+		inputs := make([]string, len(batch))
+		for j, i := range batch {
+			inputs[j] = chunks[i].EmbedText
+		}
+		vecs, _, err := s.EmbedMany(ctx, inputs)
+		if err != nil {
+			return done, fmt.Errorf("embed chunk %d of %s %d: %w", chunks[batch[0]].Ord, ct.label, id, err)
+		}
+		if err := s.storeVectors(ctx, ct, id, batch, rows, vecs); err != nil {
+			return done, err
+		}
+		done += len(batch)
+	}
+	return done, nil
+}
+
+// storeVectors commits one batch's vectors onto their already-written rows.
+func (s *Service) storeVectors(ctx context.Context, ct chunkTable, id int64, batch []int, rows []indexRow, vecs [][]float32) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for j, i := range batch {
+		lit := vecLiteral(vecs[j])
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE `+ct.table+` SET embedding = $1::vector, updated_at = tela_now()
+			 WHERE `+ct.idCol+` = $2 AND ord = $3`, lit, id, rows[i].ord); err != nil {
+			return err
+		}
+		rows[i].emb = lit
+	}
+	return tx.Commit()
+}
+
 // ReindexPage rebuilds page_chunks for one page: chunk → (reuse cached vector or
 // embed) → replace rows in a single transaction. Idempotent; unchanged chunks
 // reuse their stored vector and never re-hit the embedder. Returns the number of
@@ -70,45 +201,24 @@ func (s *Service) reindexPage(ctx context.Context, pageID int64, force bool) (in
 	}
 
 	model := s.emb.Model()
-	type row struct {
-		ord                    int
-		hp, content, hash, emb string // emb is a pgvector literal "[...]"
+	rows := planRows(chunks, cached, model)
+	if err := s.writeChunks(ctx, pageChunks, pageID, rows, model); err != nil {
+		return 0, err
 	}
-	rows := make([]row, 0, len(chunks))
-	for _, c := range chunks {
-		hash := chunkHash(model, c.EmbedText)
-		emb, ok := cached[hash]
-		if !ok {
-			vec, err := s.emb.Embed(ctx, c.EmbedText)
-			if err != nil {
-				return 0, fmt.Errorf("embed chunk %d of page %d: %w", c.Ord, pageID, err)
-			}
-			emb = vecLiteral(vec)
-		}
-		rows = append(rows, row{c.Ord, c.HeadingPath, c.Content, hash, emb})
+	if embedded, err := s.fillEmbeddings(ctx, pageChunks, pageID, chunks, rows); err != nil {
+		return embedded, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM page_chunks WHERE page_id = $1`, pageID); err != nil {
-		return 0, err
-	}
-	for _, r := range rows {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO page_chunks
-			  (page_id, ord, heading_path, content, content_hash, embedding, embed_model)
-			VALUES ($1, $2, $3, $4, $5, $6::vector, $7)`,
-			pageID, r.ord, r.hp, r.content, r.hash, r.emb, model,
-		); err != nil {
-			return 0, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
+	// Stamp the page as indexed. This is the ONLY signal that a reindex ran, and
+	// it has to be recorded rather than inferred: a page whose body is nothing
+	// but a drawing chunks to zero rows, and "no rows" is indistinguishable from
+	// "never indexed" — which left such pages permanently stale and re-swept
+	// forever (migration 0076). Deliberately does NOT touch updated_at: that is
+	// the user's edit clock, and bumping it here would re-stale the page against
+	// its own index on every pass.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE pages SET indexed_at = tela_now() WHERE id = $1`, pageID); err != nil {
+		return len(rows), err
 	}
 	return len(rows), nil
 }

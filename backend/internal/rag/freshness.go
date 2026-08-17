@@ -9,10 +9,10 @@ type SpaceFreshness struct {
 	SpaceID      int64  `json:"space_id"`
 	Name         string `json:"name"`
 	Pages        int    `json:"pages"`         // total pages in the space
-	IndexedPages int    `json:"indexed_pages"` // pages with at least one chunk
+	IndexedPages int    `json:"indexed_pages"` // pages with indexable content that have been indexed
 	StalePages   int    `json:"stale_pages"`   // non-empty pages edited since last index (or never indexed)
 	ChunkCount   int    `json:"chunk_count"`
-	LastIndexed  string `json:"last_indexed"` // max chunk updated_at across the space ("" if none)
+	LastIndexed  string `json:"last_indexed"` // latest pages.indexed_at across the space ("" if none)
 }
 
 // PageFreshness is the per-page status within a space.
@@ -39,14 +39,29 @@ const excalidrawStripSQL = "regexp_replace(p.body, '```excalidraw([ \\t]+[^\\n]*
 // drawing-only page reads as empty (nothing to index), not stale.
 const hasIndexableBody = excalidrawStripSQL + ` ~ '[^[:space:]]'`
 
-// staleExpr is the SQL predicate for "this page's index is out of date": the
-// page has indexable content AND (it has no chunks OR it was edited after its
-// chunks were last written). Datetimes are lexically comparable TEXT. Shared so
-// the space rollup and the per-page status agree exactly.
-const staleExpr = hasIndexableBody + ` AND (pc.cnt IS NULL OR p.updated_at > pc.idx)`
+// staleExpr is the SQL predicate for "this page's index is out of date": it was
+// never indexed, OR it was edited since it was indexed, OR some of its chunks
+// have no vector yet. Datetimes are lexically comparable TEXT. Shared so the
+// space rollup and the per-page status agree exactly.
+//
+// It keys on pages.indexed_at (migration 0076), NOT on whether chunk rows exist.
+// A page can index to ZERO chunks legitimately — strip the ```excalidraw fence
+// off a drawing-only page and nothing chunkable is left — and inferring "never
+// indexed" from that made such a page permanently stale and re-swept forever.
+//
+// The unembedded clause is the other half: a reindex writes its chunk rows
+// before it embeds them (see writeChunks) so the work survives a failure, which
+// means a page can hold a full set of rows and still be half-indexed. Counting
+// rows alone would read that as fresh, the sweep would stop re-queueing it, and
+// the page would sit silently missing from vector search.
+const staleExpr = hasIndexableBody + ` AND (p.indexed_at IS NULL OR p.updated_at > p.indexed_at OR pc.unembedded > 0)`
 
-// chunkAggCTE aggregates page_chunks to (page_id, chunk count, last-indexed).
-const chunkAggCTE = `pc AS (SELECT page_id, count(*) AS cnt, max(updated_at) AS idx FROM page_chunks GROUP BY page_id)`
+// chunkAggCTE aggregates page_chunks to (page_id, chunk count, unembedded count,
+// last-indexed). unembedded is coalesced by every caller's LEFT JOIN, so a page
+// with no chunks contributes NULL — never a false "has unembedded chunks".
+const chunkAggCTE = `pc AS (SELECT page_id, count(*) AS cnt,
+	count(*) FILTER (WHERE embedding IS NULL) AS unembedded,
+	max(updated_at) AS idx FROM page_chunks GROUP BY page_id)`
 
 // IndexHealth is a corpus-wide (NOT user-scoped) snapshot of index health, for
 // the background sweep's log line and ops/observability. ModelDriftChunks counts
@@ -54,7 +69,7 @@ const chunkAggCTE = `pc AS (SELECT page_id, count(*) AS cnt, max(updated_at) AS 
 // legacy blank-model rows) — the signal for "a re-embed against the live model is pending".
 type IndexHealth struct {
 	ContentPages     int // pages with non-empty body
-	IndexedPages     int // pages with ≥1 chunk
+	IndexedPages     int // pages with indexable content that have been indexed
 	StalePages       int // non-empty pages with a missing or out-of-date index
 	Chunks           int // total chunk rows
 	ModelDriftChunks int // chunks on a non-current, non-legacy model
@@ -68,7 +83,7 @@ func (s *Service) IndexHealth(ctx context.Context) (IndexHealth, error) {
 		WITH `+chunkAggCTE+`
 		SELECT
 		  count(p.id) FILTER (WHERE `+hasIndexableBody+`)      AS content_pages,
-		  count(p.id) FILTER (WHERE pc.cnt IS NOT NULL)        AS indexed_pages,
+		  count(p.id) FILTER (WHERE `+hasIndexableBody+` AND p.indexed_at IS NOT NULL) AS indexed_pages,
 		  count(p.id) FILTER (WHERE `+staleExpr+`)             AS stale_pages
 		  FROM pages p
 		  LEFT JOIN pc ON pc.page_id = p.id
@@ -123,10 +138,10 @@ func (s *Service) Freshness(ctx context.Context, userID int64) ([]SpaceFreshness
 		     `+chunkAggCTE+`
 		SELECT sp.id, sp.name,
 		       count(p.id) AS pages,
-		       count(p.id) FILTER (WHERE pc.cnt IS NOT NULL) AS indexed_pages,
+		       count(p.id) FILTER (WHERE `+hasIndexableBody+` AND p.indexed_at IS NOT NULL) AS indexed_pages,
 		       count(p.id) FILTER (WHERE `+staleExpr+`) AS stale_pages,
 		       coalesce(sum(pc.cnt), 0) AS chunk_count,
-		       coalesce(max(pc.idx), '') AS last_indexed
+		       coalesce(max(p.indexed_at), '') AS last_indexed
 		  FROM acc
 		  JOIN spaces sp ON sp.id = acc.space_id
 		  LEFT JOIN pages p ON p.space_id = sp.id AND p.deleted_at IS NULL
@@ -156,11 +171,11 @@ func (s *Service) SpacePageFreshness(ctx context.Context, userID, spaceID int64)
 		WITH acc AS (SELECT DISTINCT space_id FROM space_access WHERE user_id = $1),
 		     `+chunkAggCTE+`
 		SELECT p.id, p.title, coalesce(pc.cnt, 0) AS chunk_count,
-		       p.updated_at, coalesce(pc.idx, '') AS last_indexed,
+		       p.updated_at, coalesce(p.indexed_at, '') AS last_indexed,
 		       CASE
 		         WHEN NOT (`+hasIndexableBody+`) THEN 'empty'
-		         WHEN pc.cnt IS NULL THEN 'unindexed'
-		         WHEN p.updated_at > pc.idx THEN 'stale'
+		         WHEN p.indexed_at IS NULL THEN 'unindexed'
+		         WHEN p.updated_at > p.indexed_at OR pc.unembedded > 0 THEN 'stale'
 		         ELSE 'fresh'
 		       END AS status
 		  FROM pages p

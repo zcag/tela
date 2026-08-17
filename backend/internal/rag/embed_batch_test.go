@@ -17,6 +17,7 @@ type batchServer struct {
 	*httptest.Server
 	requests  int
 	batchSize []int // inputs per request, in order
+	dims      int   // vector width; 0 → 2, enough for tests that never store them
 }
 
 func newBatchServer(t *testing.T, ollamaShape bool) *batchServer {
@@ -37,9 +38,14 @@ func newBatchServer(t *testing.T, ollamaShape bool) *batchServer {
 		bs.requests++
 		bs.batchSize = append(bs.batchSize, len(many))
 
+		dims := bs.dims
+		if dims == 0 {
+			dims = 2
+		}
 		rows := make([][]float32, len(many))
 		for i := range many {
-			rows[i] = []float32{float32(i), 0.5}
+			rows[i] = make([]float32, dims)
+			rows[i][0], rows[i][dims-1] = float32(i), 0.5
 		}
 		if ollamaShape {
 			_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": rows})
