@@ -97,6 +97,10 @@ export interface AtlasProject {
   // Generated sources whose upstream has moved past what's published (drift
   // detection); 0 when everything's in sync. Distinct from last_run status.
   stale_sources: number
+  // Sources the drift probe currently can't reach (deleted repo, dead
+  // credential). Outranks stale_sources in the UI: unreachable isn't a degree of
+  // staleness, it's not knowing.
+  unreachable_sources: number
   last_run: AtlasLastRun | null
   created_at: string
   can_manage: boolean
@@ -126,6 +130,10 @@ export interface AtlasSource {
   // Drift: a timestamp when detection has seen upstream move past the last
   // generated ref; absent/'' when the docs match upstream.
   stale_since?: string
+  // Why the last drift probe failed; absent/'' when it succeeded. Set means
+  // upstream is unreachable, which must be shown ABOVE staleness and above the
+  // last run's status — that run may have succeeded weeks before the source died.
+  probe_error?: string
   last_run_id?: number
   last_run_status?: AtlasRunStatus
   last_must_rate?: number

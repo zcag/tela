@@ -3,9 +3,8 @@ package api
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
-
-	"github.com/zcag/tela/backend/internal/atlas/engine"
 )
 
 // The scheduler runs two decoupled passes off a 1-minute base tick:
@@ -143,27 +142,54 @@ func (m *atlasManager) detectStaleness(ctx context.Context) {
 // first time a probe sees upstream past `ref` (preserved across probes until a
 // regen clears it), cleared when a probe sees them back in sync. checked_at is
 // always stamped so a broken source isn't re-hammered every minute.
+//
+// A FAILED probe records why in probe_error, which is what the UI renders as
+// "Unreachable". It deliberately leaves stale_since alone: a probe that couldn't
+// reach upstream knows nothing about drift, and "unknown" must not be written as
+// either in-sync or behind. Both success paths clear probe_error, so a source
+// that comes back stops being reported.
 func (m *atlasManager) probeStaleness(ctx context.Context, sourceID int64) {
 	src, err := m.loadSource(ctx, sourceID)
 	if err != nil {
 		return
 	}
-	has, herr := engine.HasChanges(ctx, m.resolveCoreSource(ctx, src), src.Ref)
+	has, herr := m.hasChanges(ctx, m.resolveCoreSource(ctx, src), src.Ref)
 	if herr != nil {
 		slog.Warn("atlas: detection probe failed", "source", sourceID, "err", herr)
-		_, _ = m.s.DB.ExecContext(ctx, `UPDATE atlas_sources SET upstream_checked_at = tela_now() WHERE id = $1`, sourceID)
+		_, _ = m.s.DB.ExecContext(ctx,
+			`UPDATE atlas_sources SET upstream_checked_at = tela_now(), probe_error = $2 WHERE id = $1`,
+			sourceID, probeErrText(herr))
 		return
 	}
 	if has {
 		_, _ = m.s.DB.ExecContext(ctx,
 			`UPDATE atlas_sources
-			    SET upstream_checked_at = tela_now(),
+			    SET upstream_checked_at = tela_now(), probe_error = '',
 			        stale_since = CASE WHEN stale_since = '' THEN tela_now() ELSE stale_since END
 			  WHERE id = $1`, sourceID)
 	} else {
 		_, _ = m.s.DB.ExecContext(ctx,
-			`UPDATE atlas_sources SET upstream_checked_at = tela_now(), stale_since = '' WHERE id = $1`, sourceID)
+			`UPDATE atlas_sources SET upstream_checked_at = tela_now(), probe_error = '', stale_since = '' WHERE id = $1`, sourceID)
 	}
+}
+
+// atlasProbeErrMax caps a stored probe error. The text is shown to the source's
+// owner verbatim, and git happily returns several lines of remote output.
+const atlasProbeErrMax = 500
+
+// probeErrText renders a probe failure for storage. Secrets are already redacted
+// upstream (the git connector scrubs the auth'd URL out of command output; jira
+// auth rides a header, never the error), so this only trims and truncates.
+// Never returns "" for a non-nil error — '' is the column's "probe succeeded".
+func probeErrText(err error) string {
+	s := strings.TrimSpace(err.Error())
+	if s == "" {
+		return "probe failed"
+	}
+	if len(s) > atlasProbeErrMax {
+		s = strings.TrimSpace(s[:atlasProbeErrMax]) + "…"
+	}
+	return s
 }
 
 // scheduledAtlasAllowed reports whether the account's plan includes scheduled

@@ -38,8 +38,20 @@ function headerState(project: AtlasProjectT): { tone: Tone; label: string } {
   if (r.status === 'pending') return { tone: 'info', label: 'Queued' }
   if (r.status === 'running') return { tone: 'running', label: 'Generating' }
   if (r.status === 'failed') return { tone: 'negative', label: 'Failed' }
+  // Ahead of Stale, and ahead of the Fresh a finished run would otherwise earn:
+  // a project whose sources can't be reached is not fresh, it's out of contact.
+  if (project.unreachable_sources > 0) return { tone: 'negative', label: 'Unreachable' }
   if (project.stale_sources > 0) return { tone: 'warning', label: 'Stale' }
   return { tone: 'positive', label: 'Fresh' }
+}
+
+// "all in sync" is a claim about upstream — only sayable when every source was
+// actually reached. Unreachable ones are reported first, since the drift count
+// can't include them.
+function sourcesSub(project: AtlasProjectT): string {
+  if (project.unreachable_sources > 0) return `${project.unreachable_sources} unreachable`
+  if (project.stale_sources > 0) return `${project.stale_sources} behind upstream`
+  return 'all in sync'
 }
 
 export function AtlasProject() {
@@ -119,7 +131,7 @@ export function AtlasProject() {
 
       {/* stats strip */}
       <div className="mt-[var(--space-5)] grid grid-cols-2 gap-[var(--space-3)] sm:grid-cols-4">
-        <StatTile label="Sources" value={String(sources.length)} sub={project.stale_sources > 0 ? `${project.stale_sources} behind upstream` : 'all in sync'} />
+        <StatTile label="Sources" value={String(sources.length)} sub={sourcesSub(project)} />
         <StatTile label="Pages" value={totalPages ? String(totalPages) : '—'} sub="generated docs" />
         <StatTile label="Must-cover" value={minMust != null ? `${Math.round(minMust * 100)}%` : '—'} sub={mustRates.length > 1 ? 'lowest source' : 'critical surface'} />
         <StatTile label="Last built" value={project.last_refresh_at ? fmtRelative(project.last_refresh_at) : '—'} sub={schedule} />
@@ -191,7 +203,11 @@ function SourceCard({ s, projectId, canManage, space }: { s: AtlasSource; projec
   const sync = useSyncSource(projectId)
   const del = useDeleteSource(projectId)
   const busy = run.isPending || sync.isPending
-  const stale = !!s.stale_since && s.last_run_status === 'done'
+  // Unreachable outranks everything: the probe can't see upstream, so neither
+  // "Stale" nor the last run's status describes the source any more. A dead
+  // credential should look dead, not like a successful run from three weeks ago.
+  const unreachable = !!s.probe_error
+  const stale = !unreachable && !!s.stale_since && s.last_run_status === 'done'
   const short = s.ref ? s.ref.slice(0, 7) : null
 
   async function doRun() {
@@ -210,7 +226,9 @@ function SourceCard({ s, projectId, canManage, space }: { s: AtlasSource; projec
           <div className="flex items-center gap-[var(--space-2)]">
             {s.type === 'jira' ? <Layers className="size-[var(--space-4)] text-[var(--text-muted)]" /> : <FolderGit2 className="size-[var(--space-4)] text-[var(--text-muted)]" />}
             <span className="truncate text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]">{s.name}</span>
-            {stale ? (
+            {unreachable ? (
+              <StatusBadge tone="negative" title={s.probe_error}>Unreachable</StatusBadge>
+            ) : stale ? (
               <StatusBadge tone="warning">Stale</StatusBadge>
             ) : s.last_run_status ? (
               <StatusBadge tone={runTone(s.last_run_status)} dot={s.last_run_status === 'running'}>{runLabel(s.last_run_status)}</StatusBadge>
@@ -239,6 +257,15 @@ function SourceCard({ s, projectId, canManage, space }: { s: AtlasSource; projec
           </div>
         )}
       </div>
+
+      {/* The badge alone can't say WHY (and there's no hover on touch), so the
+          probe's own words go in the card — that text is what tells you the repo
+          was deleted vs the token expired. */}
+      {unreachable && (
+        <p className="mt-[var(--space-3)] border-t border-[var(--border-subtle)] pt-[var(--space-3)] font-[family-name:var(--font-mono)] text-[length:var(--text-xs)] text-[var(--accent-negative-fg)]">
+          {s.probe_error}
+        </p>
+      )}
 
       {s.last_run_id ? (
         <div className="mt-[var(--space-3)] flex flex-wrap gap-x-[var(--space-6)] gap-y-[var(--space-2)] border-t border-[var(--border-subtle)] pt-[var(--space-3)]">

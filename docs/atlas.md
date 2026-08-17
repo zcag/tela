@@ -19,7 +19,7 @@ The "space *is* the project / no `projects` table" design below was **superseded
 ### Model & data (added migrations)
 - **`atlas_projects`** — `name, owner_kind ('user'|'org'), owner_id, output_space_id, output_parent_page_id, cadence, auto_update`. A project owns its output destination + schedule.
 - **`atlas_credentials`** — `owner_kind, owner_id, name, kind ('git'|'jira'), value, meta_json`. The token **value is write-only** (blanked on every read DTO); owner-scoped like projects.
-- **`atlas_sources`** — `project_id (FK), cred_id (nullable FK), …, stale_since, upstream_checked_at`. Belongs to a project, optionally binds a credential.
+- **`atlas_sources`** — `project_id (FK), cred_id (nullable FK), …, stale_since, upstream_checked_at, probe_error`. Belongs to a project, optionally binds a credential.
 - **`atlas_page_map`** — `(source_id, slug) → page_id`; the publisher's stable mapping for upsert + publish-prune (replaces atlas's `page_deliveries`).
 - Run/ingestion tables (`atlas_runs`, `atlas_run_events`, `atlas_files`, `atlas_symbols`, `atlas_chunks`) are as in the design below.
 
@@ -44,6 +44,8 @@ The outline plans deterministic **reference pages** per spine kind that enumerat
 
 ### Freshness / staleness — `atlas_scheduler.go`, `source/jira`
 `detectStaleness` runs cheap no-clone `HasChanges` probes every 15 min and stamps `stale_since`; `pollRegen` regenerates only stale sources on the project cadence (a delta). **Jira change detection compares instants in Go** (`latestUpdated` vs the stored ref, normalized to UTC) — *not* a JQL `updated >= <literal>` probe, which reads the literal in the **instance timezone** and (with a UTC-formatted ref) perpetually re-matched the ref's own boundary issue → false "stale". `Delta` keeps the JQL as a timezone-approximate superset but trims to issues truly updated after the ref. Git uses exact-SHA `ls-remote` compare (immune).
+
+**A failed probe is a state, not just a log line** (`probe_error`, migration `0077`). The failure path used to stamp `upstream_checked_at` and return, so an unreachable source was indistinguishable from a healthy one: every surface — the source badge, `stale_sources`, the project header, the Atlas home cards, `digestStale` — decided from `stale_since` alone, and a probe that can't reach upstream never sets it. Measured before the fix: 7 live sources failing every cycle for weeks (6 deleted repos + one expired PAT), 5 rendering **Done** and 2 (flagged stale *before* they broke) frozen on **Stale** forever. `probeStaleness` now writes the error into `atlas_sources.probe_error` and clears it on both success paths; **`stale_since` is deliberately untouched on failure** — an unreachable probe knows nothing about drift, and writing either answer would be a guess. The UI ranks **Unreachable above Stale and above the last run's status**, per-source and per-project, because a run that succeeded three weeks ago says nothing about a source that has since disappeared. Storing the text is safe because the git connector already redacts credentials from command output and jira auth rides a header; `probeErrText` only trims and bounds it.
 
 ---
 

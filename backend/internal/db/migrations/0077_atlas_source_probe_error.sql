@@ -1,0 +1,24 @@
+-- 0077_atlas_source_probe_error.sql — record WHY a drift probe failed, so an
+-- unreachable source stops rendering as an up-to-date one.
+--
+-- The 15-min detection probe (atlas_scheduler.go probeStaleness) wrote a failure
+-- to a log line and nowhere else: it stamped upstream_checked_at and returned.
+-- Every surface in the product then decided what to show from `stale_since`
+-- alone — the source badge, the project's stale_sources count, the project
+-- header, the Atlas home cards, the weekly digest — so a source whose last real
+-- RUN succeeded and whose PROBE has been failing since read exactly like a
+-- source that is fine. Unreachable and up-to-date were the same pixel.
+--
+-- Measured on the live instance before this: 7 sources failing every cycle for
+-- weeks (~96 probes/day each) — 6 deleted repos and one user's expired PAT.
+-- Five rendered "Done"; the two that had been flagged stale before they broke
+-- rendered "Stale" forever, which is a different lie ("regenerate me" when the
+-- truth is "I can't reach you"), and no user action could clear it.
+--
+-- Same class as page_summaries/file_summaries/page_agreement.last_error, and
+-- named probe_error rather than last_error because a *run's* error already has
+-- a home (atlas_runs.err) and the two must not be confused.
+--
+-- '' = the last probe succeeded (or none has run yet). Cleared on every probe
+-- success, so a source that comes back stops being reported as unreachable.
+ALTER TABLE atlas_sources ADD COLUMN probe_error TEXT NOT NULL DEFAULT '';

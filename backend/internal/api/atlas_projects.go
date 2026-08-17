@@ -146,6 +146,11 @@ type atlasProjectDTO struct {
 	NextDue            string         `json:"next_due,omitempty"`
 	SourcesCount       int            `json:"sources_count"`
 	StaleSources       int            `json:"stale_sources"` // generated sources now behind upstream
+	// UnreachableSources is how many sources the drift probe currently can't reach
+	// (deleted repo, dead credential). Counted separately from StaleSources — and
+	// shown ahead of it — because a project whose sources are all unreachable was
+	// otherwise indistinguishable from a fresh one on this list.
+	UnreachableSources int `json:"unreachable_sources"`
 	LastRun            *atlasLastRun  `json:"last_run"`
 	CreatedAt          string         `json:"created_at"`
 	CanManage          bool           `json:"can_manage"`
@@ -166,6 +171,7 @@ const atlasProjectSelect = `
 	       p.output_parent_page_id, p.cadence, p.auto_update, p.last_refresh_at, p.created_at,
 	       (SELECT count(*) FROM atlas_sources s WHERE s.project_id = p.id),
 	       (SELECT count(*) FROM atlas_sources s WHERE s.project_id = p.id AND s.stale_since <> '' AND s.ref <> ''),
+	       (SELECT count(*) FROM atlas_sources s WHERE s.project_id = p.id AND s.probe_error <> ''),
 	       lr.id, lr.status, lr.coverage_json
 	  FROM atlas_projects p
 	  LEFT JOIN spaces sp ON sp.id = p.output_space_id
@@ -184,7 +190,7 @@ func scanProjectDTO(sc interface{ Scan(...any) error }) (atlasProjectDTO, error)
 	var cadence, lastRefresh string
 	if err := sc.Scan(&d.ID, &d.Name, &d.Owner.Kind, &d.Owner.ID, &ownerName,
 		&spaceID, &spaceName, &parent, &cadence, &auto, &lastRefresh, &d.CreatedAt,
-		&d.SourcesCount, &d.StaleSources, &lastRunID, &lastStatus, &covJSON); err != nil {
+		&d.SourcesCount, &d.StaleSources, &d.UnreachableSources, &lastRunID, &lastStatus, &covJSON); err != nil {
 		return d, err
 	}
 	d.Owner.Name = ownerName.String

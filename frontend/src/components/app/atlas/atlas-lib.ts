@@ -65,8 +65,10 @@ export function runLabel(s?: AtlasRunStatus | null): string {
 }
 
 // Freshness of a project, from its last run + schedule — the home/console hero
-// signal (not coverage). 'never' when it has no runs yet.
-export type Freshness = 'never' | 'running' | 'fresh' | 'failed' | 'pending' | 'stale'
+// signal (not coverage). 'never' when it has no runs yet. 'unreachable' means the
+// drift probe can't see upstream at all, which outranks both 'stale' and the
+// 'fresh' a long-finished run would otherwise claim.
+export type Freshness = 'never' | 'running' | 'fresh' | 'failed' | 'pending' | 'stale' | 'unreachable'
 export function freshnessTone(f: Freshness): Tone {
   switch (f) {
     case 'fresh':
@@ -74,6 +76,7 @@ export function freshnessTone(f: Freshness): Tone {
     case 'running':
       return 'running'
     case 'failed':
+    case 'unreachable':
       return 'negative'
     case 'stale':
       return 'warning'

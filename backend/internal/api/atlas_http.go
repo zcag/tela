@@ -51,6 +51,10 @@ type atlasSourceDTO struct {
 	// Drift: set (a timestamp) when detection has seen upstream move past `ref`
 	// since the last generation; '' when the docs match upstream.
 	StaleSince string `json:"stale_since,omitempty"`
+	// Why the last drift probe failed; '' when it succeeded. Set means upstream is
+	// unreachable (deleted repo, dead credential), which the UI must show ABOVE
+	// staleness — a source that can't be reached has an unknown, not fresh, state.
+	ProbeError string `json:"probe_error,omitempty"`
 	// Latest-run summary (nil when never run), for the sources list.
 	LastRunID       *int64   `json:"last_run_id,omitempty"`
 	LastRunStatus   string   `json:"last_run_status,omitempty"`
@@ -62,7 +66,7 @@ type atlasSourceDTO struct {
 
 const atlasSourceDTOSelect = `
 	SELECT s.id, s.project_id, s.cred_id, s.type, s.location, s.name, s.ref, s.branch, s.subpath,
-	       s.include, s.exclude, s.created_at, s.stale_since,
+	       s.include, s.exclude, s.created_at, s.stale_since, s.probe_error,
 	       lr.id, lr.status, lr.coverage_json, lr.stats_json, lr.finished_at
 	  FROM atlas_sources s
 	  LEFT JOIN LATERAL (
@@ -74,7 +78,7 @@ func scanSourceDTO(sc interface{ Scan(...any) error }) (atlasSourceDTO, error) {
 	var cred, lastRunID sql.NullInt64
 	var lastStatus, covJSON, statsJSON, finishedAt sql.NullString
 	if err := sc.Scan(&d.ID, &d.ProjectID, &cred, &d.Type, &d.Location, &d.Name, &d.Ref, &d.Branch,
-		&d.Subpath, &d.Include, &d.Exclude, &d.CreatedAt, &d.StaleSince,
+		&d.Subpath, &d.Include, &d.Exclude, &d.CreatedAt, &d.StaleSince, &d.ProbeError,
 		&lastRunID, &lastStatus, &covJSON, &statsJSON, &finishedAt); err != nil {
 		return d, err
 	}

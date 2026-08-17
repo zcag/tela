@@ -33,6 +33,11 @@ function freshnessOf(p: AtlasProject): { f: Freshness; label: string } {
     case 'failed':
       return { f: 'failed', label: 'Failed' }
     case 'done':
+      // Checked before staleness: an unreachable source can't report drift, so
+      // stale_sources stays 0 and the card would otherwise read Fresh forever.
+      if (p.unreachable_sources > 0) {
+        return { f: 'unreachable', label: `${p.unreachable_sources} unreachable` }
+      }
       if (p.stale_sources > 0) {
         return { f: 'stale', label: p.last_refresh_at ? `Stale · built ${fmtRelative(p.last_refresh_at)}` : 'Stale' }
       }
@@ -79,11 +84,12 @@ export function AtlasHome() {
   }, [me, orgs])
 
   const counts = useMemo(() => {
-    const c = { fresh: 0, running: 0, failed: 0, stale: 0 }
+    const c = { fresh: 0, running: 0, failed: 0, stale: 0, unreachable: 0 }
     for (const p of projects) {
       const { f } = freshnessOf(p)
       if (f === 'fresh') c.fresh++
       else if (f === 'stale') c.stale++
+      else if (f === 'unreachable') c.unreachable++
       else if (f === 'running' || f === 'pending') c.running++
       else if (f === 'failed') c.failed++
     }
@@ -100,7 +106,7 @@ export function AtlasHome() {
           <p className="mt-[var(--space-2)] text-[length:var(--text-sm)] text-[var(--text-muted)]">
             {projects.length === 0
               ? 'Living documentation, generated from your systems and kept current.'
-              : `${projects.length} project${projects.length === 1 ? '' : 's'} · ${counts.fresh} fresh${counts.stale ? ` · ${counts.stale} stale` : ''}${counts.running ? ` · ${counts.running} generating` : ''}${counts.failed ? ` · ${counts.failed} failed` : ''}`}
+              : `${projects.length} project${projects.length === 1 ? '' : 's'} · ${counts.fresh} fresh${counts.stale ? ` · ${counts.stale} stale` : ''}${counts.unreachable ? ` · ${counts.unreachable} unreachable` : ''}${counts.running ? ` · ${counts.running} generating` : ''}${counts.failed ? ` · ${counts.failed} failed` : ''}`}
           </p>
           {/* Account-level, because the budget is per account: a user with three
               projects cannot tell from any one of them whether the total fits. */}

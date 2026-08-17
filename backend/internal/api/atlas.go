@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/zcag/tela/backend/internal/atlas/core"
+	"github.com/zcag/tela/backend/internal/atlas/engine"
 	atlasllm "github.com/zcag/tela/backend/internal/atlas/llm"
 	atlasstore "github.com/zcag/tela/backend/internal/atlas/store"
 	"github.com/zcag/tela/backend/internal/auth"
@@ -47,16 +48,21 @@ type atlasManager struct {
 	// paused is the admin AI kill-switch, shared with the other background
 	// workers; the freshness scheduler skips a tick while it's true.
 	paused func() bool
+
+	// hasChanges is the drift probe (engine.HasChanges), behind a field so the
+	// scheduler's failure bookkeeping is testable without a real remote.
+	hasChanges func(context.Context, core.Source, string) (bool, error)
 }
 
 func newAtlasManager(s *Server) *atlasManager {
 	return &atlasManager{
-		s:        s,
-		store:    atlasstore.New(s.DB),
-		hub:      newAtlasHub(),
-		active:   map[int64]context.CancelFunc{},
-		maxRuns:  atlasMaxConcurrentRuns(),
-		dispatch: make(chan struct{}, 1),
+		s:          s,
+		store:      atlasstore.New(s.DB),
+		hub:        newAtlasHub(),
+		active:     map[int64]context.CancelFunc{},
+		maxRuns:    atlasMaxConcurrentRuns(),
+		dispatch:   make(chan struct{}, 1),
+		hasChanges: engine.HasChanges,
 	}
 }
 
