@@ -259,7 +259,11 @@ landing-dev:
 landing-build:
 	cd landing && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && npm run build
 
-landing-gate:
+# Depends on landing-build: the gate's Lighthouse pass runs against `astro preview`,
+# which serves dist/ and never rebuilds. Without this, the gate silently grades a
+# STALE build — it can pass on output that predates your edit, or keep failing on a
+# defect you already fixed.
+landing-gate: landing-build
 	cd landing && npm run gate
 
 landing-clean:

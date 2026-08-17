@@ -97,7 +97,10 @@
   --cta-ghost-border: var(--border-strong);
   --code-bg:       var(--surface-sunk);
   --code-fg:       var(--fg);
-  --code-token:    var(--indigo-text);   /* keyword / key highlight in code */
+  /* --indigo-bright, not --indigo-text: on the code well (--ink-200) the text
+     indigo is only 4.35:1, just under AA for the 12px mono. Bright clears it in
+     both themes (5.7:1 dark, 7.2:1 light). */
+  --code-token:    var(--indigo-bright); /* keyword / key highlight in code */
   --code-string:   var(--cyan-accent);   /* string / value highlight */
   --link:          var(--brand);
   --selection-bg:  var(--indigo-wash);

@@ -179,7 +179,9 @@ const tree = [
     color: var(--brand-fg);
     border: 2px solid var(--surface);
   }
-  .av1 { background: var(--brand); }
+  /* --cta-bg (not --brand): --brand is the *text* role and is too light to carry
+     white text at 10px (3.7:1). --cta-bg is the fill role, paired with --brand-fg. */
+  .av1 { background: var(--cta-bg); }
   .av2 { background: var(--accent); color: var(--accent-fg); margin-left: -7px; }
 
   .prose { color: var(--fg-soft); line-height: var(--leading-normal); }
