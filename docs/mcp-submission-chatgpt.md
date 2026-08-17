@@ -13,8 +13,11 @@
 > - **The listing is frozen once released** — the dashboard only edits *draft* versions,
 >   so changing any listed field costs a new version + another review cycle. The branding
 >   URLs point at our own domain, so fixing *those* needs only a landing deploy.
->   `demo_recording_url` (`https://telawiki.com/demo.mp4`) is **still a dead URL** —
->   harmless today (reviewer-facing, review passed) but must be real before a resubmission.
+>   `demo_recording_url` (`https://telawiki.com/demo.mp4`) is a dead URL and **that is a
+>   deliberate non-issue** (Cagdas, 2026-08-17) — it is reviewer-facing, review already
+>   passed, and nothing user-visible depends on it. Don't re-raise it. Only relevant if a
+>   future version bump actually triggers a re-review, and then only as a "record a demo"
+>   task, not a defect.
 
 Submission payload, asset plan, and resolved research questions for publishing the
 tela MCP server (`https://telawiki.com/api/mcp`) in the ChatGPT app directory via
