@@ -235,17 +235,20 @@ func (s *Server) seedPersonalWelcomePage(ctx context.Context, userID int64, user
 }
 
 // personalWelcomeBody is the personal space's starter page: welcomePageBody's
-// counterpart in the same voice, solo instead of team, naming the two things
-// nobody discovers on their own (Ask and MCP). The docs link is the canonical
-// public one — frontend/src/lib/docs.ts holds the same URL for the UI.
+// counterpart in the same voice, solo instead of team. Every claim in it is
+// checked against the live product — the shortcuts are real registry bindings
+// (lib/keys/bindings.ts: `c` = create, `?` = cheatsheet, `g a` = Ask), and Ask,
+// page share links and Atlas all work on the free plan, so nothing here goes
+// stale when the 30-day trial lapses. The docs link is the canonical public one
+// (frontend/src/lib/docs.ts holds the same URL for the UI).
 func personalWelcomeBody() string {
-	return "This is your personal space — private, only you can see it. Everything in tela is a markdown page in a tree, so start anywhere and move it later.\n\n" +
+	return "This is your personal space — private, and yours alone. Everything in tela is a markdown page in a tree, so start anywhere and move things later.\n\n" +
 		"## Three things worth two minutes\n\n" +
-		"- Press **Ctrl/⌘ N** to create a page. Link pages with `[[Page Title]]` — backlinks and the graph build themselves.\n" +
-		"- **Ask** answers questions across everything you've written, with citations back to the page. Try it once you have a few pages in here.\n" +
-		"- Point your assistant at tela over **MCP** and Claude or ChatGPT can read and write these pages directly — [setup here](https://telawiki.com/tela/docs/211/agents-mcp).\n\n" +
+		"- Press **c** to make a page — **?** lists every shortcut. Link pages with `[[Page Title]]` and the backlinks and the graph build themselves.\n" +
+		"- **Ask** (**g** then **a**) answers questions across everything you've written, and cites the pages it drew on. Worth a try once a few pages are in here.\n" +
+		"- Point your assistant at tela over **MCP** and Claude or ChatGPT can read and write these pages directly — [setup takes a minute](https://telawiki.com/tela/docs/211/agents-mcp).\n\n" +
 		"## When it stops being just notes\n\n" +
-		"Make a space for a project or a team and invite people. Publish any page to a public link. Point **Atlas** at a repo and it keeps a set of pages current on its own.\n\n" +
+		"Make a space for a project or a team and invite people into it. Share any page by link when someone outside needs to read it. Point **Atlas** at a repo and it writes a set of pages about the code for you.\n\n" +
 		"Delete this page whenever you're ready — it won't be missed.\n"
 }
 
