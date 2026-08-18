@@ -76,7 +76,8 @@ function readRouteContext(): {
 //    search (via useTier2SearchResults), then dedupes tier-2 against tier-1
 //  - recently-viewed snapshot for the empty-state list
 //  - CommandContext + command-registry materialization
-//  - M4.2 new-page dialog bridge (Cmd-N + sidebar "+ New page" + command)
+//  - M4.2 new-page dialog bridge (sidebar "New…" + the `c` keymap binding
+//    + the command palette; NOT Cmd-N, which browsers never deliver)
 //
 // Sits outside RouterProvider in App.tsx (sibling to it), so navigation goes
 // through the imported `router` instance rather than useNavigate. Lives inside
@@ -191,7 +192,6 @@ export function AppCommandHost() {
   usePaletteShortcuts({
     onOpenPages: () => openWith('pages'),
     onOpenCommands: () => openWith('commands'),
-    onNewPage: () => openNewPage(),
   })
 
   const ctx = useMemo<CommandContext>(
@@ -434,7 +434,7 @@ export function AppCommandHost() {
           setNewPageOpen(next)
           if (!next) {
             // Clear the pre-fill on close so the next open from a non-prefill
-            // path (sidebar button, Cmd-N) doesn't surface the stale title.
+            // path (sidebar button, `c`) doesn't surface the stale title.
             setNewPageDefaults((prev) => ({ ...prev, title: '' }))
           }
         }}

@@ -55,7 +55,9 @@ export function Sidebar({
   const activeRow =
     'bg-[var(--sidebar-item-active)] text-[var(--accent)] font-medium shadow-[inset_2px_0_0_0_var(--sidebar-item-active-bar)]'
 
-  const newPageShortcut = IS_MAC ? '⌘N' : 'Ctrl+N'
+  // 'c', not Ctrl/⌘-N: browsers claim Ctrl/⌘-N for a new window before the page
+  // sees the keydown, so the modifier chord never reaches us. See lib/keys/bindings.
+  const newPageShortcut = 'c'
   const searchShortcut = IS_MAC ? '⌘K' : 'Ctrl+K'
 
   return (
@@ -115,9 +117,8 @@ export function Sidebar({
             <span className="flex-1 text-left">Ask</span>
           </Link>
         </Button>
-        {/* New page (one of the two most-used actions) keeps its ⌘N global
-            shortcut; the menu just folds New space in beside it so the nav
-            carries a single create affordance. */}
+        {/* New page is one of the two most-used actions; the menu folds New
+            space in beside it so the nav carries a single create affordance. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

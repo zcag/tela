@@ -198,7 +198,7 @@ func (s *Server) seedWelcomePage(ctx context.Context, u *auth.User, sp models.Sp
 func welcomePageBody(spaceName string) string {
 	return "This is the home of **" + spaceName + "**. A space is a tree of markdown pages your team writes and edits together.\n\n" +
 		"## Getting started\n\n" +
-		"- Press **Ctrl/⌘ N** to create a page, or use the **New page** button in the sidebar.\n" +
+		"- Press **c** to create a page, or use **New…** in the sidebar. **?** lists every shortcut.\n" +
 		"- Link pages with `[[Page Title]]` — backlinks and the graph build themselves.\n" +
 		"- Star a page to pin it to your sidebar and home dashboard.\n" +
 		"- Share a page publicly from its visibility menu when you need a link.\n\n" +
