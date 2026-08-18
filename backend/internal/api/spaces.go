@@ -234,21 +234,34 @@ func (s *Server) seedPersonalWelcomePage(ctx context.Context, userID int64, user
 	}
 }
 
+// Canonical public docs links, in the /{handle}/{space-slug}/{id}/{slug} form —
+// the id resolves the page, so renaming a doc never breaks these. Mirrors
+// frontend/src/lib/docs.ts, which holds the same URLs for the UI; they point at
+// the public docs on telawiki.com so they work for self-hosted instances too.
+const (
+	docsHome    = "https://telawiki.com/tela/docs"
+	docsStarted = docsHome + "/207/getting-started"
+	docsMCP     = docsHome + "/211/agents-mcp"
+	docsAtlas   = docsHome + "/813/atlas-automated-documentation"
+)
+
 // personalWelcomeBody is the personal space's starter page: welcomePageBody's
 // counterpart in the same voice, solo instead of team. Every claim in it is
 // checked against the live product — the shortcuts are real registry bindings
 // (lib/keys/bindings.ts: `c` = create, `?` = cheatsheet, `g a` = Ask), and Ask,
 // page share links and Atlas all work on the free plan, so nothing here goes
-// stale when the 30-day trial lapses. The docs link is the canonical public one
-// (frontend/src/lib/docs.ts holds the same URL for the UI).
+// stale when the 30-day trial lapses. Each feature it names links to its doc,
+// so the page doubles as a way in to the docs.
 func personalWelcomeBody() string {
 	return "This is your personal space — private, and yours alone. Everything in tela is a markdown page in a tree, so start anywhere and move things later.\n\n" +
 		"## Three things worth two minutes\n\n" +
 		"- Press **c** to make a page — **?** lists every shortcut. Link pages with `[[Page Title]]` and the backlinks and the graph build themselves.\n" +
 		"- **Ask** (**g** then **a**) answers questions across everything you've written, and cites the pages it drew on. Worth a try once a few pages are in here.\n" +
-		"- Point your assistant at tela over **MCP** and Claude or ChatGPT can read and write these pages directly — [setup takes a minute](https://telawiki.com/tela/docs/211/agents-mcp).\n\n" +
+		"- Point your assistant at tela over **MCP** and Claude or ChatGPT can read and write these pages directly — [setup takes a minute](" + docsMCP + ").\n\n" +
 		"## When it stops being just notes\n\n" +
-		"Make a space for a project or a team and invite people into it. Share any page by link when someone outside needs to read it. Point **Atlas** at a repo and it writes a set of pages about the code for you.\n\n" +
+		"Make a space for a project or a team and invite people into it. Share any page by link when someone outside needs to read it. Point [**Atlas**](" + docsAtlas + ") at a repo or a Jira project and it writes a set of pages about it for you.\n\n" +
+		"> [!TIP]\n" +
+		"> More detail lives in the [docs](" + docsHome + ") — also the **Docs** link in the sidebar. [Getting Started](" + docsStarted + ") is the tour, and there's a page per feature.\n\n" +
 		"Delete this page whenever you're ready — it won't be missed.\n"
 }
 
