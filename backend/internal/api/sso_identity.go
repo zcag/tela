@@ -62,8 +62,10 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 
 	// Post-commit, idempotent, best-effort — mirrors VerifyEmail. A hiccup here
 	// must not strand a freshly authenticated user, so failures are logged.
-	if _, err := EnsurePersonalSpace(ctx, s.DB, userID, username); err != nil {
+	if spaceID, err := EnsurePersonalSpace(ctx, s.DB, userID, username); err != nil {
 		slog.Error("sso: personal space provisioning", "user_id", userID, "username", username, "err", err)
+	} else {
+		s.seedPersonalWelcomePage(ctx, userID, username, spaceID)
 	}
 	if id.email != "" {
 		applyAutoJoin(ctx, s.DB, userID, id.email)

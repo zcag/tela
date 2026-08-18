@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -58,8 +59,16 @@ func tokenFromMessage(t *testing.T, msg mailer.Message) string {
 }
 
 // newAuthServer wires the canonical handler but swaps in a capturing mailer so
-// tests can read the emailed links. Returns the server, db, and the mailer.
+// tests can read the emailed links.
 func newAuthServer(t *testing.T) (*httptest.Server, *captureMailer) {
+	t.Helper()
+	ts, cm, _, _ := newAuthServerFull(t)
+	return ts, cm
+}
+
+// newAuthServerFull is newAuthServer for tests that also need to look at the db
+// or tweak the Server (e.g. flipping seedWelcome) before driving the flow.
+func newAuthServerFull(t *testing.T) (*httptest.Server, *captureMailer, *sql.DB, *Server) {
 	t.Helper()
 	t.Setenv("TELA_SHARE_SECRET", "tela-test-share-secret-fixed-32-byte!")
 	d := newAPITestDB(t)
@@ -68,7 +77,7 @@ func newAuthServer(t *testing.T) (*httptest.Server, *captureMailer) {
 	srv.Mailer = cm
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts, cm
+	return ts, cm, d, srv
 }
 
 func authPost(t *testing.T, ts *httptest.Server, path, body string) *http.Response {

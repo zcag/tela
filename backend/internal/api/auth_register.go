@@ -183,8 +183,12 @@ func (s *Server) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	// Provision the personal space now that the account is real (idempotent).
 	var username, email string
 	if err := s.DB.QueryRowContext(ctx, `SELECT username, COALESCE(email, '') FROM users WHERE id = $1`, userID).Scan(&username, &email); err == nil {
-		if _, err := EnsurePersonalSpace(ctx, s.DB, userID, username); err != nil {
+		if spaceID, err := EnsurePersonalSpace(ctx, s.DB, userID, username); err != nil {
 			slog.Error("personal space for verified user", "user_id", userID, "username", username, "err", err)
+		} else {
+			// Otherwise the first screen a brand-new account ever sees is the
+			// "No pages in Personal" empty state.
+			s.seedPersonalWelcomePage(ctx, userID, username, spaceID)
 		}
 		// Enroll into any org whose auto-join domain matches the just-confirmed
 		// address (#153).

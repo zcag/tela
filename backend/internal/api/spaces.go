@@ -207,6 +207,48 @@ func welcomePageBody(spaceName string) string {
 		"Delete this page whenever you're ready — it won't be missed.\n"
 }
 
+// seedPersonalWelcomePage drops a starter page into a just-provisioned personal
+// space, so the one space every account is guaranteed to land in isn't the only
+// space that never gets one. EnsurePersonalSpace is a package-level func over
+// *sql.DB with no page concern, so the seed hangs off the signup handlers that
+// call it rather than off the provisioning itself. Best-effort and idempotent:
+// it no-ops when the space already holds a page — deliberately counting
+// soft-deleted rows too, so a user who deletes the starter page never sees it
+// come back.
+func (s *Server) seedPersonalWelcomePage(ctx context.Context, userID int64, username string, spaceID int64) {
+	if !s.seedWelcome {
+		return
+	}
+	var n int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pages WHERE space_id = $1`, spaceID).Scan(&n); err != nil || n > 0 {
+		return
+	}
+	u := &auth.User{ID: userID, Username: username}
+	if _, ae := s.createPageCore(ctx, u, nil, pageCreateRequest{
+		SpaceID: spaceID,
+		Title:   "Welcome to tela",
+		Body:    personalWelcomeBody(),
+	}, false); ae != nil {
+		slog.Error("seed welcome page for personal space", "space_id", spaceID, "err", ae.Message)
+	}
+}
+
+// personalWelcomeBody is the personal space's starter page: welcomePageBody's
+// counterpart in the same voice, solo instead of team, naming the two things
+// nobody discovers on their own (Ask and MCP). The docs link is the canonical
+// public one — frontend/src/lib/docs.ts holds the same URL for the UI.
+func personalWelcomeBody() string {
+	return "This is your personal space — private, only you can see it. Everything in tela is a markdown page in a tree, so start anywhere and move it later.\n\n" +
+		"## Three things worth two minutes\n\n" +
+		"- Press **Ctrl/⌘ N** to create a page. Link pages with `[[Page Title]]` — backlinks and the graph build themselves.\n" +
+		"- **Ask** answers questions across everything you've written, with citations back to the page. Try it once you have a few pages in here.\n" +
+		"- Point your assistant at tela over **MCP** and Claude or ChatGPT can read and write these pages directly — [setup here](https://telawiki.com/tela/docs/211/agents-mcp).\n\n" +
+		"## When it stops being just notes\n\n" +
+		"Make a space for a project or a team and invite people. Publish any page to a public link. Point **Atlas** at a repo and it keeps a set of pages current on its own.\n\n" +
+		"Delete this page whenever you're ready — it won't be missed.\n"
+}
+
 // createSpaceCore is the transport-agnostic core behind POST /api/spaces and the
 // MCP create_space tool: validate name + (derived-or-given) slug, then insert
 // the space and the creator's owner-membership row in one tx so a crash can't
