@@ -66,12 +66,18 @@ func runSetPlan(d *sql.DB, args []string) {
 	if planKind != kind {
 		fatal("set-plan: plan is for a different account kind", "plan_key", planKey, "plan_kind", planKind, "target_kind", kind)
 	}
-	table := "users"
+	table, set := "users", "plan_key = $1, updated_at = tela_now()"
 	if kind == "org" {
 		table = "orgs"
+	} else {
+		// Clear any active trial so the assignment takes effect NOW — otherwise
+		// the trial CASE in planFor keeps overriding it for up to ~37 days and the
+		// operator sees the command do nothing. Mirrors the admin HTTP set-plan
+		// (usage.go) and the billing webhook, which both already clear it.
+		set += ", trial_plan_key = NULL, trial_ends_at = NULL"
 	}
 	res, err := d.ExecContext(ctx,
-		`UPDATE `+table+` SET plan_key = $1, updated_at = tela_now() WHERE id = $2`, planKey, idStr)
+		`UPDATE `+table+` SET `+set+` WHERE id = $2`, planKey, idStr)
 	if err != nil {
 		fatal("set-plan", "err", err)
 	}
