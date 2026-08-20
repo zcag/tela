@@ -149,22 +149,25 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 		return 0, "", err
 	}
 	// The IdP asserted this email, so store it pre-verified; a NULL email (no
-	// usable address) stays unverified. email_verified_at is set via a literal
-	// rather than a parameter so $2 isn't used in two type contexts (which
-	// defeats pgx's type inference).
-	email := sql.NullString{String: id.email, Valid: id.email != ""}
-	verifiedAt := "NULL"
-	if email.Valid {
-		verifiedAt = "tela_now()"
-	}
+	// usable address) stays unverified.
+	//
+	// Trial: a social signup created itself exactly like a password one, so it
+	// gets the same signup trial — omitting it here is the bug this rule exists
+	// to prevent. An org connection's users are provisioned by their employer
+	// and work inside the org's plan, so they don't. See users_create.go.
+	//
 	// Keep the IdP's original, properly-cased name as the display name — the
 	// username is just its slug. '' when the provider gave us nothing usable,
 	// which the UI falls back from to the username.
 	displayName = strings.TrimSpace(id.displayName)
-	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-		INSERT INTO users (username, display_name, email, email_verified_at, password_hash, is_instance_admin, is_active)
-		VALUES ($1, $2, $3, %s, $4, 0, 1)
-		RETURNING id`, verifiedAt), username, displayName, email, hash).Scan(&userID)
+	userID, err = insertUser(ctx, tx, newUser{
+		Username:     username,
+		DisplayName:  displayName,
+		Email:        id.email,
+		Verified:     true,
+		PasswordHash: hash,
+		Trial:        !isOrgSSOProvider(id.provider),
+	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			// Email collided with an account we weren't allowed to link into.

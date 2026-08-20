@@ -184,18 +184,10 @@ func (s *Server) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Email is optional for admin-created users. When present it must be valid;
 	// admin-created accounts are treated as pre-confirmed (no verify email).
-	var email, verifiedAt any
-	if raw := normalizeEmail(req.Email); raw != "" {
-		if !validEmail(raw) {
-			writeError(w, http.StatusBadRequest, "bad_request", "email must be a valid address")
-			return
-		}
-		email = raw
-		verifiedAt = nowStamp()
-	}
-	isAdmin := 0
-	if req.IsInstanceAdmin != nil && *req.IsInstanceAdmin {
-		isAdmin = 1
+	email := normalizeEmail(req.Email)
+	if email != "" && !validEmail(email) {
+		writeError(w, http.StatusBadRequest, "bad_request", "email must be a valid address")
+		return
 	}
 
 	hash, err := auth.HashPassword(req.Password)
@@ -205,10 +197,16 @@ func (s *Server) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	var id int64
-	err = s.DB.QueryRowContext(ctx, `
-		INSERT INTO users (username, email, email_verified_at, password_hash, is_instance_admin, is_active)
-		VALUES ($1, $2, $3, $4, $5, 1) RETURNING id`, username, email, verifiedAt, hash, isAdmin).Scan(&id)
+	// No trial: this account was provisioned by an operator, not created by the
+	// person using it — and on a self-hosted instance a trial banner on every
+	// admin-made account would be pure noise. See users_create.go.
+	id, err := insertUser(ctx, s.DB, newUser{
+		Username:     username,
+		Email:        email,
+		Verified:     email != "",
+		PasswordHash: hash,
+		IsAdmin:      req.IsInstanceAdmin != nil && *req.IsInstanceAdmin,
+	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			writeError(w, http.StatusConflict, "conflict", "username or email already exists")

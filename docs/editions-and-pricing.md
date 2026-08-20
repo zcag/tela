@@ -162,7 +162,14 @@ Enterprise is `$8` (= a Team seat's displayed price), so it never reads as *more
 with or without a cloud number. `plans.org_enterprise.price_cents` is NULL so the in-app card
 also reads "let's talk". Free tier carries managed-AI COGS with no revenue — capped to a
 **taste**; the "I want real AI for free" crowd is routed to **self-host Community** (their
-inference, zero cost to us). Trial: 30-day Personal.
+inference, zero cost to us). Trial: 30-day Personal, granted to every account that
+**created itself** — password registration and social SSO (Google/Microsoft/GitHub)
+alike. Accounts *provisioned for* someone — an org's own SSO connection, an admin,
+the first-boot/CLI admin — get none. That rule lives in exactly one place
+(`backend/internal/api/users_create.go`) because it previously didn't: the trial was
+added to the password INSERT only, so ten weeks of OAuth signups silently landed on
+Free while the pricing page, the FAQ and the Terms all promised otherwise. A scan
+test fails the build if a new `INSERT INTO users` appears outside that helper.
 
 ## 7. Self-host options
 
