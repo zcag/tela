@@ -27,6 +27,15 @@ import (
 // CLI do not. Each call site passes Trial explicitly — never by omission, which
 // is exactly how the SSO path lost it.
 //
+// The same question decides the "someone signed up" notification to instance
+// admins (notifyUserRegistered): an account that created itself is a signup and
+// is announced; one provisioned for someone is not. It cannot be fired from
+// insertUser, because the SSO path inserts inside a transaction and a
+// notification written before that commit would announce an account that may
+// never exist — so each self-serve path calls it after its own commit
+// (auth_register.go, sso_identity.go). Admin-created users stay silent: the
+// operator making the account is the person who would be told.
+//
 // bootstrap.go / setup.go keep their own INSERT: both are first-admin paths with
 // materially different SQL (an advisory lock + INSERT…WHERE NOT EXISTS, and an
 // in-tx space_members backfill), and neither ever grants a trial. The scan test

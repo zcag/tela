@@ -52,7 +52,7 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 	}
 	defer tx.Rollback()
 
-	userID, username, err := resolveSSOUser(ctx, tx, id)
+	userID, username, created, err := resolveSSOUser(ctx, tx, id)
 	if err != nil {
 		return 0, err
 	}
@@ -76,6 +76,19 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 		s.applyPendingInvites(ctx, userID, id.email)
 	}
 
+	// Tell the instance admins, but only when this login actually CREATED an
+	// account — the same "did it sign up or just sign in" question the trial
+	// asks, and the reason this call has to live out here rather than next to
+	// the insert: it must not fire until the tx that made the row commits.
+	// resolveSSOUser's other two outcomes are a returning user and an
+	// email-matched LINK onto an existing account; neither is a signup, and
+	// notifying on the link would announce accounts that registered by password
+	// months ago. See users_create.go for the rule.
+	if created {
+		// What was inserted: the IdP's trimmed name, and the normalized email.
+		s.notifyUserRegistered(ctx, userID, username, strings.TrimSpace(id.displayName), id.email)
+	}
+
 	sid, err := auth.CreateSession(ctx, s.DB, userID, r.UserAgent())
 	if err != nil {
 		return 0, err
@@ -88,8 +101,10 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 // resolveSSOUser maps an identity to a user id within tx. Three outcomes, in
 // order: (1) the (provider, subject) is already linked → that user; (2) the
 // email is trusted and matches an existing account → link this identity to it;
-// (3) otherwise create a fresh account. Returns (userID, username).
-func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, string, error) {
+// (3) otherwise create a fresh account. Returns (userID, username, created),
+// where created is true only for outcome (3) — the caller needs to tell a
+// signup from a sign-in once the tx has committed.
+func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, string, bool, error) {
 	// (1) Known identity — the common returning-user path.
 	var (
 		userID   int64
@@ -110,14 +125,14 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 			if name := strings.TrimSpace(id.displayName); name != "" {
 				if _, err := tx.ExecContext(ctx,
 					`UPDATE users SET display_name = $1 WHERE id = $2`, name, userID); err != nil {
-					return 0, "", err
+					return 0, "", false, err
 				}
 			}
 		}
-		return userID, username, nil
+		return userID, username, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, "", err
+		return 0, "", false, err
 	}
 
 	// (2) Trusted email matching an existing account — link, don't duplicate.
@@ -127,12 +142,12 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 			Scan(&userID, &username)
 		if err == nil {
 			if err := linkSSOIdentity(ctx, tx, userID, id); err != nil {
-				return 0, "", err
+				return 0, "", false, err
 			}
-			return userID, username, nil
+			return userID, username, false, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, "", err
+			return 0, "", false, err
 		}
 	}
 
@@ -142,11 +157,11 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 	// login (it has no password the user knows).
 	username, err = uniqueUsername(ctx, tx, id.displayName, id.email)
 	if err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
 	hash, err := auth.HashPassword(randomSecret())
 	if err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
 	// The IdP asserted this email, so store it pre-verified; a NULL email (no
 	// usable address) stays unverified.
@@ -171,14 +186,14 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			// Email collided with an account we weren't allowed to link into.
-			return 0, "", errSSOEmailTaken
+			return 0, "", false, errSSOEmailTaken
 		}
-		return 0, "", err
+		return 0, "", false, err
 	}
 	if err := linkSSOIdentity(ctx, tx, userID, id); err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
-	return userID, username, nil
+	return userID, username, true, nil
 }
 
 // linkSSOIdentity records the (provider, subject) → user mapping. A UNIQUE

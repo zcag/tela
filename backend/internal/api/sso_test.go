@@ -348,9 +348,12 @@ func TestSSO_CapturesDisplayName(t *testing.T) {
 		displayName: "Ekrem Mert Esen",
 		linkTrusted: true,
 	}
-	userID, username, err := resolveSSOUser(ctx, tx, id)
+	userID, username, created, err := resolveSSOUser(ctx, tx, id)
 	if err != nil {
 		t.Fatalf("resolveSSOUser: %v", err)
+	}
+	if !created {
+		t.Fatal("resolveSSOUser reported an existing user for a brand-new identity")
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -398,7 +401,7 @@ func resolveInTx(t *testing.T, d *sql.DB, id ssoIdentity) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, _, err := resolveSSOUser(context.Background(), tx, id); err != nil {
+	if _, _, _, err := resolveSSOUser(context.Background(), tx, id); err != nil {
 		t.Fatalf("resolveSSOUser: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
