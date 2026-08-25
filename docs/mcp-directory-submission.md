@@ -6,10 +6,13 @@ discover it inside the host UI (not just manual custom-connector add). Researche
 from primary sources (mid-2026). Action items are checkboxes; flagged items need
 live verification.
 
+The separate Claude Code **plugin** channel — same endpoint, different shelf — is in
+[`claude-code-plugin.md`](claude-code-plugin.md).
+
 **tela's current state (what we already have):** Streamable HTTP via the official
 MCP Go SDK; OAuth 2.1 via WorkOS AuthKit (PKCE S256, DCR/CIMD, user-consent);
-20 tools — all with `title` + read/write annotations, ≤15-char names, read and
-write cleanly separated, no behavioral directives; typed output schemas; 2
+45 tools (20 when this was written; re-counted 2026-08-25) — all with `title` +
+read/write annotations, ≤15-char names, read and write cleanly separated, no behavioral directives; typed output schemas; 2
 resource templates (`tela://page/{id}`, `tela://space/{id}`); 2 interactive MCP
 Apps widgets (page-reader + search-results cards); `search`+`fetch` Deep-Research
 pair; full-bleed connector icon + server branding.

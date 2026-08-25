@@ -82,7 +82,7 @@ DEPLOY_IMAGE_ENV   = TELA_BACKEND_IMAGE=$(TELA_REGISTRY)/tela-backend:$(TELA_COM
         test dev-db dev-db-clean setup backup restore blocks-gen blocks-gate \
         landing-dev landing-build landing-gate landing-clean \
         deploy deploy-backend deploy-frontend deploy-landing deploy-offline registry-up _push \
-        release-mcp reset-prod-db health-gate
+        release-mcp reset-prod-db health-gate plugin-validate plugin-publish
 
 # setup: first-run convenience. Copies deploy/.env.example → deploy/.env and
 # fills the three load-bearing secrets with `openssl rand -hex 32` so a
@@ -130,6 +130,8 @@ help:
 	@echo "  make registry-up      # ensure the on-box image registry is running (deploy does this)"
 	@echo "  make reset-prod-db    # DESTROY + recreate the prod Postgres volume (requires FORCE=1)"
 	@echo "  make release-mcp      # publish tela-mcp to npm (BUMP=patch|minor|major, default patch)"
+	@echo "  make plugin-validate  # validate the Claude Code plugin manifests in plugin/"
+	@echo "  make plugin-publish   # mirror plugin/ to the public tela-claude-plugin repo"
 
 # `up` builds the marketing landing first so the proxy's /srv/landing mount is
 # populated (Caddy serves it at the apex). All images — including the proxy,
@@ -517,3 +519,56 @@ release-mcp:
 	npm publish --access public; \
 	cd .. && git push --follow-tags; \
 	echo "✓ published $$new — verify CDN with: npm view tela-mcp versions --json"
+
+# ── Claude Code plugin (the marketplace wrapper) ────────────────────────────
+# `plugin/` is the SOURCE of the tela Claude Code plugin; the published article
+# is a separate repo ($(PLUGIN_REPO)) because Anthropic's directory scan clones
+# the ENTIRE plugin repo to the installing user's disk — pointing it at tela
+# proper would ship backend, frontend, landing and deploy config to every user.
+# So: author here (one source of truth, under this repo's conventions), mirror
+# there. `plugin-publish` syncs plugin/ + LICENSE into a shallow clone of the
+# wrapper repo and pushes ONE squashed commit — the wrapper keeps a clean,
+# tiny history rather than inheriting tela's.
+#
+# Two distribution routes, in order of what actually works:
+#   (1) direct  — `/plugin marketplace add zcag/tela-claude-plugin`, live the
+#                 moment the repo is public. No queue, no review, ours to fix.
+#   (2) directory — platform.claude.com/plugins/submit → the `claude-community`
+#                 marketplace. Opt-in shelf, no SLA. Upside, not the plan.
+# Design + the submission payload: docs/mcp-directory-submission.md.
+PLUGIN_REPO ?= git@github.com:zcag/tela-claude-plugin.git
+
+# Fails on a bad manifest, and on the version drift the validator only warns
+# about (plugin.json vs the marketplace entry) — a mismatch silently pins users
+# to the wrong version, so we treat it as an error here.
+plugin-validate:
+	@set -eu; \
+	pv=$$(jq -r .version plugin/plugins/tela/.claude-plugin/plugin.json); \
+	mv=$$(jq -r '.plugins[0].version' plugin/.claude-plugin/marketplace.json); \
+	if [ "$$pv" != "$$mv" ]; then \
+	  echo "✗ version drift: plugin.json=$$pv marketplace.json=$$mv" >&2; exit 1; \
+	fi; \
+	claude plugin validate plugin --strict; \
+	claude plugin validate plugin/plugins/tela --strict; \
+	echo "✓ plugin manifests valid (v$$pv)"
+
+plugin-publish: plugin-validate
+	@set -eu; \
+	sha=$$(git rev-parse --short HEAD); \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	echo "[plugin-publish] cloning $(PLUGIN_REPO)…"; \
+	git clone --depth 1 "$(PLUGIN_REPO)" "$$tmp/wrapper" 2>/dev/null || { \
+	  echo "✗ can't clone $(PLUGIN_REPO) — create it first:" >&2; \
+	  echo "    gh repo create zcag/tela-claude-plugin --public -d 'tela for Claude Code'" >&2; \
+	  exit 1; }; \
+	rsync -a --delete --exclude .git plugin/ "$$tmp/wrapper/"; \
+	cp LICENSE "$$tmp/wrapper/LICENSE"; \
+	cd "$$tmp/wrapper"; \
+	if git diff --quiet && git diff --cached --quiet && [ -z "$$(git status --porcelain)" ]; then \
+	  echo "✓ wrapper already matches plugin/ — nothing to publish"; exit 0; \
+	fi; \
+	git add -A; \
+	git commit -q -m "sync from tela@$$sha"; \
+	git push -q origin HEAD; \
+	echo "✓ published tela@$$sha → $(PLUGIN_REPO)"; \
+	echo "  install: /plugin marketplace add zcag/tela-claude-plugin && /plugin install tela@telawiki"

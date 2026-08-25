@@ -1,0 +1,25 @@
+{
+  "name": "telawiki",
+  "owner": {
+    "name": "tela",
+    "email": "tela@telawiki.com",
+    "url": "https://telawiki.com"
+  },
+  "description": "tela — the markdown-native team wiki your agents can read and write",
+  "version": "0.1.0",
+  "plugins": [
+    {
+      "name": "tela",
+      "source": "./plugins/tela",
+      "description": "Connect Claude Code to your tela wiki: semantic research with citations over your team's docs, plus authoring into rich pages, spreadsheets with real formulas, and presentable decks.",
+      "version": "0.1.0",
+      "author": { "name": "tela", "email": "tela@telawiki.com", "url": "https://telawiki.com" },
+      "homepage": "https://telawiki.com",
+      "repository": "https://github.com/zcag/tela-claude-plugin",
+      "license": "AGPL-3.0-only",
+      "keywords": ["wiki", "knowledge-base", "documentation", "markdown", "rag", "mcp"],
+      "category": "productivity",
+      "tags": ["mcp", "oauth", "docs", "search", "wiki"]
+    }
+  ]
+}

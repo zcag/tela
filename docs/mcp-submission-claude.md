@@ -1,7 +1,8 @@
 # tela — Claude connector directory submission
 
 Ready-to-paste payload for `https://clau.de/mcp-directory-submission`.
-Values verified live 2026-06-05; tool table updated 2026-06-29 to reflect 39-tool surface. `‹TODO›` marks anything Cagdas still has to fill or confirm.
+Values verified live 2026-06-05; tool count re-checked 2026-08-25 — the surface is **45 tools**
+(the earlier "39" is stale; count from `Name:` fields across `backend/internal/api/mcp*.go`). `‹TODO›` marks anything Cagdas still has to fill or confirm.
 
 ---
 

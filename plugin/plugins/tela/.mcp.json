@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tela": {
+      "type": "http",
+      "url": "https://telawiki.com/api/mcp"
+    }
+  }
+}
