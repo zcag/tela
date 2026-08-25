@@ -128,3 +128,56 @@ connector-directory submission, which is pinned to a workspace whose owner addre
 (free) after the 7-day grace, and `personal_free` carries 3M embed tokens/month
 (`0070_atlas_cost_quotas.sql`), so a reviewer can still exercise `research`. Worth one
 manual smoke-test at submit time anyway, since the demo space was seeded in June.
+
+## Submission payload
+
+Ready to paste at `platform.claude.com/plugins/submit`. Verified against the live
+repo 2026-08-25.
+
+| Field | Value |
+|---|---|
+| **Repository** | `https://github.com/zcag/tela-claude-plugin` (public) |
+| **Plugin name** | `tela` (free — no collision in either marketplace) |
+| **Homepage** | `https://telawiki.com` |
+| **Category** | Productivity / knowledge management |
+| **Privacy policy** | `https://telawiki.com/privacy` |
+| **Terms** | `https://telawiki.com/terms` |
+| **Support contact** | `tela@telawiki.com` |
+| **Documentation** | `https://telawiki.com/mcp` and `https://telawiki.com/tela/docs` |
+| **Test account** | `mcp-demo` / `mcp-demo@cagdas.io`, no MFA, space "Demo" (id 4). Password lives outside the repo — paste it into the form. Re-seed with `scripts/seed-demo.py`. |
+
+**Short description** (the marketplace entry, already in `plugin.json`):
+
+> Connect Claude Code to your tela wiki: semantic research with citations over your
+> team's docs, plus authoring into rich pages, spreadsheets with real formulas, and
+> presentable decks.
+
+**Use cases** (the policy asks for at least three working examples):
+
+1. **Answer from the team's docs, with citations.** `research` returns assembled
+   grounding plus its sources, so Claude answers a question from the wiki and cites
+   the page and section each claim came from instead of guessing.
+2. **Persist what a session learned.** After shipping a change, Claude writes it up
+   with `create_page` into the right space using tela's block palette — durable team
+   memory instead of scrollback.
+3. **Keep a doc current.** `search` finds the affected page, `patch_page` rewrites just
+   the one section (auto-snapshotting a revision), `add_comment` leaves an anchored note.
+4. **Audit before a rename.** `list_backlinks` shows every page referencing the target
+   so a restructure doesn't break references.
+
+**Data & compliance:**
+
+- Third parties: **WorkOS AuthKit** (OAuth identity for sign-in) and, for `research`,
+  the instance's own embedder. No content leaves tela's infrastructure otherwise.
+- No PHI, PCI, government ID, or secrets collected.
+- Reads only what the authenticated account can already see; writes need editor access
+  on the target space. No conversation data is collected or logged.
+- Not a prohibited category — no financial execution, no media generation, not an ad
+  vehicle.
+
+> [!WARNING]
+> **Submit from a Console org you control.** The connector-directory submission is
+> stuck behind a workspace whose owner address (`@ngss.io`) is dead. A fresh free
+> Console org avoids inheriting that problem — the docs explicitly allow it:
+> *"Individual authors who aren't part of a claude.ai Team or Enterprise organization
+> can sign up for Console at platform.claude.com and submit there."*
