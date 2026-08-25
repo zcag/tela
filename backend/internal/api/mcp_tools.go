@@ -212,7 +212,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "lint_page",
 		Title:       "Lint page",
-		Description: "Check a page for places where the READER renders something different from what the markdown says — an unknown `:::block` or `[!CALLOUT]` that silently unwraps, raw HTML the reader drops, a collapsible whose blank lines are missing so its body vanishes, a `[[wikilink]]` that matches no page, a broken link or attachment, a ragged table. These are invisible when you re-read your own source, which is why re-reading it is not a substitute for calling this. Run it after writing or editing a page.",
+		Description: "Check a page for places where the READER renders something different from what the markdown says — an unknown `:::block` or `[!CALLOUT]` that silently unwraps, raw HTML the reader drops, a collapsible whose blank lines are missing so its body vanishes, a `[[wikilink]]` that matches no page, a broken link or attachment, a ragged table, a table so wide the page column shows only part of it. These are invisible when you re-read your own source, which is why re-reading it is not a substitute for calling this. Run it after writing or editing a page.",
 		Annotations: readOnly,
 	}, s.mcpLintPage)
 
