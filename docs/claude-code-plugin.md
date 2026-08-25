@@ -102,7 +102,7 @@ From the [submission docs](https://claude.com/docs/plugins/submit) and the
 
 | Requirement | State |
 |---|---|
-| Public GitHub repo ("closed-source plugins are not accepted") | ⬜ `zcag/tela-claude-plugin` not created yet |
+| Public GitHub repo ("closed-source plugins are not accepted") | ✅ `zcag/tela-claude-plugin`, published 2026-08-25 |
 | `claude plugin validate` passes | ✅ `make plugin-validate`, `--strict`, both manifests |
 | Plugin name free in the directory | ✅ no `tela` among the 2.282 community entries |
 | Subdirectory layout supported | ✅ 406 entries use the `git-subdir` source shape |
@@ -115,14 +115,14 @@ From the [submission docs](https://claude.com/docs/plugins/submit) and the
 | Owns the endpoint/domain it connects to | ✅ `telawiki.com` |
 | Collects no extraneous conversation data | ✅ reads only what the authenticated account can see |
 | Not a prohibited category | ✅ not financial execution, media generation, or an ad vehicle |
-| Submitter role: Console Developer/Admin/Owner, **or** claude.ai Team/Enterprise with directory management | ⚠️ the one open gate — see below |
+| Submitter role: Console Developer/Admin/Owner, **or** claude.ai Team/Enterprise with directory management | ✅ Console org **tela** (Turkey, SMB), `cagdassalur@gmail.com` as Admin |
 
-**The submitter-role gate is the thing to get right.** A free Console org at
-`platform.claude.com` satisfies it, and the docs name that path explicitly: *"Individual
-authors who aren't part of a claude.ai Team or Enterprise organization can sign up for
-Console at platform.claude.com and submit there."* That also routes **around** the stuck
-connector-directory submission, which is pinned to a workspace whose owner address is dead
-— don't submit the plugin from that org.
+**The submitter-role gate** was satisfied by creating a free Console org named **tela**
+under `cagdassalur@gmail.com` — deliberately NOT the workspace the connector-directory
+submission is pinned to, whose owner address is dead. The docs name this path explicitly:
+*"Individual authors who aren't part of a claude.ai Team or Enterprise organization can sign
+up for Console at platform.claude.com and submit there."* Console pushes a credit-purchase
+step during org creation; **Skip for now** — the submission needs no API spend.
 
 **A lapsed trial does not break the demo account.** `planFor` falls back to `plan_key`
 (free) after the 7-day grace, and `personal_free` carries 3M embed tokens/month
@@ -181,3 +181,25 @@ repo 2026-08-25.
 > Console org avoids inheriting that problem — the docs explicitly allow it:
 > *"Individual authors who aren't part of a claude.ai Team or Enterprise organization
 > can sign up for Console at platform.claude.com and submit there."*
+
+## Submitted 2026-08-25
+
+Status: **submitted and pending review**, tracked at
+`platform.claude.com/plugins/submissions`. No SLA — *"review times vary with queue volume."*
+
+What went in, beyond the payload above: **path within repository** `plugins/tela` (the form
+has a field for it, matching the `git-subdir` source shape), license `AGPL-3.0-only`, privacy
+`https://telawiki.com/privacy`, contact `cagdassalur@gmail.com`.
+
+Two deliberate omissions to revisit:
+
+- **Claude Cowork was left unchecked** under supported platforms. The form says *"test that
+  the plugin works with these surfaces before submitting"* and only Claude Code was verified
+  (installed from GitHub, MCP server registered, OAuth challenge answered). Cowork is the
+  larger consumer surface — worth testing and re-submitting for, since a plugin can only be
+  listed on surfaces it declares.
+- **No slash commands.** The submission is one MCP server plus one skill. Anthropic's guidance
+  favours plugins bundling skills *and* commands *and* subagents into a coherent job, which is
+  what the curated shelf selects on. Repo pushes are picked up automatically without
+  re-submitting, so commands can be added later — but the review deciding which shelf it lands
+  on runs against what was submitted.
