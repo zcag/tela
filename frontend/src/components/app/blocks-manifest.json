@@ -306,7 +306,7 @@
       "keywords": ["table", "grid", "comparison", "matrix", "checklist", "sortable"],
       "syntax": "| Feature | Free | Pro |\n| --- | --- | --- |\n| SSO | cross | check |\n| Seats | 3 | dash |",
       "when": "Tabular data, comparisons, and feature matrices (GitHub-flavored markdown).",
-      "note": "Upgrades that round-trip as plain markdown: a cell that is exactly `check`, `cross`, or `dash` (also ✓/✗/–, yes/no, n/a) renders as a green ✓ / red ✗ / muted – icon — ideal for feature-comparison grids. The first column pins when a wide table scrolls, and in the reader, large tables (8+ rows) get clickable sort headers + a filter box."
+      "note": "Upgrades that round-trip as plain markdown: a cell that is exactly `check`, `cross`, or `dash` (also ✓/✗/–, yes/no, n/a) renders as a green ✓ / red ✗ / muted – icon — ideal for feature-comparison grids. The first column pins when a wide table scrolls, and when reading, large tables (8+ rows) get clickable sort headers + a filter box. Keep it narrow enough to read: past roughly ten prose columns the page column shows only a fraction and the rest sits behind a horizontal scroll \u2014 data that wide belongs in a sheet page (sheet: true), linked from the doc."
     },
     {
       "id": "highlight",

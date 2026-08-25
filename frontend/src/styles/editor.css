@@ -948,6 +948,21 @@
   .tela-milkdown .ProseMirror .tableWrapper > table {
     margin: 0;
   }
+  /* Read surfaces get NO `.tableWrapper` — prosemirror-tables only adds it in
+     the editable editor, and a read view is MarkdownView's static DOM anyway —
+     so a table wider than the measure has nothing to scroll in. It spilled past
+     the article column and the page pane's `overflow-x-clip` cut it off: the
+     overflowing columns were unreachable at any window size, on a page that
+     looked merely wide. Make the table itself the horizontal scroll port.
+     `width:100%` keeps narrow tables filling the column (max-content would
+     shrink them) and lets the sticky first column pin while scrolling. The
+     reader's print block resets this so PDF columns reflow instead of clipping. */
+  .tela-milkdown .ProseMirror[data-tela-view] table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .tela-milkdown .ProseMirror table th,
   .tela-milkdown .ProseMirror table td {
     padding: var(--space-2) var(--space-3);

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useRef } from 'react'
-import { enhanceReadonlyTable } from './milkdown-table'
+import { enhanceReadonlyTable } from '../../lib/blocks/table-enhance'
 
 // Renders a static GFM-style table with the same classes the decoration plugin
 // adds (glyph cells, featured column) and runs the REAL enhanceReadonlyTable for

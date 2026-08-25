@@ -25,6 +25,7 @@ import {
   CALENDAR_EVENT_RE,
 } from '../../lib/blocks/calendar-grid'
 import { accentForValue, statLineClass } from '../../lib/blocks/stat-trend'
+import { enhanceTables } from '../../lib/blocks/table-enhance'
 import { wikilinkSlug } from '../../lib/markdown/transforms/wikilink'
 import { isSafeUrl } from '../../lib/markdown/remark-safe-links'
 import { embedIframeSrc } from '../../lib/markdown/embed'
@@ -959,6 +960,11 @@ export function MarkdownView({
     if (!contentRef.current) return
     // Anchor ids first, so a host's onReady (TOC, deep-link scroll) sees them.
     stampHeadingIds(contentRef.current)
+    // Sort headers + a filter box on large tables. Self-gated at ≥8 rows and
+    // idempotent. This is where every read surface gets it: the editor plugin
+    // that used to apply it only runs inside Milkdown, which no longer renders
+    // any of them.
+    enhanceTables(contentRef.current)
     onReady?.(contentRef.current)
   }, [body, onReady])
   return (

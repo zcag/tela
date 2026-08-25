@@ -510,19 +510,10 @@
   .tela-reader .tela-milkdown .ProseMirror li::marker {
     color: var(--text-muted);
   }
-  /* Tables breathe a touch more and never break the column on overflow. The
-     reader has no `.tableWrapper` scroll container — prosemirror-tables only
-     adds it in the editable editor (see milkdown-table.ts) — so a wide table
-     would otherwise spill past the article column and collide with the sticky
-     TOC. Make the table itself the horizontal scroll port; `width:100%` keeps
-     narrow tables filling the column (max-content would shrink them) and lets
-     the existing sticky first column pin while scrolling. Reset for print
-     below so PDF columns reflow to the page instead of clipping. */
+  /* Tables breathe a touch more. The scroll port that keeps a wide one from
+     spilling past the article column (and into the sticky TOC) is shared by
+     every read surface — see editor.css, `[data-tela-view] table`. */
   .tela-reader .tela-milkdown .ProseMirror table {
-    display: block;
-    width: 100%;
-    max-width: 100%;
-    overflow-x: auto;
     font-size: 0.95em;
   }
 
@@ -861,13 +852,16 @@
       widows: 3;
     }
     /* The horizontal scroll port is a screen affordance; on paper let the table
-       reflow to the page width instead of clipping the overflowing columns. */
-    .tela-reader .tela-milkdown .ProseMirror table {
+       reflow to the page width instead of clipping the overflowing columns.
+       Matches the attribute the port is defined on (editor.css) so it wins on
+       specificity rather than on which file happens to be imported last. */
+    .tela-reader .tela-milkdown .ProseMirror[data-tela-view] table {
       display: table;
       overflow: visible;
     }
     /* Interactive chrome is meaningless on paper. */
-    .tela-reader .tela-codeblock-copy {
+    .tela-reader .tela-codeblock-copy,
+    .tela-reader .tela-table-filter {
       display: none !important;
     }
   }

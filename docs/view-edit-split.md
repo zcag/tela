@@ -35,7 +35,11 @@ Status: **in progress** (design locked; core shipped). Owner: see git blame.
   builder, same `lib/diagrams` idea), and collapsible (`<details>` via the
   shared `collapsiblesRemark` transform; native element, `open` honored,
   nesting supported). VIEW_DEGRADES is now empty — the gate requires a
-  dedicated renderer for every block.
+  dedicated renderer for every block. Table sort/filter is a post-render DOM
+  pass (`lib/blocks/table-enhance.ts`) applied beside `stampHeadingIds`: it used
+  to hang off the editor's ProseMirror plugin, which stopped covering any read
+  surface the moment they moved to MarkdownView — a capability the block
+  manifest still promised agents but nothing delivered.
 - ⏳ **Remaining follow-ups (minor)**
   - The editor's `readOnly` path stays (still reachable for a viewer hitting
     `?edit`); the now-unused share `wikilinkMode` is left in place (harmless).
