@@ -60,6 +60,7 @@ into the opener" and "everything on one line" actually lose content.
 | `undefined-footnote` | warning | renders as the literal `[^1]` |
 | `prose-as-math` | warning | prose inside `$$…$$` renders as a formula |
 | `ragged-table` | warning | a stray column the header doesn't cover, or a short row |
+| `oversized-table` | warning | most of the table sits off-screen behind a horizontal scroll |
 | `dangling-wikilink` | warning | renders as a broken link that goes nowhere (**agent-only**, see below) |
 | `broken-page-link` | warning | the link goes nowhere |
 | `missing-attachment` | warning | broken image / dead download |
@@ -87,6 +88,30 @@ The two shapes of `dropped-html` also read differently on purpose. `<span style>
 loses its styling but keeps its text; a placeholder like `<all>` or `<commit>`
 has no inner text, so the word is **deleted from the page** — that message says
 so and tells the author to use backticks.
+
+### `oversized-table`: measure the render, not the markdown
+
+A table wider than the page column doesn't lose anything — it scrolls sideways —
+but past a point a reader never sees most of it at once, and the data wants a
+**sheet** (`sheet: true`, whose body is the same GFM table) rather than a
+document. That's what the rule suggests.
+
+The trigger is the table's estimated **rendered width**, not its column count.
+A sweep of the live wiki (295 tables on 229 prose pages) is why: the widest
+tables by column count are an 11-column tracker of two-digit numbers and two
+12-column stubs, all of which fit the page column comfortably. Column count
+would have been wrong three times out of four on its first run.
+
+Width is estimated per column as its widest cell, capped at the point a cell
+wraps instead of widening, and measured in RENDERED characters — a link counts
+as its text and `**bold**` markers count as nothing, or a column of long URLs
+would read as unbearably wide. On that measure the sweep separates cleanly: one
+table at 1973px, the next at 993px, so the 1250px cap (~1.5 page columns) fires
+once in 295 and has room either side.
+
+Unlike `dangling-wikilink` this is shown to humans too. The finding isn't "your
+table is wide" (which the author can see) but "this belongs in a sheet" (which
+they can't), and at one hit in 295 tables it can't become nagging.
 
 The table above was **verified against the live reader**, not derived from
 reading the renderer. That mattered: `ragged-table`'s first message claimed the

@@ -144,6 +144,11 @@ var (
 
 	tableDelimRE = regexp.MustCompile(`^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$`)
 
+	// Table-cell measuring: a link renders as its text, and emphasis/code marks
+	// render as nothing at all.
+	linkTextRE = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	markupRE   = regexp.MustCompile("[*_`~]")
+
 	// A CommonMark backslash escape makes the next punctuation character
 	// LITERAL, so `\<all>` renders as visible text and is not a tag at all.
 	// tela's own editor emits these escapes when it serializes, which means
@@ -509,28 +514,93 @@ func (l *linter) reportHTML(html map[string]*htmlHit) {
 	}
 }
 
-// checkTable walks one table from its header row and reports rows whose cell
-// count doesn't match.
+// checkTable walks one table from its header row: reports rows whose cell count
+// doesn't match, and measures whether the whole thing can fit the page column.
 func (l *linter) checkTable(headerIdx int) {
-	header := countCells(l.lines[l.prose[headerIdx]])
+	header := splitCells(l.lines[l.prose[headerIdx]])
+	colWidth := make([]int, len(header))
+	for i, h := range header {
+		colWidth[i] = cellWidth(h)
+	}
+	ragged := false
+	rows := 0
+
 	for j := headerIdx + 2; j < len(l.prose); j++ {
 		line := l.lines[l.prose[j]]
 		if strings.TrimSpace(line) == "" || !strings.Contains(line, "|") {
-			return
+			break
 		}
-		if got := countCells(line); got != header {
+		cells := splitCells(line)
+		rows++
+		if len(cells) != len(header) && !ragged {
+			ragged = true // one report per table is enough to send the author back to it
 			// Verified against the reader: the extra cell is NOT dropped, it
 			// renders — as a stray column the header never declared, which is
 			// why the table comes out misaligned rather than merely truncated.
 			effect := "so it renders a stray column the header doesn't cover"
-			if got < header {
+			if len(cells) < len(header) {
 				effect = "so it renders short and the columns stop lining up"
 			}
 			l.add(l.prose[j]+1, LevelWarning, "ragged-table", fmt.Sprintf(
-				"this row has %d cells but the header has %d, %s. Match the header's column count.", got, header, effect))
-			return // one report per table is enough to send the author back to it
+				"this row has %d cells but the header has %d, %s. Match the header's column count.",
+				len(cells), len(header), effect))
+		}
+		for i, c := range cells {
+			if i >= len(colWidth) {
+				break // a stray column doesn't widen the table the header declares
+			}
+			if w := cellWidth(c); w > colWidth[i] {
+				colWidth[i] = w
+			}
 		}
 	}
+	l.checkTableWidth(l.prose[headerIdx]+1, colWidth, rows)
+}
+
+// Table width estimate. The reader gives every column its widest cell (up to the
+// point where the cell wraps instead) and hands the whole table a horizontal
+// scroll port, so what decides whether a table is usable is its RENDERED WIDTH,
+// not its column count: eleven columns of two-digit numbers fit the page column
+// comfortably, fourteen of prose need three screens.
+const (
+	tableCellPx    = 72   // tenths of a px per character at the table's 0.95em size
+	tableChromePx  = 26   // cell padding + border
+	tableCellChars = 26   // past this a cell wraps rather than widening its column
+	tableColumnPx  = 830  // the page column a read view lays the table out in
+	tableWidthCap  = 1250 // ~1.5 columns; see the sweep note in docs/page-lint.md
+)
+
+// checkTableWidth reports a table too wide to read in the page column. Advisory
+// like every prose rule: nothing is lost (the table scrolls sideways), but past
+// this width most of the data is off-screen at all times, which is a sheet's job
+// rather than a document's.
+func (l *linter) checkTableWidth(line int, colWidth []int, rows int) {
+	if rows == 0 {
+		return // a header with no data isn't yet a table worth measuring
+	}
+	est := 0
+	for _, w := range colWidth {
+		if w > tableCellChars {
+			w = tableCellChars
+		}
+		est += w*tableCellPx/10 + tableChromePx
+	}
+	if est <= tableWidthCap {
+		return
+	}
+	visible := 0
+	for used := 0; visible < len(colWidth); visible++ {
+		w := colWidth[visible]
+		if w > tableCellChars {
+			w = tableCellChars
+		}
+		if used += w*tableCellPx/10 + tableChromePx; used > tableColumnPx {
+			break
+		}
+	}
+	l.add(line, LevelWarning, "oversized-table", fmt.Sprintf(
+		"this table is %d columns and renders about %.1f× wider than the page column, so a reader sees roughly the first %d and the rest sit behind a horizontal scroll. Data this wide belongs in its own sheet page (`sheet: true` — the body is the same GFM table; call sheet_authoring_guide for the format), linked from here. Otherwise split it into two or three narrower tables.",
+		len(colWidth), float64(est)/float64(tableColumnPx), visible))
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -670,22 +740,31 @@ func firstField(s string) string {
 	return ""
 }
 
-// countCells counts a GFM table row's cells, honoring `\|` escapes.
-func countCells(line string) int {
+// splitCells splits a GFM table row into its cells, honoring `\|` escapes.
+func splitCells(line string) []string {
 	s := strings.TrimSpace(line)
 	s = strings.TrimPrefix(s, "|")
 	s = strings.TrimSuffix(s, "|")
-	n := 1
+	cells := []string{}
+	start := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' {
 			i++
 			continue
 		}
 		if s[i] == '|' {
-			n++
+			cells = append(cells, strings.TrimSpace(s[start:i]))
+			start = i + 1
 		}
 	}
-	return n
+	return append(cells, strings.TrimSpace(s[start:]))
+}
+
+// cellWidth is a cell's width in RENDERED characters: the marks that carry no
+// width of their own are dropped and a link counts as its text, so `**₺56.156**`
+// measures 7 and not 11. Runes, not bytes — the wiki is full of Turkish.
+func cellWidth(cell string) int {
+	return len([]rune(markupRE.ReplaceAllString(linkTextRE.ReplaceAllString(cell, "$1"), "")))
 }
 
 func firstLine(s string) string {

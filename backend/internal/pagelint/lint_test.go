@@ -215,6 +215,42 @@ func TestRaggedTable(t *testing.T) {
 	wants(t, "| a | b |\n| --- | --- |\n| x \\| y | 2 |\n")
 }
 
+// row builds a GFM row of n cells each holding `text`.
+func row(n int, text string) string {
+	return "| " + strings.TrimSuffix(strings.Repeat(text+" | ", n), " ") + "\n"
+}
+
+func TestOversizedTable(t *testing.T) {
+	// Fourteen columns of prose — the shape that sent a reader three screens
+	// sideways. Reports once, on the header line.
+	wide := row(14, "programmatic access") + row(14, "---") + row(14, "branch web service")
+	is := wants(t, wide, "oversized-table")
+	if is[0].Line != 1 {
+		t.Errorf("line = %d, want the header line", is[0].Line)
+	}
+	if !strings.Contains(is[0].Message, "sheet: true") {
+		t.Errorf("message doesn't name the fix: %q", is[0].Message)
+	}
+
+	// Eleven columns of two-digit numbers fit the page column comfortably —
+	// this is the live SEO tracker, and a column-count rule would have failed it.
+	wants(t, row(11, "rank")+row(11, "---")+row(11, "42"))
+	wants(t, "| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n")
+
+	// Width is measured in RENDERED characters: long URLs and emphasis marks
+	// don't widen a column.
+	wants(t, row(8, "[link](https://example.com/a/very/long/path/indeed)")+
+		row(8, "---")+row(8, "**x**"))
+
+	// A header with no data rows isn't a table anyone reads yet.
+	wants(t, row(14, "some header text")+row(14, "---"))
+
+	// Ragged and oversized are independent findings on one table.
+	ragged := row(14, "programmatic access") + row(14, "---") + row(13, "branch web service")
+	// Reported in source order: the header line before the offending row.
+	wants(t, ragged, "oversized-table", "ragged-table")
+}
+
 func TestChart(t *testing.T) {
 	wants(t, "```chart\ntype: bar\nx: [Q1, Q2]\n```\n")
 	wants(t, "```chart\ntype: bar\n  bad: [indent\n```\n", "chart-invalid")
