@@ -23,6 +23,17 @@ the space they touch.
 Page bodies are canonical markdown, so what the agent writes is exactly what your
 team reads — diffable and exportable, with no proprietary block format in between.
 
+## Try it
+
+Once connected, ask in plain language — Claude picks the right tool:
+
+- *"What does our runbook say about rotating the API secret?"* — `research` returns
+  the relevant page bodies with sources, so the answer is cited, not guessed.
+- *"Write up what we just decided as a page in the Engineering space."* — drafts into
+  tela's block palette (callouts, tabs, diagrams), not a wall of text.
+- *"What links to the Deploy page? I'm about to rename it."* — `list_backlinks` before
+  you break references.
+
 ## Install
 
 ```
@@ -42,6 +53,16 @@ claude mcp add --transport http tela https://your.host/api/mcp
 ```
 
 See [Agents & MCP](https://telawiki.com/tela/docs) for the full client matrix.
+
+## Docs, privacy, and support
+
+- **Documentation** — [telawiki.com/tela/docs](https://telawiki.com/tela/docs) covers
+  connecting every client, tokens, and troubleshooting. The MCP surface itself is
+  described at [telawiki.com/mcp](https://telawiki.com/mcp).
+- **Privacy** — [telawiki.com/privacy](https://telawiki.com/privacy) covers what the
+  MCP server reads and writes, who receives it, and how long it's kept.
+- **Terms** — [telawiki.com/terms](https://telawiki.com/terms).
+- **Support and security reports** — <tela@telawiki.com>.
 
 ## About this repository
 

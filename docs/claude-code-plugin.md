@@ -64,16 +64,24 @@ already has a better answer.
 1. **Direct** — `/plugin marketplace add zcag/tela-claude-plugin` then
    `/plugin install tela@telawiki`. Live the moment the repo is public: no queue,
    no review, and ours to fix. This is the route to put in docs and launch posts.
-2. **The directory** — `platform.claude.com/plugins/submit` lists it in the
-   **`claude-community`** marketplace (opt-in; a user must `/plugin marketplace add`
-   it), *not* the curated `claude-plugins-official` shelf that auto-loads — that one
-   is vendor curation "at Anthropic's discretion" with no documented promotion path
-   up from community. Review is their public CI: manifest validation plus an LLM
-   security scan against the Software Directory Policy. No SLA. Entries pin to a
-   commit SHA and their CI bumps it, so pushes are picked up without re-submitting.
+2. **The directory** — one form, `platform.claude.com/plugins/submit` (or
+   `claude.ai/admin-settings/directory/submissions/plugins/new`), feeding **both**
+   marketplaces. Verified 2026-08-25, because the received wisdom here is wrong:
+   `claude-plugins-community` (2.282 entries) is the opt-in shelf a user must
+   `/plugin marketplace add`; `claude-plugins-official` (289) auto-loads for every
+   Claude Code user. The official one is **not** a closed vendor shelf — its repo has
+   an `external_plugins/` tree ("third-party plugins from partners and the community")
+   and its README points third parties at *the same* `clau.de/plugin-directory-submission`
+   form. 167 names appear in both marketplaces, 145 of them resolving to an identical
+   repo URL. So there IS a path onto the auto-loaded shelf; it's a curation gate
+   ("external plugins must meet quality and security standards"), not a closed door.
 
-Treat (2) as upside on top of (1), and don't let launch copy call it distribution
-to every Claude Code user.
+   Review is automated screening, no SLA. Entries pin to a commit SHA; pushes are
+   picked up automatically without re-submitting. The community mirror syncs nightly.
+
+Ship (1) first — it works today and needs nobody's approval. Until (2) lands on the
+*official* shelf, don't let launch copy call it distribution to every Claude Code
+user; landing only in `claude-community` is a listing on an opt-in shelf of 2.282.
 
 ## Known friction
 
@@ -86,3 +94,37 @@ to every Claude Code user.
   than in the connector case: developers read the address bar at first install.
   Whether a WorkOS custom domain on the *same* env fixes the hostname without
   changing the issuer is unverified.
+
+## Submission requirements — checked 2026-08-25
+
+From the [submission docs](https://claude.com/docs/plugins/submit) and the
+[Software Directory Policy](https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy).
+
+| Requirement | State |
+|---|---|
+| Public GitHub repo ("closed-source plugins are not accepted") | ⬜ `zcag/tela-claude-plugin` not created yet |
+| `claude plugin validate` passes | ✅ `make plugin-validate`, `--strict`, both manifests |
+| Plugin name free in the directory | ✅ no `tela` among the 2.282 community entries |
+| Subdirectory layout supported | ✅ 406 entries use the `git-subdir` source shape |
+| Privacy policy at a public URL | ✅ `/privacy`, linked from the plugin README |
+| Verified contact + support channel | ✅ `tela@telawiki.com`, linked from the plugin README |
+| Documented functionality/purpose/troubleshooting | ✅ README + `/mcp` + the docs space |
+| ≥3 working examples of core features | ✅ README "Try it"; 5 more in `mcp-submission-claude.md` |
+| Testing account with sample data, no MFA | ✅ `mcp-demo`, space 4 (`scripts/seed-demo.py`); password held outside the repo |
+| OAuth 2.0, certs from recognized authorities | ✅ WorkOS AuthKit, PKCE S256 + DCR, valid TLS |
+| Owns the endpoint/domain it connects to | ✅ `telawiki.com` |
+| Collects no extraneous conversation data | ✅ reads only what the authenticated account can see |
+| Not a prohibited category | ✅ not financial execution, media generation, or an ad vehicle |
+| Submitter role: Console Developer/Admin/Owner, **or** claude.ai Team/Enterprise with directory management | ⚠️ the one open gate — see below |
+
+**The submitter-role gate is the thing to get right.** A free Console org at
+`platform.claude.com` satisfies it, and the docs name that path explicitly: *"Individual
+authors who aren't part of a claude.ai Team or Enterprise organization can sign up for
+Console at platform.claude.com and submit there."* That also routes **around** the stuck
+connector-directory submission, which is pinned to a workspace whose owner address is dead
+— don't submit the plugin from that org.
+
+**A lapsed trial does not break the demo account.** `planFor` falls back to `plan_key`
+(free) after the 7-day grace, and `personal_free` carries 3M embed tokens/month
+(`0070_atlas_cost_quotas.sql`), so a reviewer can still exercise `research`. Worth one
+manual smoke-test at submit time anyway, since the demo space was seeded in June.
