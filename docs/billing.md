@@ -112,6 +112,7 @@ Reconciliation (`reconcileBilling`), by event `type`:
 | `subscription.canceled` | cancellation **scheduled** — flag `cancel_at_period_end=1`, keep the plan and access. UI shows "cancels on `<period_end>`". |
 | `subscription.revoked` | period actually **ended** — downgrade `plan_key` to the account-kind free tier, clear sub state. |
 | `order.paid` | renewal/first payment — ensure `status='active'` for an account that already has a subscription. |
+| `checkout.updated` | **observational only** — records Polar's verdict on a checkout session (`expired` = the page was opened and abandoned). Touches no columns. |
 
 The **canceled vs revoked** distinction is load-bearing: `canceled` means "will
 end later" (keep access), `revoked` means "ended now" (downgrade). Gating the
@@ -133,8 +134,11 @@ genuine DB failure returns 500 (so Polar redelivers).
    `subscriptions:write` (for org seat re-sync), `orders:read`, `customers:read`
    → `TELA_POLAR_TOKEN`.
 3. **Webhook.** Add an endpoint → `<PUBLIC_BASE_URL>/api/billing/webhook`,
-   format **Raw**, subscribing to the `subscription.*` and `order.paid` events.
-   Copy its signing secret **verbatim** → `TELA_POLAR_WEBHOOK_SECRET`.
+   format **Raw**, subscribing to the `subscription.*`, `order.paid` **and
+   `checkout.updated`** events. Copy its signing secret **verbatim** →
+   `TELA_POLAR_WEBHOOK_SECRET`. Without `checkout.updated` subscribed in the
+   dashboard, the abandonment signal below never arrives — the code cannot
+   subscribe itself, and the gap is silent.
 4. **Map** plan keys → product UUIDs in `TELA_POLAR_PRODUCTS`.
 5. Redeploy the backend. Verify `Enabled()` by hitting the upgrade button in
    Settings → Plan & Usage.
@@ -142,6 +146,57 @@ genuine DB failure returns 500 (so Polar redelivers).
 Test the whole loop against the **sandbox** first:
 `TELA_POLAR_BASE_URL=https://sandbox-api.polar.sh` with a sandbox token, secret,
 and product UUIDs (sandbox is a fully separate environment; card `4242…`).
+
+## The funnel trail (`billing.*` events)
+
+Every step from seeing a price to money landing is recorded on the unified
+events feed (`events` table, migration `0033`) — see `billing_events.go`. This
+exists because the reconciler used to change plan state and record **nothing**:
+the feed held the checkout click and no outcome, so "three people reached
+checkout, none paid" was answerable and every follow-up — did they open the
+Polar page, was anything broken, what did a converting user give up, when did a
+trial actually lapse — was not.
+
+| type | means | written by |
+|---|---|---|
+| `billing.plans_viewed` | the paid tiers were rendered to a real person | `ListPlans` on `?src=billing` |
+| `billing.checkout` | a Polar checkout URL was minted (**intent, not money**) | `CreateCheckout` |
+| `billing.checkout_status` | Polar's verdict on that session (`status=expired` = opened and abandoned) | `checkout.updated` webhook |
+| `billing.subscription_update` | a subscription state event landed; `status=` carries which | `subscription.*` webhook |
+| `billing.subscription_canceled` | cancellation scheduled (access runs to period end) | `subscription.canceled` |
+| `billing.subscription_revoked` | period ended, account fell to free | `subscription.revoked` |
+| `billing.payment` | **money actually moved** | `order.paid` |
+| `billing.trial_started` | a self-serve signup was granted the trial tier | both signup paths |
+| `billing.trial_ending` / `billing.trial_expired` | the trial crossed its last-7-days line / lapsed unconverted | the sweep, below |
+
+Read them in the admin **Events** screen (filter group *Billing*) or straight
+from SQL — `detail` is `key=value` pairs, so `detail LIKE '%trial_days_left=%'`
+works.
+
+Three things worth knowing:
+
+- **`billing.*` is exempt from the events retention GC** (`events_gc.go`). The
+  180-day retention bounds high-volume types; billing rows are single digits a
+  month and are the one series whose whole value is longitudinal — a signup in
+  January and the payment it becomes in June are one story.
+- **`trial_days_left` is captured before the write that destroys it.** Converting
+  mid-trial forfeits the remaining free days (no trial period is passed to Polar,
+  so billing starts immediately) and `reconcileBilling` NULLs `trial_ends_at` in
+  the same UPDATE. Recording it at that moment is the only chance — it is what
+  distinguishes "converted early by choice" from "converted at expiry".
+- **Trial expiry is derived, so it needs an observer.** `planFor` resolves the
+  effective plan from `trial_ends_at` on every request (`limits.go`), which is
+  why expiry needs no job — and why nothing *happened* when a trial lapsed.
+  `billing_trial_sweep.go` runs every 6h and emits `trial_ending` /
+  `trial_expired` for new crossings, guarded by `NOT EXISTS` on the same
+  (type, user) and bounded to the last 30 days so a first run on an existing
+  database doesn't replay years of history as today's news. It writes events
+  only — no plan state, no email.
+
+Deliberately **not** recorded: the checkout start is no longer written to
+`access_audit`. That table is the access-control trail (org / membership / grant
+/ domain, kept forever for compliance) and its mirror filed the row as
+`access.billing.checkout` — a name no billing query would look under.
 
 ## Gotchas
 

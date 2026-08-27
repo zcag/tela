@@ -2,6 +2,8 @@ import type { ComponentType } from 'react'
 import {
   AlertTriangle,
   Bug,
+  Clock,
+  CreditCard,
   Eye,
   FilePlus,
   LogIn,
@@ -50,6 +52,28 @@ function describe(type: string): Descriptor {
       return { Icon: Terminal, group: 'api', tone: 'muted', verb: 'API request' }
     case 'client.error':
       return { Icon: Bug, group: 'error', tone: 'danger', verb: 'hit a client error' }
+    // billing.* — the money path, in order: saw the prices, pressed the button,
+    // Polar's verdict on that session, subscription state, money, trial dates.
+    case 'billing.plans_viewed':
+      return { Icon: Eye, group: 'billing', tone: 'muted', verb: 'viewed plans' }
+    case 'billing.checkout':
+      return { Icon: CreditCard, group: 'billing', tone: 'accent', verb: 'started checkout' }
+    case 'billing.checkout_status':
+      return { Icon: CreditCard, group: 'billing', tone: 'muted', verb: 'checkout ended' }
+    case 'billing.subscription_update':
+      return { Icon: CreditCard, group: 'billing', tone: 'accent', verb: 'subscription updated' }
+    case 'billing.subscription_canceled':
+      return { Icon: CreditCard, group: 'billing', tone: 'danger', verb: 'scheduled a cancellation' }
+    case 'billing.subscription_revoked':
+      return { Icon: CreditCard, group: 'billing', tone: 'danger', verb: 'lost their subscription' }
+    case 'billing.payment':
+      return { Icon: CreditCard, group: 'billing', tone: 'accent', verb: 'paid' }
+    case 'billing.trial_started':
+      return { Icon: Clock, group: 'billing', tone: 'muted', verb: 'started a trial' }
+    case 'billing.trial_ending':
+      return { Icon: Clock, group: 'billing', tone: 'muted', verb: "trial is ending" }
+    case 'billing.trial_expired':
+      return { Icon: Clock, group: 'billing', tone: 'danger', verb: 'trial expired' }
     default:
       if (type.startsWith('access.')) {
         // 'access.org_member.add' → 'org member add'

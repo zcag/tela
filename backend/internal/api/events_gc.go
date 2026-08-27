@@ -26,14 +26,7 @@ const eventsGCInterval = 6 * time.Hour
 // eventsGCInterval; stops when ctx is cancelled. Configurable via
 // TELA_EVENTS_RETENTION_DAYS (positive int; falls back to the default).
 func StartEventsGC(ctx context.Context, d *sql.DB) {
-	days := defaultEventsRetentionDays
-	if v := os.Getenv("TELA_EVENTS_RETENTION_DAYS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			days = n
-		} else {
-			slog.Warn("events: ignoring invalid TELA_EVENTS_RETENTION_DAYS, using default", "value", v, "default_days", days)
-		}
-	}
+	days := retentionDays()
 	slog.Info("events: retention GC", "retention_days", days, "sweep_interval", eventsGCInterval)
 	go func() {
 		if err := purgeEventsOlderThan(ctx, d, days); err != nil {
@@ -54,6 +47,21 @@ func StartEventsGC(ctx context.Context, d *sql.DB) {
 	}()
 }
 
+// retentionDays resolves the configured events retention. Shared with the trial
+// sweep, which must know the retention to reason about its own idempotency
+// guard (billing_trial_sweep.go).
+func retentionDays() int {
+	days := defaultEventsRetentionDays
+	if v := os.Getenv("TELA_EVENTS_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			days = n
+		} else {
+			slog.Warn("events: ignoring invalid TELA_EVENTS_RETENTION_DAYS, using default", "value", v, "default_days", days)
+		}
+	}
+	return days
+}
+
 // purgeEventsOlderThan deletes events whose created_at is older than the cutoff,
 // computed in SQL into the same 'YYYY-MM-DD HH:MM:SS' UTC text the column stores
 // so the comparison is a lexicographic TEXT compare.
@@ -61,8 +69,17 @@ func purgeEventsOlderThan(ctx context.Context, d *sql.DB, days int) error {
 	if days <= 0 {
 		return nil
 	}
+	// billing.* is exempt. The retention exists to bound high-volume types
+	// (page.view, api.request); billing rows are single digits a month and are
+	// the one series whose whole value is longitudinal — a signup in January and
+	// the payment it becomes in June are one story, and a 180-day window cuts it
+	// in half. They are also the rows nothing else can reconstruct: Polar knows
+	// its own side, but the trial that was forfeited and the offer that was
+	// viewed exist only here.
 	_, err := d.ExecContext(ctx,
-		`DELETE FROM events WHERE created_at < to_char((now() AT TIME ZONE 'UTC') - make_interval(days => $1), 'YYYY-MM-DD HH24:MI:SS')`,
+		`DELETE FROM events
+		  WHERE created_at < to_char((now() AT TIME ZONE 'UTC') - make_interval(days => $1), 'YYYY-MM-DD HH24:MI:SS')
+		    AND type NOT LIKE 'billing.%'`,
 		days)
 	return err
 }

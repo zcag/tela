@@ -119,6 +119,8 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	recordTrialStarted(ctx, s.DB, userID, username, signupTrialPlan, signupTrialDays)
+
 	// Mint + send the confirmation link. A send failure is logged but does not
 	// fail the request — the account exists and the user can use "resend".
 	s.sendVerification(ctx, s.linkOrigin(r), userID, username, email, s.emailBrandForRequest(r))

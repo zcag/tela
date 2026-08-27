@@ -159,7 +159,18 @@ func (s *Server) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "billing_error", "could not start checkout")
 		return
 	}
-	s.audit(ctx, r, "billing.checkout", acct.Kind, acct.ID, req.PlanKey)
+	// Recorded on the events feed as billing.*, NOT via s.audit: access_audit is
+	// the access-control trail (org / membership / grant / auto-join / domain —
+	// see audit.go) kept forever for compliance, and its mirror would file this
+	// as `access.billing.checkout`. A checkout start is neither an access change
+	// nor a sibling of one; filing it there put the only billing row we had under
+	// a name no billing query would think to look for.
+	s.recordRequestEvent(r, eventInput{
+		Type:       evtBillingCheckout,
+		TargetKind: acct.Kind,
+		TargetID:   &acct.ID,
+		Detail:     billingDetail("plan="+req.PlanKey, "interval="+interval),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
@@ -310,6 +321,22 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 	table := acctTable(acct.Kind)
 
 	switch evt.Type {
+	case "checkout.updated":
+		// Polar's checkout lifecycle — the only signal that says what became of a
+		// URL we minted. `expired` means the page was reached and abandoned, which
+		// is what separates "something blocked them" from "they looked and
+		// declined"; without it the trail stops at intent and both readings stay
+		// alive forever. Purely observational: the subscription events remain
+		// authoritative for plan state, so this case touches no columns.
+		//
+		// Requires checkout.updated to be enabled on the webhook endpoint in the
+		// Polar dashboard — code alone does not subscribe us to it.
+		if st := evt.Data.Status; st != "" && st != "open" {
+			s.recordBillingEvent(ctx, acct, evtBillingCheckoutStatus,
+				billingDetail("status="+st, s.planDetail(evt.Data.ProductID)))
+		}
+		return nil
+
 	case "subscription.created", "subscription.active", "subscription.updated":
 		planKey, ok := s.billing.PlanFor(evt.Data.ProductID)
 		if !ok {
@@ -334,8 +361,16 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 		// A user's trial is cleared on a real paid plan so the trial banner stops
 		// and planFor resolves the base plan_key directly.
 		clearTrial := ""
+		trialDaysForfeited := ""
 		if acct.Kind == accountUser && grantPlan {
 			clearTrial = ", trial_plan_key = NULL, trial_ends_at = NULL"
+			// Read what the trial was worth BEFORE the UPDATE wipes it. Converting
+			// mid-trial forfeits the remaining free days (no trial period is passed
+			// to Polar, so billing starts immediately) — and once trial_ends_at is
+			// NULL, nothing anywhere can say how many days that was. Recording it
+			// here is the only chance: it's what tells you whether people convert
+			// early by choice or only ever at expiry.
+			trialDaysForfeited = trialDaysLeft(ctx, s.DB, acct.ID)
 		}
 		setPlan := ""
 		args := []any{status, periodEnd, cancel, nullIfEmpty(evt.Data.ID), custID}
@@ -353,7 +388,13 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 			polar_customer_id = COALESCE($5, polar_customer_id)`+clearTrial+`,
 			updated_at = tela_now()
 			WHERE id = `+idPlaceholder, args...)
-		return err
+		if err != nil {
+			return err
+		}
+		s.recordBillingEvent(ctx, acct, evtBillingSubUpdate, billingDetail(
+			"status="+status, "plan="+planKey, "event="+evt.Type,
+			boolDetail("granted", grantPlan), trialDaysForfeited))
+		return nil
 
 	case "subscription.canceled":
 		// Cancellation scheduled — access continues to period end. Flag it (the UI
@@ -366,7 +407,15 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 			updated_at = tela_now()
 			WHERE id = $2 AND polar_subscription_id = $3`,
 			fmtPolarTime(evt.Data.CurrentPeriodEnd), acct.ID, evt.Data.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// cancel_reason is captured at the portal call (CreateBillingPortal), so
+		// the churn reason and the cancellation land in two different places —
+		// name it here so a reader of the feed knows where to look for the why.
+		s.recordBillingEvent(ctx, acct, evtBillingSubCanceled, billingDetail(
+			kvTime("period_end", evt.Data.CurrentPeriodEnd), "reason_in=cancel_reason"))
+		return nil
 
 	case "subscription.revoked":
 		// Period actually ended → downgrade to the free tier and clear sub state.
@@ -383,7 +432,12 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 			updated_at = tela_now()
 			WHERE id = $2 AND polar_subscription_id = $3`,
 			freePlanKey(acct.Kind), acct.ID, evt.Data.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		s.recordBillingEvent(ctx, acct, evtBillingSubRevoked,
+			billingDetail("plan="+freePlanKey(acct.Kind)))
+		return nil
 
 	case "order.paid":
 		// Renewal or first payment confirming money received. Subscription events
@@ -398,7 +452,14 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 		if err == nil && acct.Kind == accountOrg {
 			go s.syncOrgSeats(context.Background(), acct.ID)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		// The only event in the set that means money actually moved. Everything
+		// else on the path is intent or state.
+		s.recordBillingEvent(ctx, acct, evtBillingPaid,
+			billingDetail(s.planDetail(evt.Data.ProductID), "order="+evt.Data.ID))
+		return nil
 	}
 	return nil
 }

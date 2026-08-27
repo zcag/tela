@@ -162,6 +162,15 @@ func (s *Server) ListPlans(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "iterate plans failed")
 		return
 	}
+	// ?src=billing marks the render of the paid tiers to a real person, as
+	// opposed to the same catalog being read by the admin tier-picker. It is the
+	// step BEFORE intent: without it, someone who opened the billing screen and
+	// declined is indistinguishable from someone who never saw a price, and the
+	// two call for opposite fixes. Undercounts slightly by design — the client
+	// caches the catalog, so a revisit inside its stale window sends no request.
+	if r.URL.Query().Get("src") == "billing" {
+		s.recordRequestEvent(r, eventInput{Type: evtBillingPlansViewed})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
 }
 

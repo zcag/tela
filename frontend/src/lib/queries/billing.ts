@@ -34,11 +34,17 @@ export function useOrgUsage(orgId: number | null | undefined) {
 }
 
 // GET /api/plans — every tier, for the plan-comparison UI.
-export function usePlans() {
+//
+// `src` names the surface asking. The billing screen passes 'billing' so the
+// backend can record that a real person was shown the prices (billing_events.go)
+// — the admin tier-picker reads the same catalog and must not look like demand.
+// It is part of the query key so the two callers don't share a cache entry and
+// silently swallow each other's signal.
+export function usePlans(src?: 'billing') {
   return useQuery({
-    queryKey: billingKeys.plans(),
+    queryKey: [...billingKeys.plans(), src ?? 'none'],
     queryFn: async () => {
-      const { plans } = await api<{ plans: Plan[] }>('/api/plans')
+      const { plans } = await api<{ plans: Plan[] }>(`/api/plans${src ? `?src=${src}` : ''}`)
       return plans
     },
     staleTime: 5 * 60_000,

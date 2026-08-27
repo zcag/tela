@@ -459,7 +459,7 @@ export function SettingsBillingTab() {
   const me = useMe()
   const orgs = useOrgs()
   const myUsage = useMyUsage()
-  const plans = usePlans()
+  const plans = usePlans('billing')
   const isAdmin = me.data?.is_instance_admin ?? false
   // Honor a ?interval=year deep-link (e.g. from the landing's yearly toggle) so a
   // "Get Personal yearly" click lands here pre-set to yearly.

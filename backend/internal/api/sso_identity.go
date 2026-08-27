@@ -175,13 +175,14 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 	// username is just its slug. '' when the provider gave us nothing usable,
 	// which the UI falls back from to the username.
 	displayName = strings.TrimSpace(id.displayName)
+	trial := !isOrgSSOProvider(id.provider)
 	userID, err = insertUser(ctx, tx, newUser{
 		Username:     username,
 		DisplayName:  displayName,
 		Email:        id.email,
 		Verified:     true,
 		PasswordHash: hash,
-		Trial:        !isOrgSSOProvider(id.provider),
+		Trial:        trial,
 	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {
@@ -192,6 +193,11 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 	}
 	if err := linkSSOIdentity(ctx, tx, userID, id); err != nil {
 		return 0, "", false, err
+	}
+	if trial {
+		// Inside the tx on purpose: a signup that rolls back leaves no trial and
+		// must leave no record of one.
+		recordTrialStarted(ctx, tx, userID, username, signupTrialPlan, signupTrialDays)
 	}
 	return userID, username, true, nil
 }

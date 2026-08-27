@@ -37,6 +37,7 @@ export const EVENT_TYPE_GROUPS: { label: string; types: string[] }[] = [
   { label: 'Ask', types: ['ask'] },
   { label: 'API', types: ['api.request'] },
   { label: 'Errors', types: ['client.error'] },
+  { label: 'Billing', types: ['billing.'] },
 ]
 
 export function useInfiniteEvents(filters: EventFilters) {

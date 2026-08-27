@@ -282,6 +282,9 @@ func New(db *sql.DB) *Server {
 	// Weekly digest sender — daily tick, per-user 7-day cadence. No-op until a
 	// user opts in (digest_frequency defaults to 'off').
 	go s.digestLoop(context.Background())
+	// Trial lifecycle observer — records the ending/expiry moments that are
+	// otherwise derived and therefore invisible (billing_trial_sweep.go).
+	go s.startTrialSweep(context.Background())
 	// Admin AI kill-switch (ai.disabled): pause EVERY background AI worker so a
 	// maintenance window on the AI backend isn't hammered by indexing, summaries,
 	// or agreement. Each worker leaves its queue intact and resumes (+ stale-sweep
