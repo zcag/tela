@@ -42,9 +42,14 @@ type usageOut struct {
 }
 
 type subscriptionOut struct {
-	Status            string  `json:"status"`     // active|canceled|past_due
+	Status            string  `json:"status"`     // trialing|active|canceled|past_due
 	PeriodEnd         *string `json:"period_end"` // paid-through, when known
 	CancelAtPeriodEnd bool    `json:"cancel_at_period_end"`
+	// TrialEnd is the PENDING first-charge date while status is `trialing` —
+	// set when a subscription was bought during a tela trial and Polar deferred
+	// the charge. Absent otherwise. Not the same as PeriodEnd, which is the
+	// billing period; the UI must say "first charge", never "renews".
+	TrialEnd *string `json:"trial_end,omitempty"`
 }
 
 // buildUsage assembles the plan + live usage snapshot for an account.
@@ -95,17 +100,22 @@ func (s *Server) buildUsage(ctx context.Context, acct account) (usageOut, error)
 		status    string
 		periodEnd sql.NullString
 		cancelInt int
+		trialEnd  sql.NullString
 	)
 	if err = s.DB.QueryRowContext(ctx,
-		`SELECT subscription_status, subscription_period_end, subscription_cancel_at_period_end
+		`SELECT subscription_status, subscription_period_end, subscription_cancel_at_period_end,
+		        subscription_trial_end
 		   FROM `+acctTable(acct.Kind)+` WHERE id = $1`, acct.ID).
-		Scan(&status, &periodEnd, &cancelInt); err != nil {
+		Scan(&status, &periodEnd, &cancelInt, &trialEnd); err != nil {
 		return usageOut{}, err
 	}
 	if status != "none" && status != "" {
 		sub := &subscriptionOut{Status: status, CancelAtPeriodEnd: cancelInt == 1}
 		if periodEnd.Valid {
 			sub.PeriodEnd = &periodEnd.String
+		}
+		if trialEnd.Valid {
+			sub.TrialEnd = &trialEnd.String
 		}
 		out.Subscription = sub
 	}

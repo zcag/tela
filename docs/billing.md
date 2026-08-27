@@ -151,10 +151,15 @@ and product UUIDs (sandbox is a fully separate environment; card `4242…`).
 ## Trials on the billing screen
 
 A signup trial grants **the same tier that is on sale** (`personal_plus`, see
-`users_create.go`), and converting mid-trial **forfeits the remaining free days**
-— `CreateCheckout` passes no trial period to Polar, so billing starts on payment,
-and `subscription.active` NULLs `trial_ends_at` in the same UPDATE. The screen
-must therefore say so, or the paid button reads as either broken or a swindle.
+`users_create.go`), so during a trial there is nothing extra to buy. Subscribing
+mid-trial therefore **defers the first charge** to the day the trial would have
+ended: `CreateCheckout` passes Polar `trial_interval: "day"` +
+`trial_interval_count: <days left>`, Polar collects the card, sets the
+subscription to `trialing`, and bills when it lapses.
+
+Before this, converting forfeited the remaining free days — you paid today for
+access you already had, which is why all three strangers who ever reached
+checkout clicked on signup day and none completed.
 
 The trap that produced that: `me.trial` is **gated** by `userTrialStatus` to the
 last 7 days + grace, deliberately, so the app-wide banner isn't a month of
@@ -172,8 +177,34 @@ it, so the banner and the screen cannot drift). With it the screen:
 - labels the button **Subscribe to**, not *Upgrade to*, for the trialled tier —
   nothing is gained by "upgrading" to what you already have.
 
-The action behind the button is unchanged: converting a trial early is allowed,
-it just isn't described as a bargain.
+### How the deferral works
+
+`CreateCheckout` sends the trial only when **all three** hold, and each gate
+prevents a distinct way of giving access away:
+
+1. `acct.Kind == accountUser` — orgs are never trialled.
+2. `trialDaysRemaining` returns ≥ 1 day (**ceil** — a floor would bill a day
+   before the date the UI promised).
+3. The tier being bought **is** the tier being trialled. Moot while
+   `personal_plus` is the only purchasable personal tier; written down so a
+   second listed tier can't silently inherit free time.
+
+`trialDaysRemaining` is deliberately the *only* place remaining days are
+computed — checkout hands it to Polar and the events trail records it as
+`trial_days_deferred`, so the record and the customer's actual deal cannot drift.
+
+**The handoff.** On the `trialing` webhook, `reconcileBilling` grants the plan,
+NULLs tela's `trial_plan_key`/`trial_ends_at`, and stores Polar's `trial_end` in
+`subscription_trial_end` (migration `0078`). From that moment Polar owns the
+trial. **Exactly one system owns a trial at any time** — leaving both set would
+make `planFor` and the subscription disagree about what the account is on. The
+column is stored rather than derived from `subscription_period_end` because
+whether Polar equates the two during `trialing` is undocumented, and a charge
+date is not a thing to guess at. It is cleared once the status leaves `trialing`,
+so it always means *pending*, never *historical*.
+
+`admin_stats` excludes `trialing` from **paid subscriptions**: those accounts
+have committed but not been charged, and can still cancel for free.
 
 ## The funnel trail (`billing.*` events)
 
@@ -190,7 +221,7 @@ trial actually lapse — was not.
 | `billing.plans_viewed` | the paid tiers were rendered to a real person | `ListPlans` on `?src=billing` |
 | `billing.checkout` | a Polar checkout URL was minted (**intent, not money**) | `CreateCheckout` |
 | `billing.checkout_status` | Polar's verdict on that session (`status=expired` = opened and abandoned) | `checkout.updated` / `checkout.expired` webhook |
-| `billing.subscription_update` | a subscription state event landed; `status=` carries which | `subscription.*` webhook |
+| `billing.subscription_update` | a subscription state event landed; `status=` carries which, plus `trial_days_deferred` / `polar_trial_end` on a mid-trial conversion | `subscription.*` webhook |
 | `billing.subscription_canceled` | cancellation scheduled (access runs to period end) | `subscription.canceled` |
 | `billing.subscription_revoked` | period ended, account fell to free | `subscription.revoked` |
 | `billing.payment` | **money actually moved** | `order.paid` |
@@ -207,11 +238,10 @@ Three things worth knowing:
   180-day retention bounds high-volume types; billing rows are single digits a
   month and are the one series whose whole value is longitudinal — a signup in
   January and the payment it becomes in June are one story.
-- **`trial_days_left` is captured before the write that destroys it.** Converting
-  mid-trial forfeits the remaining free days (no trial period is passed to Polar,
-  so billing starts immediately) and `reconcileBilling` NULLs `trial_ends_at` in
-  the same UPDATE. Recording it at that moment is the only chance — it is what
-  distinguishes "converted early by choice" from "converted at expiry".
+- **`trial_days_deferred` is captured before the write that destroys it.**
+  `reconcileBilling` NULLs `trial_ends_at` in the same UPDATE that grants the
+  plan, so that moment is the only one where both facts exist. It is what
+  distinguishes "converted early" from "converted at expiry".
 - **Trial expiry is derived, so it needs an observer.** `planFor` resolves the
   effective plan from `trial_ends_at` on every request (`limits.go`), which is
   why expiry needs no job — and why nothing *happened* when a trial lapsed.

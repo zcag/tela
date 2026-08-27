@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -135,10 +136,21 @@ func kvTime(key string, t *time.Time) string {
 	return key + "=" + t.UTC().Format("2006-01-02T15:04:05Z")
 }
 
-// trialDaysLeft renders `trial_days_left=N` for a user with a live trial, or ""
-// when there is none. Best-effort: a lookup failure yields "" rather than
-// blocking the billing write it decorates.
-func trialDaysLeft(ctx context.Context, q queryer, userID int64) string {
+// trialDaysRemaining reports whole days left on a user's live tela trial.
+//
+// This is THE number for anything that acts on a trial's remaining time, and it
+// has two consumers that must never disagree: CreateCheckout, which hands it to
+// Polar as the days to defer the first charge, and the events trail, which
+// records what a conversion deferred. If they computed it separately, the trail
+// would eventually describe a different deal from the one the customer got.
+//
+// Rounds UP. The count becomes a charge date, and rounding down bills a day
+// before the date the UI promised — on a payment path that is a refund request,
+// not a rounding error. Ceil errs in the customer's favour by at most 24h.
+//
+// ok is false when there is no live trial (no row, already lapsed, or a lookup
+// failure): callers then charge immediately, which is the conservative outcome.
+func trialDaysRemaining(ctx context.Context, q queryer, userID int64) (int, bool) {
 	var days sql.NullFloat64
 	err := q.QueryRowContext(ctx, `
 		SELECT EXTRACT(EPOCH FROM (u.trial_ends_at::timestamp - (now() AT TIME ZONE 'UTC'))) / 86400
@@ -146,8 +158,23 @@ func trialDaysLeft(ctx context.Context, q queryer, userID int64) string {
 		 WHERE u.id = $1
 		   AND NULLIF(u.trial_ends_at, '') IS NOT NULL
 		   AND u.trial_ends_at::timestamp > (now() AT TIME ZONE 'UTC')`, userID).Scan(&days)
-	if err != nil || !days.Valid {
-		return "" // no row = no live trial; a real error is not worth failing over
+	if err != nil || !days.Valid || days.Float64 <= 0 {
+		return 0, false
 	}
-	return "trial_days_left=" + strconv.Itoa(int(days.Float64))
+	return int(math.Ceil(days.Float64)), true
+}
+
+// trialDaysDeferredDetail renders `trial_days_deferred=N` for the conversion
+// event, or "" when no trial was in flight.
+//
+// The key says DEFERRED, not "left": since checkout passes the remaining days to
+// Polar, converting early no longer forfeits them — it moves the first charge to
+// the day the trial would have ended. The old name would now describe the
+// opposite of what happens, in the one record built to explain conversions.
+func trialDaysDeferredDetail(ctx context.Context, q queryer, userID int64) string {
+	n, ok := trialDaysRemaining(ctx, q, userID)
+	if !ok {
+		return ""
+	}
+	return "trial_days_deferred=" + strconv.Itoa(n)
 }

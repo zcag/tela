@@ -198,6 +198,16 @@ function BillingActions({
           <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
             Cancels on {localDateFromSqlite(sub.period_end)} — access continues until then.
           </p>
+        ) : sub.status === 'trialing' ? (
+          // Subscribed during a trial: Polar holds the card and bills when the
+          // trial lapses. This case MUST come before the "Renews on" fallback —
+          // that date is this account's first-ever charge, and calling it a
+          // renewal tells someone who has paid nothing that they already have.
+          <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+            {sub.trial_end
+              ? `Free until ${localDateFromSqlite(sub.trial_end)} — your first charge is on that date. Cancel before then and you won't be charged.`
+              : "You're on a free trial — cancel before it ends and you won't be charged."}
+          </p>
         ) : sub.status === 'past_due' ? (
           <p className="m-0 text-[length:var(--text-xs)] text-[var(--danger)]">
             Payment past due — update your card to keep this plan.
@@ -244,7 +254,7 @@ function BillingActions({
         <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
           {trial.ended
             ? `Your ${trial.plan_name} trial has ended — full access continues until ${localDateFromSqlite(trial.grace_ends_at)}.`
-            : `You're on a free ${trial.plan_name} trial until ${localDateFromSqlite(trial.ends_at)} — everything in that plan is already unlocked. Subscribing now starts billing today and ends the trial.`}
+            : `You're on a free ${trial.plan_name} trial until ${localDateFromSqlite(trial.ends_at)} — everything in that plan is already unlocked. Subscribe now and you keep the rest of it free: your first charge is on ${localDateFromSqlite(trial.ends_at)}, and cancelling before then costs nothing.`}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">

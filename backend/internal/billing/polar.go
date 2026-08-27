@@ -186,13 +186,22 @@ func (c *Client) GetProduct(ctx context.Context, productID string) (*ProductInfo
 // ── checkout ────────────────────────────────────────────────────────────────
 
 // CheckoutInput is the subset of Polar's checkout fields we set.
+// maxTrialDays is Polar's documented ceiling for trial_interval_count.
+const maxTrialDays = 1000
+
 type CheckoutInput struct {
 	ProductID          string // the tier's Polar product UUID
 	SuccessURL         string // may contain the {CHECKOUT_ID} token
 	ExternalCustomerID string // "user:<id>" / "org:<id>" — our join key, echoed on every webhook
 	CustomerEmail      string // prefill (optional)
 	Seats              int    // per-seat quantity (org tiers); 0 = omit
-	Metadata           map[string]string
+	// TrialDays defers the first charge by N days: Polar collects the card at
+	// checkout, sets the subscription to `trialing`, and bills when it lapses.
+	// 0 = charge immediately. Days (not weeks/months) because the caller
+	// computes an exact day count from a live tela trial — a coarser unit would
+	// reintroduce the rounding it just did carefully.
+	TrialDays int
+	Metadata  map[string]string
 }
 
 // CreateCheckout creates a hosted checkout session and returns its URL. The
@@ -211,6 +220,18 @@ func (c *Client) CreateCheckout(ctx context.Context, in CheckoutInput) (string, 
 	}
 	if in.Seats > 0 {
 		body["seats"] = in.Seats
+	}
+	// A trial set here OVERRIDES whatever the product carries (Polar's rule), so
+	// this is the single source of a checkout's trial. Clamped to Polar's
+	// documented 1..1000; a non-positive count omits the fields entirely rather
+	// than sending a zero-day trial.
+	if in.TrialDays > 0 {
+		n := in.TrialDays
+		if n > maxTrialDays {
+			n = maxTrialDays
+		}
+		body["trial_interval"] = "day"
+		body["trial_interval_count"] = n
 	}
 	if len(in.Metadata) > 0 {
 		body["metadata"] = in.Metadata
@@ -322,6 +343,8 @@ type EventData struct {
 	CustomerID        string     `json:"customer_id"`        // Polar customer id
 	SubscriptionID    string     `json:"subscription_id"`    // set on order events
 	CurrentPeriodEnd  *time.Time `json:"current_period_end"` // paid-through (sub events)
+	TrialStart        *time.Time `json:"trial_start"`        // set while a Polar-side trial runs
+	TrialEnd          *time.Time `json:"trial_end"`          // when the first charge falls due
 	CancelAtPeriodEnd bool       `json:"cancel_at_period_end"`
 	EndedAt           *time.Time `json:"ended_at"` // non-nil once a sub is revoked/ended
 	Customer          struct {

@@ -347,7 +347,15 @@ func (s *Server) AdminStats(w http.ResponseWriter, r *http.Request) {
 	_ = s.DB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM users WHERE trial_plan_key IS NOT NULL AND trial_ends_at <= tela_now() AND deleted_at IS NULL`).Scan(&out.ExpiredTrials)
 	_ = s.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM users WHERE plan_key NOT IN ('personal_free','plus_trial') AND deleted_at IS NULL`).Scan(&out.PaidSubscriptions)
+		// subscription_status='trialing' is excluded: those accounts hold a real
+		// subscription whose FIRST CHARGE HAS NOT HAPPENED (bought during a tela
+		// trial, so Polar deferred it) and can still cancel for free. Counting
+		// them as paid is the same class of flattering lie this whole billing
+		// trail exists to remove.
+		`SELECT COUNT(*) FROM users
+		  WHERE plan_key NOT IN ('personal_free','plus_trial')
+		    AND subscription_status <> 'trialing'
+		    AND deleted_at IS NULL`).Scan(&out.PaidSubscriptions)
 
 	// --- AI health (last probe verdict from StartAIHealthProbe) ---
 	out.AIHealthy = s.aiHealthy()

@@ -141,12 +141,32 @@ func (s *Server) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Defer the first charge to the day this account's tela trial would have
+	// ended, instead of billing today and wiping the remaining free days.
+	//
+	// Three gates, all load-bearing:
+	//   1. personal accounts only — orgs are never trialled;
+	//   2. a live trial with whole days left (trialDaysRemaining, ceil);
+	//   3. the tier being bought IS the tier being trialled — deferring payment
+	//      for some OTHER tier would hand out free access to something the trial
+	//      never granted. Moot while personal_plus is the only purchasable
+	//      personal tier, which is exactly why it must be written down now.
+	trialDays := 0
+	if acct.Kind == accountUser {
+		if t := s.loadTrial(ctx, acct.ID, false); t != nil && t.PlanKey == req.PlanKey {
+			if n, ok := trialDaysRemaining(ctx, s.DB, acct.ID); ok {
+				trialDays = n
+			}
+		}
+	}
+
 	url, err := s.billing.CreateCheckout(ctx, billing.CheckoutInput{
 		ProductID:          product,
 		SuccessURL:         s.linkOrigin(r) + "/settings?tab=billing&checkout={CHECKOUT_ID}",
 		ExternalCustomerID: acctExternalID(acct),
 		CustomerEmail:      email,
 		Seats:              seats,
+		TrialDays:          trialDays,
 		Metadata: map[string]string{
 			"plan_key":     req.PlanKey,
 			"account_kind": acct.Kind,
@@ -371,22 +391,36 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 		// A user's trial is cleared on a real paid plan so the trial banner stops
 		// and planFor resolves the base plan_key directly.
 		clearTrial := ""
-		trialDaysForfeited := ""
+		trialDaysDeferred := ""
 		if acct.Kind == accountUser && grantPlan {
 			clearTrial = ", trial_plan_key = NULL, trial_ends_at = NULL"
-			// Read what the trial was worth BEFORE the UPDATE wipes it. Converting
-			// mid-trial forfeits the remaining free days (no trial period is passed
-			// to Polar, so billing starts immediately) — and once trial_ends_at is
-			// NULL, nothing anywhere can say how many days that was. Recording it
-			// here is the only chance: it's what tells you whether people convert
-			// early by choice or only ever at expiry.
-			trialDaysForfeited = trialDaysLeft(ctx, s.DB, acct.ID)
+			// Read what the trial was worth BEFORE the UPDATE wipes it — once
+			// trial_ends_at is NULL nothing can say how many days it had left, and
+			// this is the only moment both facts exist at once.
+			//
+			// Clearing tela's trial here is the HANDOFF, and it is deliberate: from
+			// this event on, Polar owns the trial (status `trialing`,
+			// subscription_trial_end below) and tela's own trial columns must stop
+			// answering for it. Exactly one system owns a given trial at any time;
+			// leaving both set would make planFor and the subscription disagree
+			// about what the account is on.
+			trialDaysDeferred = trialDaysDeferredDetail(ctx, s.DB, acct.ID)
+		}
+		// subscription_trial_end holds a PENDING first charge, so it is set only
+		// while the subscription is actually `trialing`. Polar keeps sending
+		// trial_end after the trial converts, as history; storing that would leave
+		// a stale "first charge on <past date>" for the UI to show forever.
+		var trialEnd any
+		if status == "trialing" {
+			trialEnd = fmtPolarTime(evt.Data.TrialEnd)
 		}
 		setPlan := ""
-		args := []any{status, periodEnd, cancel, nullIfEmpty(evt.Data.ID), custID}
+		args := []any{status, periodEnd, cancel, nullIfEmpty(evt.Data.ID), custID, trialEnd}
 		if grantPlan {
-			setPlan = "plan_key = $6, "
+			// Numbered from the args slice rather than hardcoded: the old literal
+			// "$6" silently depended on nothing ever being added before it.
 			args = append(args, planKey)
+			setPlan = "plan_key = $" + strconv.Itoa(len(args)) + ", "
 		}
 		args = append(args, acct.ID)
 		idPlaceholder := "$" + strconv.Itoa(len(args))
@@ -395,7 +429,8 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 			subscription_period_end = $2,
 			subscription_cancel_at_period_end = $3,
 			polar_subscription_id = $4,
-			polar_customer_id = COALESCE($5, polar_customer_id)`+clearTrial+`,
+			polar_customer_id = COALESCE($5, polar_customer_id),
+			subscription_trial_end = $6`+clearTrial+`,
 			updated_at = tela_now()
 			WHERE id = `+idPlaceholder, args...)
 		if err != nil {
@@ -403,7 +438,8 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 		}
 		s.recordBillingEvent(ctx, acct, evtBillingSubUpdate, billingDetail(
 			"status="+status, "plan="+planKey, "event="+evt.Type,
-			boolDetail("granted", grantPlan), trialDaysForfeited))
+			boolDetail("granted", grantPlan), trialDaysDeferred,
+			kvTime("polar_trial_end", evt.Data.TrialEnd)))
 		return nil
 
 	case "subscription.canceled":
@@ -439,6 +475,7 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 			subscription_cancel_at_period_end = 0,
 			polar_subscription_id = NULL,
 			subscription_period_end = NULL,
+			subscription_trial_end = NULL,
 			updated_at = tela_now()
 			WHERE id = $2 AND polar_subscription_id = $3`,
 			freePlanKey(acct.Kind), acct.ID, evt.Data.ID)

@@ -3,10 +3,15 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zcag/tela/backend/internal/billing"
 	"github.com/zcag/tela/backend/internal/testdb"
 )
 
@@ -93,9 +98,9 @@ func TestReconcileRecordsLifecycleEvents(t *testing.T) {
 }
 
 // The one number that cannot be recovered later: converting mid-trial NULLs
-// trial_ends_at, so unless the forfeited days are captured in the same call,
+// trial_ends_at, so unless the deferred days are captured in the same call,
 // nothing anywhere can say whether a subscriber converted early or at expiry.
-func TestReconcileRecordsForfeitedTrialDays(t *testing.T) {
+func TestReconcileRecordsDeferredTrialDays(t *testing.T) {
 	s, d := wiredBillingServer(t)
 	ctx := context.Background()
 	uid := seedUser(t, d, "jason", "pw123456", false)
@@ -106,9 +111,11 @@ func TestReconcileRecordsForfeitedTrialDays(t *testing.T) {
 		t.Fatalf("active: %v", err)
 	}
 	got := billingEvents(t, d, evtBillingSubUpdate)
-	if len(got) != 1 || !strings.Contains(got[0], "trial_days_left=19") {
-		// 19, not 20: a trial ending 20 days out has 19 whole days left.
-		t.Fatalf("want trial_days_left=19 in the conversion event, got %q", got)
+	if len(got) != 1 || !strings.Contains(got[0], "trial_days_deferred=20") {
+		// 20: setTrial lands a whisker under 20 whole days and the count ceils,
+		// matching what checkout hands Polar — the trail and the customer's
+		// actual deal must be the same number.
+		t.Fatalf("want trial_days_deferred=20 in the conversion event, got %q", got)
 	}
 
 	// And a conversion with no trial in flight must not invent one.
@@ -118,7 +125,7 @@ func TestReconcileRecordsForfeitedTrialDays(t *testing.T) {
 		t.Fatalf("active (no trial): %v", err)
 	}
 	for _, detail := range billingEvents(t, d, evtBillingSubUpdate) {
-		if strings.Contains(detail, "trial_days_left=") && !strings.Contains(detail, "trial_days_left=19") {
+		if strings.Contains(detail, "trial_days_deferred=") && !strings.Contains(detail, "trial_days_deferred=20") {
 			t.Fatalf("no-trial conversion recorded a trial: %q", detail)
 		}
 	}
@@ -310,5 +317,216 @@ func TestOrgUsageHasNoTrial(t *testing.T) {
 	}
 	if out.Trial != nil {
 		t.Fatalf("org payload carries a trial: %+v", out.Trial)
+	}
+}
+
+// --- Deferring the first charge when subscribing during a trial ---------------
+//
+// These pin the GATES, not the mechanism (that's polar_test.go). Each one is a
+// way to accidentally hand out free access or bill on the wrong day.
+
+// checkoutProbe stands in for Polar and captures the checkout body tela sends.
+func checkoutProbe(t *testing.T) (*httptest.Server, *map[string]any) {
+	t.Helper()
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte(`{"url":"https://polar.test/c/1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &got
+}
+
+// wiredCheckoutServer is a live HTTP tela whose Polar client points at probe.
+func wiredCheckoutServer(t *testing.T, probeURL string) (*httptest.Server, *sql.DB) {
+	t.Helper()
+	t.Setenv("TELA_SHARE_SECRET", "tela-test-share-secret-fixed-32-byte!")
+	d := testdb.New(t)
+	h, srv := HandlerWithServer(d)
+	srv.billing = billing.New(billing.Config{
+		Token: "tok", WebhookSecret: "s", BaseURL: probeURL,
+		Products: map[string]string{"personal_plus": "prod_plus", "org_team": "prod_team"},
+	})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+	t.Cleanup(srv.auditWriter.Close)
+	return ts, d
+}
+
+func postCheckout(t *testing.T, c *http.Client, ts *httptest.Server, body string) int {
+	t.Helper()
+	resp, err := c.Post(ts.URL+"/api/billing/checkout", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestCheckoutDefersChargeForTrialledTier(t *testing.T) {
+	probe, got := checkoutProbe(t)
+	ts, d := wiredCheckoutServer(t, probe.URL)
+	uid := seedUser(t, d, "trialuser", "pw123456", false)
+	setTrial(t, d, uid, 19)
+	c := loginClient(t, ts, "trialuser", "pw123456")
+
+	if code := postCheckout(t, c, ts, `{"plan_key":"personal_plus"}`); code != 200 {
+		t.Fatalf("checkout status=%d", code)
+	}
+	if (*got)["trial_interval"] != "day" {
+		t.Fatalf("no trial deferral sent: %v", *got)
+	}
+	// 19 days out, ceil → 19. A floor would bill a day before the promised date.
+	if n := (*got)["trial_interval_count"]; n != float64(19) {
+		t.Fatalf("trial_interval_count = %v, want 19", n)
+	}
+}
+
+// Ceil, not floor: a trial ending in 18.5 days must defer 19, never 18.
+func TestCheckoutRoundsDeferralUp(t *testing.T) {
+	probe, got := checkoutProbe(t)
+	ts, d := wiredCheckoutServer(t, probe.URL)
+	uid := seedUser(t, d, "halfday", "pw123456", false)
+	if _, err := d.ExecContext(context.Background(), `
+		UPDATE users SET trial_plan_key='personal_plus',
+		       trial_ends_at = to_char((now() AT TIME ZONE 'UTC') + interval '18 days 12 hours', 'YYYY-MM-DD HH24:MI:SS')
+		 WHERE id=$1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	c := loginClient(t, ts, "halfday", "pw123456")
+	if code := postCheckout(t, c, ts, `{"plan_key":"personal_plus"}`); code != 200 {
+		t.Fatalf("checkout status=%d", code)
+	}
+	if n := (*got)["trial_interval_count"]; n != float64(19) {
+		t.Fatalf("18.5 days must ceil to 19, got %v", n)
+	}
+}
+
+// No live trial → charge now. Deferring here would be free access nobody earned.
+func TestCheckoutNoTrialChargesImmediately(t *testing.T) {
+	probe, got := checkoutProbe(t)
+	ts, d := wiredCheckoutServer(t, probe.URL)
+	seedUser(t, d, "plain", "pw123456", false)
+	c := loginClient(t, ts, "plain", "pw123456")
+
+	if code := postCheckout(t, c, ts, `{"plan_key":"personal_plus"}`); code != 200 {
+		t.Fatalf("checkout status=%d", code)
+	}
+	if _, ok := (*got)["trial_interval"]; ok {
+		t.Fatalf("non-trial account got a deferral: %v", *got)
+	}
+}
+
+// An already-lapsed trial (still inside planFor's 7-day grace) must not defer.
+func TestCheckoutLapsedTrialChargesImmediately(t *testing.T) {
+	probe, got := checkoutProbe(t)
+	ts, d := wiredCheckoutServer(t, probe.URL)
+	uid := seedUser(t, d, "lapsed", "pw123456", false)
+	setTrial(t, d, uid, -2)
+	c := loginClient(t, ts, "lapsed", "pw123456")
+
+	if code := postCheckout(t, c, ts, `{"plan_key":"personal_plus"}`); code != 200 {
+		t.Fatalf("checkout status=%d", code)
+	}
+	if _, ok := (*got)["trial_interval"]; ok {
+		t.Fatalf("lapsed trial got a deferral: %v", *got)
+	}
+}
+
+// Orgs are never trialled, so an org checkout must never defer — even when the
+// admin buying it is personally mid-trial. This is the one that would quietly
+// give a paying team a free month.
+func TestOrgCheckoutNeverDefers(t *testing.T) {
+	probe, got := checkoutProbe(t)
+	ts, d := wiredCheckoutServer(t, probe.URL)
+	uid := seedUser(t, d, "orgadmin", "pw123456", false)
+	setTrial(t, d, uid, 19) // the human is mid-trial…
+	orgID := seedOrg(t, d, "Acme", "acme")
+	seedOrgMember(t, d, orgID, uid, "admin")
+	c := loginClient(t, ts, "orgadmin", "pw123456")
+
+	body := fmt.Sprintf(`{"plan_key":"org_team","org_id":%d}`, orgID)
+	if code := postCheckout(t, c, ts, body); code != 200 {
+		t.Fatalf("org checkout status=%d", code)
+	}
+	if _, ok := (*got)["trial_interval"]; ok {
+		t.Fatalf("org checkout inherited a personal trial: %v", *got)
+	}
+}
+
+// A subscription bought during a trial arrives as `trialing`: it must grant the
+// plan (the customer has committed and holds access), hand the trial over to
+// Polar by clearing tela's own columns, and record the pending first-charge date
+// — which is the only thing the billing screen can honestly show them.
+func TestReconcileTrialingSubscriptionHandsOffTheTrial(t *testing.T) {
+	s, d := wiredBillingServer(t)
+	ctx := context.Background()
+	uid := seedUser(t, d, "deferred", "pw123456", false)
+	setTrial(t, d, uid, 19)
+	ext := acctExternalID(account{Kind: accountUser, ID: uid})
+
+	e := subEvent("subscription.created", ext, "prod_plus", "trialing", false)
+	trialEnd := time.Now().UTC().AddDate(0, 0, 19).Truncate(time.Second)
+	e.Data.TrialEnd = &trialEnd
+	if err := s.reconcileBilling(ctx, e); err != nil {
+		t.Fatalf("trialing: %v", err)
+	}
+
+	if plan, status, _ := acctPlan(t, d, "users", uid); plan != "personal_plus" || status != "trialing" {
+		t.Fatalf("trialing sub: plan=%q status=%q (should grant and record trialing)", plan, status)
+	}
+	// The handoff: exactly one system owns the trial, and it is now Polar.
+	var telaTrial sql.NullString
+	if err := d.QueryRowContext(ctx, `SELECT trial_ends_at FROM users WHERE id=$1`, uid).Scan(&telaTrial); err != nil {
+		t.Fatal(err)
+	}
+	if telaTrial.Valid {
+		t.Fatalf("tela trial still set after handoff: %q", telaTrial.String)
+	}
+	var polarTrialEnd sql.NullString
+	if err := d.QueryRowContext(ctx, `SELECT subscription_trial_end FROM users WHERE id=$1`, uid).Scan(&polarTrialEnd); err != nil {
+		t.Fatal(err)
+	}
+	if !polarTrialEnd.Valid {
+		t.Fatal("no pending first-charge date stored — the screen has nothing true to say")
+	}
+
+	// Once the trial converts to active, the pending charge is no longer pending.
+	act := subEvent("subscription.updated", ext, "prod_plus", "active", false)
+	act.Data.TrialEnd = &trialEnd // Polar keeps sending it as history
+	if err := s.reconcileBilling(ctx, act); err != nil {
+		t.Fatalf("active: %v", err)
+	}
+	if err := d.QueryRowContext(ctx, `SELECT subscription_trial_end FROM users WHERE id=$1`, uid).Scan(&polarTrialEnd); err != nil {
+		t.Fatal(err)
+	}
+	if polarTrialEnd.Valid {
+		t.Fatalf("stale first-charge date survived conversion: %q", polarTrialEnd.String)
+	}
+}
+
+// A deferred subscriber has paid nothing and can still cancel for free, so the
+// admin "paid subscriptions" figure must not count them.
+func TestPaidSubscriptionsExcludesTrialing(t *testing.T) {
+	s, d := wiredBillingServer(t)
+	ctx := context.Background()
+	uid := seedUser(t, d, "notyetpaid", "pw123456", false)
+	setTrial(t, d, uid, 19)
+	ext := acctExternalID(account{Kind: accountUser, ID: uid})
+	e := subEvent("subscription.created", ext, "prod_plus", "trialing", false)
+	if err := s.reconcileBilling(ctx, e); err != nil {
+		t.Fatalf("trialing: %v", err)
+	}
+
+	var paid int64
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM users
+		 WHERE plan_key NOT IN ('personal_free','plus_trial')
+		   AND subscription_status <> 'trialing'
+		   AND deleted_at IS NULL`).Scan(&paid); err != nil {
+		t.Fatal(err)
+	}
+	if paid != 0 {
+		t.Fatalf("paid subscriptions = %d, want 0 — nobody has been charged yet", paid)
 	}
 }

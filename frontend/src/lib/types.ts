@@ -232,9 +232,14 @@ export interface Usage {
   // Live Polar billing state; absent until the account has subscribed. Drives
   // the "Manage subscription" button and the cancel/past-due notices.
   subscription?: {
-    status: 'active' | 'canceled' | 'past_due'
+    // `trialing` = bought during a tela trial, so Polar deferred the first
+    // charge; a real subscription that has not been billed yet.
+    status: 'trialing' | 'active' | 'canceled' | 'past_due'
     period_end: string | null
     cancel_at_period_end: boolean
+    // Pending first-charge date while `trialing`. NOT period_end (the billing
+    // period) — say "first charge", never "renews".
+    trial_end?: string
   }
   // The live signup trial, if any. Unlike `me.trial` (which the backend gates to
   // the last 7 days so the app-wide banner isn't nagging), this is present for

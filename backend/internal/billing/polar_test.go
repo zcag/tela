@@ -214,3 +214,51 @@ func TestParseEvent(t *testing.T) {
 		t.Fatalf("unexpected parse: %+v", e)
 	}
 }
+
+// The two fields that move a customer's first charge. Wrong here means someone
+// is billed on the wrong day, so assert the wire body, not just the input.
+func TestCreateCheckoutTrialFields(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Write([]byte(`{"url":"https://polar.test/c/1"}`))
+	}))
+	defer srv.Close()
+	c := New(Config{Token: "tok", WebhookSecret: "s", BaseURL: srv.URL})
+
+	if _, err := c.CreateCheckout(context.Background(), CheckoutInput{
+		ProductID: "prod_1", ExternalCustomerID: "user:7", TrialDays: 19,
+	}); err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	if gotBody["trial_interval"] != "day" || gotBody["trial_interval_count"] != float64(19) {
+		t.Fatalf("trial fields = %v / %v, want day / 19",
+			gotBody["trial_interval"], gotBody["trial_interval_count"])
+	}
+
+	// No trial → the fields must be ABSENT, not zero. A zero-day trial is not a
+	// thing Polar accepts, and sending one would fail every non-trial checkout.
+	gotBody = nil
+	if _, err := c.CreateCheckout(context.Background(), CheckoutInput{
+		ProductID: "prod_1", ExternalCustomerID: "user:7",
+	}); err != nil {
+		t.Fatalf("checkout (no trial): %v", err)
+	}
+	if _, ok := gotBody["trial_interval"]; ok {
+		t.Fatalf("no-trial checkout sent trial fields: %v", gotBody)
+	}
+	if _, ok := gotBody["trial_interval_count"]; ok {
+		t.Fatalf("no-trial checkout sent a trial count: %v", gotBody)
+	}
+
+	// Clamped to Polar's documented ceiling.
+	gotBody = nil
+	if _, err := c.CreateCheckout(context.Background(), CheckoutInput{
+		ProductID: "prod_1", ExternalCustomerID: "user:7", TrialDays: 5000,
+	}); err != nil {
+		t.Fatalf("checkout (huge trial): %v", err)
+	}
+	if gotBody["trial_interval_count"] != float64(maxTrialDays) {
+		t.Fatalf("trial count = %v, want clamp to %d", gotBody["trial_interval_count"], maxTrialDays)
+	}
+}
