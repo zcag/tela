@@ -268,9 +268,23 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "add_comment",
 		Title:       "Add comment",
-		Description: "Attach a root (non-reply) comment to a page, anchored to a specific passage by a {prefix, exact, suffix} text triplet so it stays pinned to the right spot as the page changes (editor+). Pass idempotency_key to make retries safe (a repeat returns the original comment instead of posting a duplicate). Use for feedback ON page content; to report problems with tela itself use submit_feedback.",
+		Description: "Comment on a page (editor+). Omit parent_id for a ROOT comment: it needs an `anchor`, a {prefix, exact, suffix} text triplet that pins it to a passage so it survives edits to the page. Pass parent_id to REPLY inside an existing thread (no anchor; replying to a reply is rejected) — that is how you answer a person's comment, rather than posting a second root beside theirs. ANCHOR TEXT IS THE PAGE'S PLAIN TEXT, NOT ITS MARKDOWN: inline markers are stripped (`**ship it**` is anchored as `ship it`), blocks are joined by single newlines, and prefix/suffix hold at most 32 characters of surrounding context. Quote the passage as a reader sees it, not as get_page returns it. Pass idempotency_key to make retries safe (a repeat returns the original comment instead of posting a duplicate). Use for feedback ON page content; to report problems with tela itself use submit_feedback.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: &no, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.mcpAddComment)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_comments",
+		Title:       "List comments",
+		Description: "Read comments (editor+). Pass page_id for one page's full threads (each root with its replies), or space_id for an inbox of threads across a whole space (roots only, each with reply_count and page_title — drill into the page for the replies). `status` is open (default), resolved, or all. TO POLL FOR WHAT HUMANS WROTE: keep the `cursor` this returns and pass it back as `since` next time — you then get only threads with new or edited activity, including threads someone replied to, and each comes back with its full context. Anchors are the page's PLAIN TEXT, not its markdown (inline markers stripped, blocks joined by single newlines), so match anchor_exact loosely against a get_page body rather than searching for it verbatim. Answer a thread with add_comment(parent_id=…) and close it with update_comment(resolved=true).",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: &yes, DestructiveHint: &no, OpenWorldHint: &no},
+	}, s.mcpListComments)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "update_comment",
+		Title:       "Update comment",
+		Description: "Edit or resolve an existing comment (editor+); pass exactly one of body / resolved. {resolved: true} closes a thread once you have acted on it, {resolved: false} reopens one — idempotent, so re-resolving an already-resolved comment succeeds instead of erroring. Resolve applies to ROOT comments only. {body: ...} rewrites the text and is author-only: it works on comments this key wrote, and is refused on a person's comment. To answer someone rather than close them out, use add_comment with parent_id.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: &no, IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
+	}, s.mcpUpdateComment)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "create_space",
@@ -1239,36 +1253,99 @@ type addCommentAnchor struct {
 }
 
 type addCommentIn struct {
-	PageID         int64            `json:"page_id" jsonschema:"page to comment on"`
-	Anchor         addCommentAnchor `json:"anchor" jsonschema:"text-quote anchor locating the comment in the body"`
-	Body           string           `json:"body" jsonschema:"comment text (1-10000 chars)"`
-	IdempotencyKey string           `json:"idempotency_key,omitempty" jsonschema:"optional client-generated key; a retry with the same key returns the original result instead of posting a duplicate comment (safe retries after a dropped connection)"`
+	PageID         int64             `json:"page_id" jsonschema:"page to comment on"`
+	Anchor         *addCommentAnchor `json:"anchor,omitempty" jsonschema:"text-quote anchor locating the comment in the page's PLAIN TEXT (markdown markers stripped); required for a root comment, omit when replying"`
+	ParentID       *int64            `json:"parent_id,omitempty" jsonschema:"id of the root comment to reply to; omit to start a new thread"`
+	Body           string            `json:"body" jsonschema:"comment text (1-10000 chars)"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty" jsonschema:"optional client-generated key; a retry with the same key returns the original result instead of posting a duplicate comment (safe retries after a dropped connection)"`
 }
 
-type addCommentOut struct {
+// commentOut is the shared {comment} envelope for the row-returning comment
+// tools (add_comment, update_comment).
+type commentOut struct {
 	Comment models.Comment `json:"comment"`
 }
 
-func (s *Server) mcpAddComment(ctx context.Context, req *mcp.CallToolRequest, in addCommentIn) (*mcp.CallToolResult, addCommentOut, error) {
+func (s *Server) mcpAddComment(ctx context.Context, req *mcp.CallToolRequest, in addCommentIn) (*mcp.CallToolResult, commentOut, error) {
 	u, k := mcpIdentity(req)
 	if u == nil {
-		return mcpUnauthErr(), addCommentOut{}, nil
+		return mcpUnauthErr(), commentOut{}, nil
 	}
 	if ae := mcpRequireWrite(k); ae != nil {
-		return mcpErr(ae), addCommentOut{}, nil
+		return mcpErr(ae), commentOut{}, nil
 	}
-	return mcpIdempotent(ctx, s.DB, u.ID, in.IdempotencyKey, "add_comment", func() (*mcp.CallToolResult, addCommentOut, error) {
-		c, ae := s.createCommentCore(ctx, u, k, in.PageID, commentCreateRequest{
-			Body:         in.Body,
-			AnchorPrefix: &in.Anchor.Prefix,
-			AnchorExact:  &in.Anchor.Exact,
-			AnchorSuffix: &in.Anchor.Suffix,
-		})
-		if ae != nil {
-			return mcpErr(ae), addCommentOut{}, nil
+	return mcpIdempotent(ctx, s.DB, u.ID, in.IdempotencyKey, "add_comment", func() (*mcp.CallToolResult, commentOut, error) {
+		cr := commentCreateRequest{Body: in.Body, ParentID: in.ParentID}
+		if in.Anchor != nil {
+			cr.AnchorPrefix = &in.Anchor.Prefix
+			cr.AnchorExact = &in.Anchor.Exact
+			cr.AnchorSuffix = &in.Anchor.Suffix
 		}
-		return nil, addCommentOut{Comment: c}, nil
+		c, ae := s.createCommentCore(ctx, u, k, in.PageID, cr)
+		if ae != nil {
+			return mcpErr(ae), commentOut{}, nil
+		}
+		return nil, commentOut{Comment: c}, nil
 	})
+}
+
+// ---- list_comments / update_comment --------------------------------------
+
+type listCommentsIn struct {
+	PageID  int64  `json:"page_id,omitempty" jsonschema:"page whose threads to read (root + replies); give this or space_id, not both"`
+	SpaceID int64  `json:"space_id,omitempty" jsonschema:"space whose open threads to read as an inbox (roots only, with reply_count and page_title); give this or page_id, not both"`
+	Status  string `json:"status,omitempty" jsonschema:"open (default) | resolved | all"`
+	Since   string `json:"since,omitempty" jsonschema:"opaque cursor from a previous call; returns only threads with new or edited activity since then"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max threads (default 50, max 200)"`
+}
+
+type listCommentsOut struct {
+	Threads []commentThread `json:"threads"`
+	Cursor  string          `json:"cursor,omitempty" jsonschema:"pass back as since on the next call to see only what changed"`
+}
+
+func (s *Server) mcpListComments(ctx context.Context, req *mcp.CallToolRequest, in listCommentsIn) (*mcp.CallToolResult, listCommentsOut, error) {
+	u, k := mcpIdentity(req)
+	if u == nil {
+		return mcpUnauthErr(), listCommentsOut{}, nil
+	}
+	threads, cursor, ae := s.listCommentsCore(ctx, u, k, commentListOpts{
+		PageID: in.PageID, SpaceID: in.SpaceID, Status: in.Status, Since: in.Since, Limit: in.Limit,
+	})
+	if ae != nil {
+		return mcpErr(ae), listCommentsOut{}, nil
+	}
+	return nil, listCommentsOut{Threads: threads, Cursor: cursor}, nil
+}
+
+type updateCommentIn struct {
+	CommentID int64   `json:"comment_id" jsonschema:"id of the comment to update"`
+	Body      *string `json:"body,omitempty" jsonschema:"new comment text (author-only; refused on someone else's comment)"`
+	Resolved  *bool   `json:"resolved,omitempty" jsonschema:"true closes a root thread, false reopens it"`
+}
+
+func (s *Server) mcpUpdateComment(ctx context.Context, req *mcp.CallToolRequest, in updateCommentIn) (*mcp.CallToolResult, commentOut, error) {
+	u, k := mcpIdentity(req)
+	if u == nil {
+		return mcpUnauthErr(), commentOut{}, nil
+	}
+	if ae := mcpRequireWrite(k); ae != nil {
+		return mcpErr(ae), commentOut{}, nil
+	}
+	c, ae := s.patchCommentCore(ctx, u, k, in.CommentID, commentPatchRequest{Body: in.Body, Resolved: in.Resolved})
+	// Resolving something already in the requested state is a 409 for the UI,
+	// where it means "someone beat you to it". For an agent it is just a retry
+	// landing twice, so honour the declared IdempotentHint and report the
+	// comment as it stands instead of failing the call.
+	if ae != nil && ae.Code == "comment_already_resolved" {
+		if cur, err := selectCommentByID(ctx, s.DB, in.CommentID); err == nil {
+			return nil, commentOut{Comment: cur}, nil
+		}
+	}
+	if ae != nil {
+		return mcpErr(ae), commentOut{}, nil
+	}
+	return nil, commentOut{Comment: c}, nil
 }
 
 // ---- create_space / update_space / delete_space --------------------------

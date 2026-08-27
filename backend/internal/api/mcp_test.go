@@ -464,7 +464,7 @@ func TestMCP_WriteTools(t *testing.T) {
 	}
 
 	// add_comment (root, anchored).
-	var cm addCommentOut
+	var cm commentOut
 	mcpCallJSON(t, ctx, sess, "add_comment", map[string]any{
 		"page_id": pageID,
 		"anchor":  map[string]any{"prefix": "step ", "exact": "one", "suffix": "\nstep"},
