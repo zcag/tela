@@ -1,7 +1,7 @@
 # tela — Claude connector directory submission
 
 Ready-to-paste payload for `https://clau.de/mcp-directory-submission`.
-Values verified live 2026-06-05; tool count re-checked 2026-08-25 — the surface is **45 tools**
+Values verified live 2026-06-05; tool count re-checked 2026-08-28 — the surface is **47 tools**
 (the earlier "39" is stale; count from `Name:` fields across `backend/internal/api/mcp*.go`). `‹TODO›` marks anything Cagdas still has to fill or confirm.
 
 ---
@@ -87,6 +87,7 @@ Concrete agent workflows, each grounded in the actual tools:
 | `find_overlaps` | Find overlaps | Near-duplicate page detection across a space. |
 | `knowledge_gaps` | Knowledge gaps | Topic areas mentioned but not covered in depth (admin-scoped). |
 | `list_attachments` | List attachments | Uploaded files on a page (id, name, mime, size, url). |
+| `list_comments` | List comments | A page's comment threads, or an inbox of open threads across a space; filter by status and poll with a cursor. |
 | `deck_authoring_guide` | Deck guide | Returns the full slide-authoring guide (layouts, fields, variants). Read before authoring a deck. |
 | `lint_deck` | Lint deck | Validate a deck body's frontmatter, layouts, and field values before saving. |
 | `preview_deck` | Preview deck | Render a live preview URL for a deck body — confirm appearance before committing. |
@@ -102,7 +103,8 @@ Concrete agent workflows, each grounded in the actual tools:
 | `patch_page` | Patch page | false | Surgically edit ONE section of a page by heading path — cheaper and safer than rewriting the full body. |
 | `move_page` | Move page | false | Reparent, reorder, or relocate a page to another space (editor+ on both sides). |
 | `delete_page` | Delete page | **true** | Delete a page (editor+). Backlinks preserved with last-known title. |
-| `add_comment` | Add comment | false | Attach a root comment anchored by a `{prefix, exact, suffix}` text triplet (editor+). |
+| `add_comment` | Add comment | false | Start a comment thread anchored by a `{prefix, exact, suffix}` text triplet, or reply inside one via `parent_id` (editor+). |
+| `update_comment` | Update comment | false | Resolve or reopen a comment thread, or edit the text of a comment the caller wrote (editor+). Idempotent. |
 | `create_space` | Create space | false | Create a space; caller becomes owner. Slug derived from name when omitted. |
 | `update_space` | Update space | false | Patch a space's name and/or slug (editor+). Idempotent. |
 | `delete_space` | Delete space | **true** | Delete a space and all its pages, comments, revisions, share links. Owner only. Irreversible. |

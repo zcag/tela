@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/zcag/tela/backend/internal/auth"
@@ -38,7 +39,7 @@ type commentListOpts struct {
 	SpaceID int64
 	Status  string // "" / "open" (default) | "resolved" | "all"
 	Since   string // opaque cursor from a previous call
-	Limit   int    // threads (not comments), clamped to maxCommentListLimit
+	Limit   int    // threads (not comments); 0 = default, <0 = uncapped
 }
 
 const (
@@ -78,8 +79,11 @@ func (s *Server) ListComments(w http.ResponseWriter, r *http.Request) {
 		status = "all"
 	}
 	k, _ := auth.APIKeyFromContext(r.Context())
+	// Limit -1 = uncapped: this listing has never truncated a page's threads
+	// and the UI has no cursor to page with, so a cap here would silently hide
+	// comments from the panel.
 	threads, _, ae := s.listCommentsCore(r.Context(), u, k, commentListOpts{
-		PageID: pageID, Status: status, Limit: maxCommentListLimit,
+		PageID: pageID, Status: status, Limit: -1,
 	})
 	if ae != nil {
 		writeError(w, ae.Status, ae.Code, ae.Message)
@@ -141,10 +145,12 @@ func (s *Server) listCommentsCore(ctx context.Context, u *auth.User, k *auth.API
 		return nil, "", &apiErr{http.StatusBadRequest, "bad_request", "status must be one of open, resolved, all"}
 	}
 	limit := opts.Limit
-	if limit <= 0 {
+	switch {
+	case limit < 0:
+		limit = 0 // uncapped (REST)
+	case limit == 0:
 		limit = defaultCommentListLimit
-	}
-	if limit > maxCommentListLimit {
+	case limit > maxCommentListLimit:
 		limit = maxCommentListLimit
 	}
 	if (opts.PageID == 0) == (opts.SpaceID == 0) {
@@ -236,21 +242,34 @@ func (s *Server) listPageComments(ctx context.Context, u *auth.User, k *auth.API
 	// replies, so a thread someone just answered comes back to a poller even
 	// though its root row is untouched.
 	out := []commentThread{}
-	cursor := since
 	for _, t := range threads {
 		if (status == "open" && t.Root.Resolved) || (status == "resolved" && !t.Root.Resolved) {
 			continue
 		}
-		act := threadActivity(t)
-		if since != "" && act <= since {
+		if since != "" && threadActivity(t) <= since {
 			continue
 		}
-		if act > cursor {
-			cursor = act
-		}
 		out = append(out, t)
-		if len(out) >= limit {
-			break
+	}
+	// Truncate along ACTIVITY order, never along display order. The cursor we
+	// hand back is a high-water mark, so everything at or below it must have
+	// been returned — cutting the created_at-ordered list instead strands a
+	// quiet thread that sorts late by date but early by activity: it falls
+	// under the next cursor and is never seen again.
+	if limit > 0 && len(out) > limit {
+		sort.SliceStable(out, func(i, j int) bool { return threadActivity(out[i]) < threadActivity(out[j]) })
+		out = out[:limit]
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].Root.CreatedAt != out[j].Root.CreatedAt {
+				return out[i].Root.CreatedAt < out[j].Root.CreatedAt
+			}
+			return out[i].Root.ID < out[j].Root.ID
+		})
+	}
+	cursor := since
+	for _, t := range out {
+		if a := threadActivity(t); a > cursor {
+			cursor = a
 		}
 	}
 	return out, cursor, nil
@@ -265,9 +284,14 @@ func (s *Server) listSpaceComments(ctx context.Context, u *auth.User, k *auth.AP
 		return nil, "", ae
 	}
 
-	order := "c.created_at ASC, c.id ASC"
-	if since != "" {
-		order = "activity ASC"
+	// Ordered by activity, cursor or not: the returned rows must be a prefix of
+	// that order for the cursor to be a sound high-water mark. It also happens
+	// to be the right inbox order — longest-untouched thread first.
+	limitClause := ""
+	args := []any{spaceID, since}
+	if limit > 0 {
+		limitClause = " LIMIT $3"
+		args = append(args, limit)
 	}
 	rows, err := s.DB.QueryContext(ctx, `
 		SELECT c.id, p.title, COALESCE(r.reply_count, 0), `+sqlCommentActivity+` AS activity
@@ -283,8 +307,7 @@ func (s *Server) listSpaceComments(ctx context.Context, u *auth.User, k *auth.AP
 		   AND c.deleted_at IS NULL AND p.deleted_at IS NULL
 		   AND `+commentStatusClause(status)+`
 		   AND ($2 = '' OR `+sqlCommentActivity+` > $2)
-		 ORDER BY `+order+`
-		 LIMIT $3`, spaceID, since, limit)
+		 ORDER BY activity ASC`+limitClause, args...)
 	if err != nil {
 		return nil, "", &apiErr{http.StatusInternalServerError, "internal", "list space comments failed"}
 	}
@@ -318,13 +341,13 @@ func (s *Server) listSpaceComments(ctx context.Context, u *auth.User, k *auth.AP
 	// Second pass for the full rows, so the comment scan stays single-sourced
 	// through commentSelectColumns/scanCommentInto instead of being duplicated.
 	ph := make([]string, len(metas))
-	args := make([]any, len(metas))
+	idArgs := make([]any, len(metas))
 	for i, m := range metas {
 		ph[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = m.id
+		idArgs[i] = m.id
 	}
 	crows, err := s.DB.QueryContext(ctx, commentSelectColumns+commentSelectFrom+`
-		 WHERE c.id IN (`+strings.Join(ph, ",")+`)`, args...)
+		 WHERE c.id IN (`+strings.Join(ph, ",")+`)`, idArgs...)
 	if err != nil {
 		return nil, "", &apiErr{http.StatusInternalServerError, "internal", "load space comments failed"}
 	}

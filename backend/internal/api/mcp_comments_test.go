@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -177,5 +179,101 @@ func TestMCP_CommentTools(t *testing.T) {
 		t.Fatalf("call list_comments with both scopes: %v", err)
 	} else if !r.IsError {
 		t.Error("page_id + space_id together should be rejected")
+	}
+}
+
+// TestMCP_CommentCursorDrains proves the cursor is a real high-water mark: a
+// limited poll, repeated until it comes back empty, must yield every thread
+// exactly once. The trap is a thread that sorts LATE by date but EARLY by
+// activity — truncating the date-ordered list strands it below the next
+// cursor, where no later poll can ever see it again.
+func TestMCP_CommentCursorDrains(t *testing.T) {
+	ts, d := newWiredServer(t)
+	alice := seedUser(t, d, "alice", "alicepw12", false)
+	space := seedSpace(t, d, "Docs", "docs", alice)
+	page := mustPage(t, d, space, "Runbook", "alpha bravo charlie delta echo")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	sess := mcpSession(t, ctx, ts, seedReadKey(t, d, alice, auth.ScopeWrite))
+
+	var roots []int64
+	for _, span := range []string{"alpha", "bravo", "charlie", "delta", "echo"} {
+		var c commentOut
+		mcpCallJSON(t, ctx, sess, "add_comment", map[string]any{
+			"page_id": page,
+			"anchor":  map[string]any{"prefix": "", "exact": span, "suffix": " "},
+			"body":    "about " + span,
+		}, &c)
+		roots = append(roots, c.Comment.ID)
+	}
+	// The OLDEST thread becomes the most recently active one.
+	var reply commentOut
+	mcpCallJSON(t, ctx, sess, "add_comment", map[string]any{
+		"page_id": page, "parent_id": roots[0], "body": "still open",
+	}, &reply)
+
+	seen := map[int64]int{}
+	cursor := ""
+	for round := 0; round < 10; round++ {
+		args := map[string]any{"page_id": page, "limit": 2}
+		if cursor != "" {
+			args["since"] = cursor
+		}
+		var got listCommentsOut
+		mcpCallJSON(t, ctx, sess, "list_comments", args, &got)
+		if len(got.Threads) == 0 {
+			break
+		}
+		if len(got.Threads) > 2 {
+			t.Fatalf("limit ignored: got %d threads", len(got.Threads))
+		}
+		for _, th := range got.Threads {
+			seen[th.Root.ID]++
+		}
+		cursor = got.Cursor
+	}
+	for i, id := range roots {
+		if seen[id] != 1 {
+			t.Errorf("thread %d (root %d) seen %d times, want exactly 1 — stranded by the cursor",
+				i, id, seen[id])
+		}
+	}
+}
+
+// TestComments_RESTListingUncapped guards the REST panel against the MCP
+// default page size: the app has no cursor to page with, so a cap there would
+// silently hide comments.
+func TestComments_RESTListingUncapped(t *testing.T) {
+	ts, d := newWiredServer(t)
+	alice := seedUser(t, d, "alice", "alicepw12", false)
+	space := seedSpace(t, d, "Docs", "docs", alice)
+	page := mustPage(t, d, space, "Busy", "body")
+
+	// Past maxCommentListLimit, so this proves uncapped and not merely "more
+	// than the MCP default".
+	const n = maxCommentListLimit + 10
+	if _, err := d.ExecContext(context.Background(), `
+		INSERT INTO comments (page_id, author_id, body, anchor_prefix, anchor_exact, anchor_suffix,
+		                      resolved, created_at, updated_at)
+		SELECT $1, $2, 'note ' || g, '', 'body', '', 0, tela_now(), tela_now()
+		  FROM generate_series(1, $3) g`, page, alice, n); err != nil {
+		t.Fatalf("insert comments: %v", err)
+	}
+
+	c := loginClient(t, ts, "alice", "alicepw12")
+	res, err := c.Get(fmt.Sprintf("%s/api/pages/%d/comments", ts.URL, page))
+	if err != nil {
+		t.Fatalf("get comments: %v", err)
+	}
+	defer res.Body.Close()
+	var out struct {
+		Threads []commentThread `json:"threads"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Threads) != n {
+		t.Errorf("REST returned %d threads, want all %d", len(out.Threads), n)
 	}
 }
