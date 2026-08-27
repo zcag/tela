@@ -112,7 +112,7 @@ Reconciliation (`reconcileBilling`), by event `type`:
 | `subscription.canceled` | cancellation **scheduled** — flag `cancel_at_period_end=1`, keep the plan and access. UI shows "cancels on `<period_end>`". |
 | `subscription.revoked` | period actually **ended** — downgrade `plan_key` to the account-kind free tier, clear sub state. |
 | `order.paid` | renewal/first payment — ensure `status='active'` for an account that already has a subscription. |
-| `checkout.updated` | **observational only** — records Polar's verdict on a checkout session (`expired` = the page was opened and abandoned). Touches no columns. |
+| `checkout.updated` / `checkout.expired` | **observational only** — records Polar's verdict on a checkout session (`expired` = the page was opened and abandoned). Touches no columns. Both are handled: Polar exposes abandonment as a status transition *and* as a dedicated event, and listening for only one is a silent gap. |
 
 The **canceled vs revoked** distinction is load-bearing: `canceled` means "will
 end later" (keep access), `revoked` means "ended now" (downgrade). Gating the
@@ -134,11 +134,12 @@ genuine DB failure returns 500 (so Polar redelivers).
    `subscriptions:write` (for org seat re-sync), `orders:read`, `customers:read`
    → `TELA_POLAR_TOKEN`.
 3. **Webhook.** Add an endpoint → `<PUBLIC_BASE_URL>/api/billing/webhook`,
-   format **Raw**, subscribing to the `subscription.*`, `order.paid` **and
-   `checkout.updated`** events. Copy its signing secret **verbatim** →
-   `TELA_POLAR_WEBHOOK_SECRET`. Without `checkout.updated` subscribed in the
-   dashboard, the abandonment signal below never arrives — the code cannot
-   subscribe itself, and the gap is silent.
+   format **Raw**, subscribing to the `subscription.*`, `order.paid` **and both
+   `checkout.updated` + `checkout.expired`** events. Copy its signing secret
+   **verbatim** → `TELA_POLAR_WEBHOOK_SECRET`. Without the two checkout events
+   subscribed in the dashboard, the abandonment signal below never arrives — the
+   code cannot subscribe itself, and the gap is silent (the endpoint stays green).
+   *Already done on the production endpoint (2026-08-27).*
 4. **Map** plan keys → product UUIDs in `TELA_POLAR_PRODUCTS`.
 5. Redeploy the backend. Verify `Enabled()` by hitting the upgrade button in
    Settings → Plan & Usage.
@@ -161,7 +162,7 @@ trial actually lapse — was not.
 |---|---|---|
 | `billing.plans_viewed` | the paid tiers were rendered to a real person | `ListPlans` on `?src=billing` |
 | `billing.checkout` | a Polar checkout URL was minted (**intent, not money**) | `CreateCheckout` |
-| `billing.checkout_status` | Polar's verdict on that session (`status=expired` = opened and abandoned) | `checkout.updated` webhook |
+| `billing.checkout_status` | Polar's verdict on that session (`status=expired` = opened and abandoned) | `checkout.updated` / `checkout.expired` webhook |
 | `billing.subscription_update` | a subscription state event landed; `status=` carries which | `subscription.*` webhook |
 | `billing.subscription_canceled` | cancellation scheduled (access runs to period end) | `subscription.canceled` |
 | `billing.subscription_revoked` | period ended, account fell to free | `subscription.revoked` |

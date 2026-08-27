@@ -321,19 +321,29 @@ func (s *Server) reconcileBilling(ctx context.Context, evt billing.Event) error 
 	table := acctTable(acct.Kind)
 
 	switch evt.Type {
-	case "checkout.updated":
+	case "checkout.updated", "checkout.expired":
 		// Polar's checkout lifecycle — the only signal that says what became of a
-		// URL we minted. `expired` means the page was reached and abandoned, which
-		// is what separates "something blocked them" from "they looked and
-		// declined"; without it the trail stops at intent and both readings stay
-		// alive forever. Purely observational: the subscription events remain
+		// URL we minted. Expiry means the page was reached and abandoned, which is
+		// what separates "something blocked them" from "they looked and declined";
+		// without it the trail stops at intent and both readings stay alive
+		// forever. Purely observational: the subscription events remain
 		// authoritative for plan state, so this case touches no columns.
 		//
-		// Requires checkout.updated to be enabled on the webhook endpoint in the
-		// Polar dashboard — code alone does not subscribe us to it.
-		if st := evt.Data.Status; st != "" && st != "open" {
+		// BOTH types are handled because Polar exposes abandonment two ways — a
+		// status transition on `checkout.updated` and a dedicated
+		// `checkout.expired` — and which one an account receives depends on what
+		// is ticked in the dashboard. Listening for only one is a silent gap: the
+		// endpoint stays green while the signal never arrives. Both are enabled on
+		// the production endpoint; a redelivery of the same expiry under both
+		// names is two rows saying the same true thing, which is the harmless
+		// direction to err in.
+		st := evt.Data.Status
+		if evt.Type == "checkout.expired" && st == "" {
+			st = "expired" // the dedicated event need not restate its own meaning
+		}
+		if st != "" && st != "open" {
 			s.recordBillingEvent(ctx, acct, evtBillingCheckoutStatus,
-				billingDetail("status="+st, s.planDetail(evt.Data.ProductID)))
+				billingDetail("status="+st, "event="+evt.Type, s.planDetail(evt.Data.ProductID)))
 		}
 		return nil
 

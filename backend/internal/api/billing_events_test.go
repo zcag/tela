@@ -154,6 +154,25 @@ func TestCheckoutUpdatedRecordsOnlyTerminalStatus(t *testing.T) {
 	}
 }
 
+// Polar exposes abandonment two ways and which one arrives depends on the
+// dashboard's ticked events, so the dedicated event must record too — including
+// when it carries no status of its own.
+func TestCheckoutExpiredEventRecords(t *testing.T) {
+	s, d := wiredBillingServer(t)
+	ctx := context.Background()
+	uid := seedUser(t, d, "carol", "pw123456", false)
+	ext := acctExternalID(account{Kind: accountUser, ID: uid})
+
+	e := subEvent("checkout.expired", ext, "prod_plus", "", false)
+	if err := s.reconcileBilling(ctx, e); err != nil {
+		t.Fatalf("checkout.expired: %v", err)
+	}
+	got := billingEvents(t, d, evtBillingCheckoutStatus)
+	if len(got) != 1 || !strings.Contains(got[0], "status=expired") {
+		t.Fatalf("checkout.expired with no status should record status=expired, got %v", got)
+	}
+}
+
 func TestTrialSweepEmitsEachMomentOnce(t *testing.T) {
 	s, d := wiredBillingServer(t)
 	ctx := context.Background()
