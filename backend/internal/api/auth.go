@@ -36,6 +36,9 @@ type authUserDTO struct {
 // trialDTO drives the in-app trial banner. Ended distinguishes "ends soon" from
 // "ended, in grace until GraceEndsAt" (planFor keeps benefits until then).
 type trialDTO struct {
+	// PlanKey identifies the trialled TIER, so a client can tell whether the
+	// thing it is offering to sell is the thing already being trialled.
+	PlanKey     string `json:"plan_key"`
 	PlanName    string `json:"plan_name"`
 	EndsAt      string `json:"ends_at"`
 	GraceEndsAt string `json:"grace_ends_at"`
@@ -240,23 +243,46 @@ func (s *Server) Me(w http.ResponseWriter, r *http.Request) {
 // userTrialStatus returns the user's trial banner state, or nil when there's no
 // trial worth surfacing. It's shown only in the window from 7 days before the
 // nominal end through the 7-day grace (planFor keeps benefits over that grace),
-// so the banner appears exactly when it's actionable.
+// so the app-wide banner appears exactly when it's actionable — a month of
+// "you're on a trial" chrome would be nagging, not informing.
 func (s *Server) userTrialStatus(ctx context.Context, userID int64) *trialDTO {
+	return s.loadTrial(ctx, userID, true)
+}
+
+// loadTrial reads a user's trial. notifyWindowOnly narrows it to the banner
+// window; false returns the trial whenever one is live.
+//
+// Both callers need the same five fields, so the window is a condition on one
+// query rather than a second copy of it. The distinction is real and worth
+// keeping: the BANNER should stay quiet until the trial is nearly up, but the
+// BILLING SCREEN must always know — it is the one page whose whole job is to
+// state what you are on and what you would be buying, and it previously showed
+// "Current: Personal" beside "Upgrade to Personal · $8/mo" with no mention of a
+// trial anywhere, because its only source of truth was the gated banner.
+func (s *Server) loadTrial(ctx context.Context, userID int64, notifyWindowOnly bool) *trialDTO {
+	window := ""
+	if notifyWindowOnly {
+		window = `AND (now() AT TIME ZONE 'UTC') BETWEEN (u.trial_ends_at::timestamp - interval '7 days')
+		                                             AND (u.trial_ends_at::timestamp + interval '7 days')`
+	}
 	var t trialDTO
+	// NULLIF guards the empty string: ''::timestamp RAISES in Postgres and '' is
+	// this schema's convention for an empty TEXT datetime (see planFor).
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT COALESCE(p.name, u.trial_plan_key),
+		SELECT u.trial_plan_key,
+		       COALESCE(p.name, u.trial_plan_key),
 		       u.trial_ends_at,
 		       to_char(u.trial_ends_at::timestamp + interval '7 days', 'YYYY-MM-DD HH24:MI:SS'),
 		       (u.trial_ends_at::timestamp <= (now() AT TIME ZONE 'UTC')) AS ended
 		  FROM users u
 		  LEFT JOIN plans p ON p.key = u.trial_plan_key
 		 WHERE u.id = $1
-		   AND u.trial_plan_key IS NOT NULL AND u.trial_ends_at IS NOT NULL
-		   AND (now() AT TIME ZONE 'UTC') BETWEEN (u.trial_ends_at::timestamp - interval '7 days')
-		                                      AND (u.trial_ends_at::timestamp + interval '7 days')`,
-		userID).Scan(&t.PlanName, &t.EndsAt, &t.GraceEndsAt, &t.Ended)
+		   AND u.trial_plan_key IS NOT NULL
+		   AND NULLIF(u.trial_ends_at, '') IS NOT NULL
+		   `+window,
+		userID).Scan(&t.PlanKey, &t.PlanName, &t.EndsAt, &t.GraceEndsAt, &t.Ended)
 	if err != nil {
-		return nil // no row / no trial in the window
+		return nil // no row / no trial (in the window)
 	}
 	return &t
 }

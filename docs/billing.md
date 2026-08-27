@@ -148,6 +148,33 @@ Test the whole loop against the **sandbox** first:
 `TELA_POLAR_BASE_URL=https://sandbox-api.polar.sh` with a sandbox token, secret,
 and product UUIDs (sandbox is a fully separate environment; card `4242…`).
 
+## Trials on the billing screen
+
+A signup trial grants **the same tier that is on sale** (`personal_plus`, see
+`users_create.go`), and converting mid-trial **forfeits the remaining free days**
+— `CreateCheckout` passes no trial period to Polar, so billing starts on payment,
+and `subscription.active` NULLs `trial_ends_at` in the same UPDATE. The screen
+must therefore say so, or the paid button reads as either broken or a swindle.
+
+The trap that produced that: `me.trial` is **gated** by `userTrialStatus` to the
+last 7 days + grace, deliberately, so the app-wide banner isn't a month of
+nagging. The billing screen's only trial source was that same gated field, so on
+day 5 it showed `Current: Personal` next to `Upgrade to Personal · $8/mo` with
+the word *trial* nowhere on the page.
+
+`GET /api/usage` now carries an **ungated** `trial` (personal accounts only;
+`loadTrial(..., notifyWindowOnly=false)` — one query, the window is a condition on
+it, so the banner and the screen cannot drift). With it the screen:
+
+- badges the plan `Personal · Trial` instead of `Personal`,
+- badges the catalog card `Trial` rather than `Current`,
+- states the end date and that subscribing starts billing today, and
+- labels the button **Subscribe to**, not *Upgrade to*, for the trialled tier —
+  nothing is gained by "upgrading" to what you already have.
+
+The action behind the button is unchanged: converting a trial early is allowed,
+it just isn't described as a bargain.
+
 ## The funnel trail (`billing.*` events)
 
 Every step from seeing a price to money landing is recorded on the unified

@@ -230,24 +230,44 @@ function BillingActions({
       p.price_cents > 0,
   )
   if (targets.length === 0) return null
+  // A live trial of a tier we're selling changes what these buttons MEAN. The
+  // trial grants that tier already, and converting forfeits the remaining free
+  // days (no trial period is passed to Polar, and the webhook clears
+  // trial_ends_at), so "Upgrade to Personal" beside a "Current: Personal" badge
+  // read as either broken or a scam — and the screen said "trial" nowhere,
+  // because its only source was the banner, which stays quiet until day 23.
+  // Say the deal out loud instead; the button is honest either way.
+  const trial = usage.trial
   return (
-    <div className="flex flex-wrap items-center gap-[var(--space-2)] border-t border-[var(--border-subtle)] pt-[var(--space-3)]">
-      {targets.map((p) => {
-        // Bill yearly only when the tier actually has a yearly product; else the
-        // toggle is a no-op for that tier and it stays monthly.
-        const interval: BillingPeriod = period === 'year' && p.price_cents_yearly != null ? 'year' : 'month'
-        return (
-          <Button
-            key={p.key}
-            variant="primary"
-            size="sm"
-            disabled={busy}
-            onClick={() => checkout.mutate({ plan_key: p.key, org_id: orgId, interval }, { onError })}
-          >
-            Upgrade to {p.name} · {compactPrice(p, interval)}
-          </Button>
-        )
-      })}
+    <div className="flex flex-col gap-[var(--space-2)] border-t border-[var(--border-subtle)] pt-[var(--space-3)]">
+      {trial ? (
+        <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+          {trial.ended
+            ? `Your ${trial.plan_name} trial has ended — full access continues until ${localDateFromSqlite(trial.grace_ends_at)}.`
+            : `You're on a free ${trial.plan_name} trial until ${localDateFromSqlite(trial.ends_at)} — everything in that plan is already unlocked. Subscribing now starts billing today and ends the trial.`}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+        {targets.map((p) => {
+          // Bill yearly only when the tier actually has a yearly product; else the
+          // toggle is a no-op for that tier and it stays monthly.
+          const interval: BillingPeriod = period === 'year' && p.price_cents_yearly != null ? 'year' : 'month'
+          // "Upgrade" is a lie for the tier you are already trialling — nothing
+          // is gained. Only the wording changes; the action is the same.
+          const isTrialledTier = trial != null && trial.plan_key === p.key
+          return (
+            <Button
+              key={p.key}
+              variant={isTrialledTier && !trial?.ended ? 'secondary' : 'primary'}
+              size="sm"
+              disabled={busy}
+              onClick={() => checkout.mutate({ plan_key: p.key, org_id: orgId, interval }, { onError })}
+            >
+              {isTrialledTier ? 'Subscribe to' : 'Upgrade to'} {p.name} · {compactPrice(p, interval)}
+            </Button>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -287,8 +307,9 @@ function UsageCard({
           ) : null}
         </div>
         {usage ? (
-          <Badge variant="accent" className="shrink-0">
+          <Badge variant={usage.trial ? 'muted' : 'accent'} className="shrink-0">
             {usage.plan.name}
+            {usage.trial ? ' · Trial' : ''}
           </Badge>
         ) : null}
       </div>
@@ -382,10 +403,15 @@ function planSpecs(p: Plan): string[] {
 function PlanCatalog({
   plans,
   currentKey,
+  trialKey,
   period,
 }: {
   plans: Plan[]
   currentKey: string | undefined
+  // The tier being TRIALLED, when that's why it reads as current. Without it the
+  // catalog badges a trialled tier "Current" — true about access, misleading
+  // about ownership, and the reason the paid button beside it looked absurd.
+  trialKey?: string
   period: BillingPeriod
 }) {
   const groups: { kind: 'user' | 'org'; label: string }[] = [
@@ -405,6 +431,7 @@ function PlanCatalog({
             <div className="grid gap-[var(--space-3)] sm:grid-cols-2 lg:grid-cols-3">
               {tiers.map((p) => {
                 const isCurrent = p.key === currentKey
+                const isTrial = isCurrent && p.key === trialKey
                 return (
                   <Card
                     key={p.key}
@@ -417,7 +444,11 @@ function PlanCatalog({
                   >
                     <div className="flex items-center justify-between gap-[var(--space-2)]">
                       <span className="font-medium text-[var(--text-primary)]">{p.name}</span>
-                      {isCurrent ? <Badge variant="accent">Current</Badge> : null}
+                      {isCurrent ? (
+                        <Badge variant={isTrial ? 'muted' : 'accent'}>
+                          {isTrial ? 'Trial' : 'Current'}
+                        </Badge>
+                      ) : null}
                     </div>
                     <p className="m-0 flex items-baseline gap-[var(--space-2)]">
                       <span className="text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]">
@@ -581,7 +612,12 @@ export function SettingsBillingTab() {
           <h3 className="m-0 text-[length:var(--text-base)] font-medium text-[var(--text-primary)]">
             Tiers
           </h3>
-          <PlanCatalog plans={plans.data} currentKey={myUsage.data?.plan.key} period={period} />
+          <PlanCatalog
+            plans={plans.data}
+            currentKey={myUsage.data?.plan.key}
+            trialKey={myUsage.data?.trial?.plan_key}
+            period={period}
+          />
         </section>
       ) : null}
 

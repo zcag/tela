@@ -263,3 +263,52 @@ func TestEventsGCKeepsBillingRows(t *testing.T) {
 		t.Fatalf("GC kept an expired page.view: %v", got)
 	}
 }
+
+// The billing screen previously showed "Current: Personal" beside "Upgrade to
+// Personal · $8/mo" and never said "trial", because its only trial source was
+// the banner — which the backend gates to the last 7 days. The plan screen must
+// know for the WHOLE trial, while the banner stays gated.
+func TestUsageCarriesTrialOutsideTheBannerWindow(t *testing.T) {
+	s, d := wiredBillingServer(t)
+	ctx := context.Background()
+	uid := seedUser(t, d, "fresh", "pw123456", false)
+	setTrial(t, d, uid, 25) // day 5 of 30 — nowhere near the banner window
+
+	if got := s.userTrialStatus(ctx, uid); got != nil {
+		t.Fatalf("banner must stay quiet this far out, got %+v", got)
+	}
+	out, err := s.buildUsage(ctx, account{Kind: accountUser, ID: uid})
+	if err != nil {
+		t.Fatalf("buildUsage: %v", err)
+	}
+	if out.Trial == nil {
+		t.Fatal("billing screen has no trial to show — the misleading state is back")
+	}
+	if out.Trial.PlanKey != "personal_plus" {
+		t.Fatalf("trial plan_key = %q; the UI compares it against the tier it sells", out.Trial.PlanKey)
+	}
+	// The trialled tier IS the tier on sale — that identity is the whole reason
+	// the screen read as broken, so assert it rather than assume it.
+	if out.Plan.Key != out.Trial.PlanKey {
+		t.Fatalf("effective plan %q != trialled tier %q", out.Plan.Key, out.Trial.PlanKey)
+	}
+}
+
+// An org is never trialled; a trial block on an org payload would badge a team's
+// paid plan as a trial.
+func TestOrgUsageHasNoTrial(t *testing.T) {
+	s, d := wiredBillingServer(t)
+	ctx := context.Background()
+	uid := seedUser(t, d, "orgowner", "pw123456", false)
+	setTrial(t, d, uid, 25)
+	orgID := seedOrg(t, d, "Acme", "acme")
+	seedOrgMember(t, d, orgID, uid, "admin")
+
+	out, err := s.buildUsage(ctx, account{Kind: accountOrg, ID: orgID})
+	if err != nil {
+		t.Fatalf("buildUsage(org): %v", err)
+	}
+	if out.Trial != nil {
+		t.Fatalf("org payload carries a trial: %+v", out.Trial)
+	}
+}

@@ -202,6 +202,19 @@ export interface Plan {
 }
 
 // GET /api/usage and /api/orgs/{id}/usage. members is present for orgs only.
+// Mirrors backend/internal/api/auth.go's trialDTO. Drives the app-wide trial
+// banner (from `me.trial`, gated to the last 7 days) and the billing screen
+// (from `usage.trial`, ungated).
+export interface TrialStatus {
+  // The trialled tier's key — lets a caller tell whether a plan it is offering
+  // to sell is the one already being trialled.
+  plan_key: string
+  plan_name: string
+  ends_at: string
+  grace_ends_at: string
+  ended: boolean
+}
+
 export interface Usage {
   account_kind: 'user' | 'org'
   account_id: number
@@ -223,6 +236,11 @@ export interface Usage {
     period_end: string | null
     cancel_at_period_end: boolean
   }
+  // The live signup trial, if any. Unlike `me.trial` (which the backend gates to
+  // the last 7 days so the app-wide banner isn't nagging), this is present for
+  // the whole trial — the billing screen must always know what its plan badge
+  // means. Personal accounts only.
+  trial?: TrialStatus
 }
 
 export interface UpdateSpaceInput {

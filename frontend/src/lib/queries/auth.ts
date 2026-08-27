@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api } from '../api'
 import { pageKeys } from './pages'
 import { spaceKeys } from './spaces'
+import type { TrialStatus } from '../types'
+
+export type { TrialStatus }
 
 // Mirrors backend/internal/api/auth.go's authUserDTO.
 export interface AuthUser {
@@ -24,12 +27,6 @@ export interface AuthUser {
   mcp_connected?: boolean
 }
 
-export interface TrialStatus {
-  plan_name: string
-  ends_at: string
-  grace_ends_at: string
-  ended: boolean
-}
 
 export interface LoginInput {
   // Email or username.

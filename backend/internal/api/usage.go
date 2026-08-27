@@ -34,6 +34,11 @@ type usageOut struct {
 	// never subscribed (status 'none'). Drives the "Manage subscription" button
 	// and the "cancels on <date>" notice in the UI.
 	Subscription *subscriptionOut `json:"subscription,omitempty"`
+	// Trial is the live signup trial, if any — ungated, unlike the app-wide
+	// banner (see loadTrial). Personal accounts only; orgs are never trialled.
+	// The billing screen needs it to say what the plan badge actually means and
+	// what pressing the paid button would cost you.
+	Trial *trialDTO `json:"trial,omitempty"`
 }
 
 type subscriptionOut struct {
@@ -52,6 +57,9 @@ func (s *Server) buildUsage(ctx context.Context, acct account) (usageOut, error)
 		return usageOut{}, err
 	}
 	out.Plan = p
+	if acct.Kind == accountUser {
+		out.Trial = s.loadTrial(ctx, acct.ID, false)
+	}
 
 	if out.Usage.Spaces, err = countOwnedSpaces(ctx, s.DB, acct); err != nil {
 		return usageOut{}, err
