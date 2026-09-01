@@ -14,6 +14,9 @@ services:
       TELA_PUBLIC_BASE_URL: ${TELA_PUBLIC_BASE_URL}
       TELA_SHARE_SECRET:    ${TELA_SHARE_SECRET}
       TELA_API_KEY_SECRET:  ${TELA_API_KEY_SECRET}
+      # Encrypts Atlas source tokens + org SSO client secrets at rest. Unset =
+      # generated on first boot and persisted in instance_settings.
+      TELA_CREDENTIAL_KEY:  ${TELA_CREDENTIAL_KEY:-}
       # Org custom domains: stable CNAME target shown to org admins when adding a
       # hostname (defaults to the canonical host). See docs/custom-domains.md.
       TELA_CUSTOM_DOMAIN_TARGET: ${TELA_CUSTOM_DOMAIN_TARGET:-}

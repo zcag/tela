@@ -158,3 +158,71 @@ func TestAtlasCredentialResolution(t *testing.T) {
 		t.Fatalf("jira Location should be untouched, got %q", jiraRC.Source.Location)
 	}
 }
+
+// TestAtlasCredentialEncryptedAtRest locks encryption-at-rest for the token: the
+// value in the DB is never the plaintext, and it still resolves back through the
+// executor. Rows written before encryption landed (no version prefix) keep
+// resolving verbatim — that fallback is what makes the upgrade a no-op for
+// existing installs, so it's covered here rather than left to chance.
+func TestAtlasCredentialEncryptedAtRest(t *testing.T) {
+	ts, d := newWiredServer(t)
+	alice := seedUser(t, d, "alice", "alicepw12", false)
+	ca := loginClient(t, ts, "alice", "alicepw12")
+
+	body := fmt.Sprintf(`{"owner_kind":"user","owner_id":%d,"name":"gh","kind":"git","value":"ghp_supersecret","meta":{"username":"x-access-token"}}`, alice)
+	st, resp := atlasReq(t, ca, "POST", ts.URL+"/api/atlas/credentials", body)
+	if st != http.StatusCreated {
+		t.Fatalf("create cred: status=%d body=%s", st, resp)
+	}
+	var created struct {
+		Credential struct {
+			ID int64 `json:"id"`
+		} `json:"credential"`
+	}
+	if json.Unmarshal([]byte(resp), &created) != nil || created.Credential.ID == 0 {
+		t.Fatalf("decode created cred: %s", resp)
+	}
+
+	var stored string
+	if err := d.QueryRow(`SELECT value FROM atlas_credentials WHERE id=$1`, created.Credential.ID).Scan(&stored); err != nil {
+		t.Fatalf("read stored value: %v", err)
+	}
+	if strings.Contains(stored, "ghp_supersecret") {
+		t.Fatalf("token is plaintext at rest: %q", stored)
+	}
+	// meta stays readable — it carries only non-secret adornments.
+	var metaJSON string
+	if err := d.QueryRow(`SELECT meta_json FROM atlas_credentials WHERE id=$1`, created.Credential.ID).Scan(&metaJSON); err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	if !strings.Contains(metaJSON, "x-access-token") {
+		t.Fatalf("meta_json should stay in the clear, got %q", metaJSON)
+	}
+
+	value, meta, err := loadAtlasCredential(context.Background(), d, created.Credential.ID)
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if value != "ghp_supersecret" {
+		t.Fatalf("round-trip token: got %q", value)
+	}
+	if meta["username"] != "x-access-token" {
+		t.Fatalf("round-trip meta: got %v", meta)
+	}
+
+	// A pre-encryption row: raw plaintext straight into the column, no prefix.
+	var legacyID int64
+	if err := d.QueryRow(
+		`INSERT INTO atlas_credentials (owner_kind, owner_id, name, kind, value, meta_json)
+		 VALUES ('user',$1,'legacy','git','ghp_written_before_encryption','') RETURNING id`,
+		alice).Scan(&legacyID); err != nil {
+		t.Fatalf("seed legacy cred: %v", err)
+	}
+	legacy, _, err := loadAtlasCredential(context.Background(), d, legacyID)
+	if err != nil {
+		t.Fatalf("load legacy credential: %v", err)
+	}
+	if legacy != "ghp_written_before_encryption" {
+		t.Fatalf("legacy plaintext row broke: got %q", legacy)
+	}
+}

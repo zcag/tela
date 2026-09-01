@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/zcag/tela/backend/internal/secretbox"
 )
 
 // ── shared seed helpers (project model) ─────────────────────────────────────
@@ -38,11 +40,17 @@ func seedAtlasCredential(t *testing.T, d *sql.DB, ownerKind string, ownerID int6
 		b, _ := json.Marshal(meta)
 		metaJSON = string(b)
 	}
+	// Seal like the real handler does, so seeded rows exercise the encrypted path
+	// rather than the legacy-plaintext fallback (that one has its own test).
+	sealed, err := secretbox.Seal(value)
+	if err != nil {
+		t.Fatalf("seal credential: %v", err)
+	}
 	var id int64
 	if err := d.QueryRowContext(context.Background(),
 		`INSERT INTO atlas_credentials (owner_kind, owner_id, name, kind, value, meta_json)
 		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		ownerKind, ownerID, name, kind, value, metaJSON).Scan(&id); err != nil {
+		ownerKind, ownerID, name, kind, sealed, metaJSON).Scan(&id); err != nil {
 		t.Fatalf("seed credential: %v", err)
 	}
 	return id

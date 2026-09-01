@@ -16,6 +16,7 @@ import (
 	"github.com/zcag/tela/backend/internal/llm"
 	"github.com/zcag/tela/backend/internal/mailer"
 	"github.com/zcag/tela/backend/internal/rag"
+	"github.com/zcag/tela/backend/internal/secretbox"
 	"github.com/zcag/tela/backend/internal/settings"
 	"github.com/zcag/tela/backend/internal/summarize"
 )
@@ -196,6 +197,14 @@ func New(db *sql.DB) *Server {
 	if err := auth.InitAPIKeySecret(ctx, st); err != nil {
 		// Boot-fatal: a stable api-key secret is required.
 		slog.Error("settings: init api-key secret", "err", err)
+		os.Exit(1)
+	}
+	// Resolve the credential encryption key the same way (env → persisted →
+	// generated-and-persisted). Must run before any handler seals or opens a
+	// stored credential; see internal/secretbox.
+	if err := secretbox.Init(ctx, st); err != nil {
+		// Boot-fatal: without a stable key, stored credentials are unreadable.
+		slog.Error("settings: init credential key", "err", err)
 		os.Exit(1)
 	}
 	// Seed the self-registration default from env on first boot (packaged

@@ -55,7 +55,16 @@ $COMPOSE exec backend /tela set-plan <user|org> <id> <plan_key>          # assig
 $COMPOSE exec backend /tela list-users                                   # id/username/email/admin/active/plan
 $COMPOSE exec backend /tela reindex-all [--force]                        # re-embed (—force = full, ignore cache)
 $COMPOSE exec backend /tela rag-eval --set golden.json                   # score retrieval (recall@k/MRR/nDCG)
+$COMPOSE exec backend /tela rewrap-credentials                           # encrypt any still-plaintext stored credentials
 ```
+
+**`rewrap-credentials`** seals Atlas source tokens and org SSO client secrets
+that predate encryption-at-rest (`internal/secretbox`). Those rows keep working
+either way — an unsealed value reads back verbatim, which is what made that
+change a no-op upgrade — but until this runs, encryption protects nothing that
+already existed. Idempotent, so it is safe to run after any deploy. See the
+credentials section of [`atlas.md`](atlas.md) for the key (`TELA_CREDENTIAL_KEY`)
+and what rotating it costs.
 
 ### Recovering admin access
 

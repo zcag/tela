@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+
+	"github.com/zcag/tela/backend/internal/secretbox"
 )
 
 // Per-org OIDC SSO connection: stored config + the read paths the login flow
@@ -114,6 +116,13 @@ func (s *Server) PutOrgSSO(w http.ResponseWriter, r *http.Request) {
 	if req.Enforced {
 		enforced = 1
 	}
+	// Encrypted at rest (internal/secretbox) — the client secret is replayed to the
+	// IdP on every code exchange, so it can't be hashed. Issuer/client_id stay clear.
+	sealed, err := secretbox.Seal(req.ClientSecret)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "encrypt client secret failed")
+		return
+	}
 	if _, err := s.DB.ExecContext(ctx, `
 		INSERT INTO org_sso (org_id, issuer, client_id, client_secret, enforced)
 		VALUES ($1, $2, $3, $4, $5)
@@ -121,7 +130,7 @@ func (s *Server) PutOrgSSO(w http.ResponseWriter, r *http.Request) {
 			issuer = EXCLUDED.issuer, client_id = EXCLUDED.client_id,
 			client_secret = EXCLUDED.client_secret, enforced = EXCLUDED.enforced,
 			updated_at = tela_now()`,
-		orgID, req.Issuer, req.ClientID, req.ClientSecret, enforced); err != nil {
+		orgID, req.Issuer, req.ClientID, sealed, enforced); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "save sso failed")
 		return
 	}
@@ -158,6 +167,8 @@ func (s *Server) DeleteOrgSSO(w http.ResponseWriter, r *http.Request) {
 
 const orgSSOSelect = `SELECT org_id, issuer, client_id, client_secret, enforced FROM org_sso`
 
+// scanOrgSSO is the ONLY place a stored client secret is unwrapped — every read
+// path funnels through it, so encryption can't be bypassed by adding a query.
 func scanOrgSSO(row *sql.Row) (orgSSOConn, bool, error) {
 	var c orgSSOConn
 	var enforced int
@@ -166,6 +177,12 @@ func scanOrgSSO(row *sql.Row) (orgSSOConn, bool, error) {
 		return orgSSOConn{}, false, nil
 	}
 	if err != nil {
+		return orgSSOConn{}, false, err
+	}
+	// A row written before encryption landed carries no version prefix and comes
+	// back verbatim; a decrypt failure fails the login rather than trying to
+	// authenticate to the IdP with ciphertext.
+	if c.ClientSecret, err = secretbox.Open(c.ClientSecret); err != nil {
 		return orgSSOConn{}, false, err
 	}
 	c.Enforced = enforced == 1

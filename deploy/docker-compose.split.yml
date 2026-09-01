@@ -31,6 +31,9 @@ services:
       TELA_PUBLIC_BASE_URL: ${TELA_PUBLIC_BASE_URL}
       TELA_SHARE_SECRET:    ${TELA_SHARE_SECRET}
       TELA_API_KEY_SECRET:  ${TELA_API_KEY_SECRET}
+      # Encrypts Atlas source tokens + org SSO client secrets at rest. Unset =
+      # generated on first boot and persisted in instance_settings.
+      TELA_CREDENTIAL_KEY:  ${TELA_CREDENTIAL_KEY:-}
       TELA_CUSTOM_DOMAIN_TARGET: ${TELA_CUSTOM_DOMAIN_TARGET:-}
       TELA_DATABASE_URL: postgres://${TELA_PG_USER:-tela}:${TELA_PG_PASSWORD}@postgres:5432/${TELA_PG_DB:-tela}?sslmode=disable
       # gotenberg can be a remote renderer; the reader origin its Chromium loads

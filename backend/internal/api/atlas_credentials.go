@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/zcag/tela/backend/internal/atlas/core"
+	"github.com/zcag/tela/backend/internal/secretbox"
 )
 
 // ── request / response shapes ───────────────────────────────────────────────
@@ -110,12 +111,21 @@ func (s *Server) CreateAtlasCredential(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(req.Meta)
 		metaJSON = string(b)
 	}
+	// The token is encrypted at rest (internal/secretbox) — it has to be replayed
+	// outbound to git/jira, so hashing is not an option. meta_json is deliberately
+	// left in the clear: it holds only non-secret adornments (jira email/base URL,
+	// git username), and keeping it readable keeps it greppable in a dump.
+	sealed, err := secretbox.Seal(req.Value)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "encrypt credential failed")
+		return
+	}
 	var id int64
 	var createdAt string
-	err := s.DB.QueryRowContext(r.Context(), `
+	err = s.DB.QueryRowContext(r.Context(), `
 		INSERT INTO atlas_credentials (owner_kind, owner_id, name, kind, value, meta_json)
 		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, created_at`,
-		req.OwnerKind, req.OwnerID, req.Name, req.Kind, req.Value, metaJSON).Scan(&id, &createdAt)
+		req.OwnerKind, req.OwnerID, req.Name, req.Kind, sealed, metaJSON).Scan(&id, &createdAt)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			writeError(w, http.StatusConflict, "duplicate", "a credential with this name already exists for this owner")
@@ -172,8 +182,16 @@ func (s *Server) atlasCredOwner(ctx context.Context, credID int64) (kind string,
 // is the access token; meta carries the non-secret adornments (jira email/base,
 // git username).
 func loadAtlasCredential(ctx context.Context, db *sql.DB, id int64) (value string, meta map[string]string, err error) {
-	var metaJSON string
-	err = db.QueryRowContext(ctx, `SELECT value, meta_json FROM atlas_credentials WHERE id=$1`, id).Scan(&value, &metaJSON)
+	var stored, metaJSON string
+	err = db.QueryRowContext(ctx, `SELECT value, meta_json FROM atlas_credentials WHERE id=$1`, id).Scan(&stored, &metaJSON)
+	if err != nil {
+		return "", nil, err
+	}
+	// Unwraps a sealed value; a row written before encryption landed has no version
+	// prefix and comes back verbatim, so old installs keep running until the row is
+	// next saved. A decrypt failure fails the run rather than handing the connector
+	// ciphertext to authenticate with.
+	value, err = secretbox.Open(stored)
 	if err != nil {
 		return "", nil, err
 	}

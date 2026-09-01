@@ -14,6 +14,8 @@ import (
 
 	"github.com/zcag/tela/backend/internal/api"
 	"github.com/zcag/tela/backend/internal/auth"
+	"github.com/zcag/tela/backend/internal/secretbox"
+	"github.com/zcag/tela/backend/internal/settings"
 )
 
 // Operational CLI subcommands, dispatched from main after migrations run. They
@@ -230,4 +232,63 @@ func runListUsers(d *sql.DB) {
 		fatal("list-users", "err", err)
 	}
 	tw.Flush()
+}
+
+// runRewrapCredentials encrypts credentials still stored as plaintext — rows
+// written before internal/secretbox landed. Not required for correctness (an
+// unsealed value is read back verbatim, which is what makes the upgrade a no-op),
+// but until it runs, encryption-at-rest protects nothing that already existed.
+// Idempotent: already-sealed rows are skipped, so it is safe on every deploy.
+func runRewrapCredentials(d *sql.DB) {
+	ctx := context.Background()
+	st, err := settings.New(ctx, d)
+	if err != nil {
+		fatal("rewrap-credentials: load settings", "err", err)
+	}
+	if err := secretbox.Init(ctx, st); err != nil {
+		fatal("rewrap-credentials: init credential key", "err", err)
+	}
+	atlas := rewrapColumn(ctx, d, "atlas_credentials", "id", "value")
+	sso := rewrapColumn(ctx, d, "org_sso", "org_id", "client_secret")
+	slog.Info("rewrap-credentials: done", "atlas_credentials", atlas, "org_sso", sso)
+}
+
+// rewrapColumn seals every unsealed non-empty value in table.col, keyed by idCol.
+// Read-then-write rather than one UPDATE because the encryption happens in Go.
+func rewrapColumn(ctx context.Context, d *sql.DB, table, idCol, col string) int {
+	rows, err := d.QueryContext(ctx, fmt.Sprintf(
+		`SELECT %s, %s FROM %s WHERE %s <> ''`, idCol, col, table, col))
+	if err != nil {
+		fatal("rewrap-credentials: read", "table", table, "err", err)
+	}
+	type row struct {
+		id    int64
+		value string
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.value); err != nil {
+			rows.Close()
+			fatal("rewrap-credentials: scan", "table", table, "err", err)
+		}
+		if !secretbox.IsSealed(r.value) {
+			pending = append(pending, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		fatal("rewrap-credentials: iterate", "table", table, "err", err)
+	}
+	for _, r := range pending {
+		sealed, err := secretbox.Seal(r.value)
+		if err != nil {
+			fatal("rewrap-credentials: seal", "table", table, "id", r.id, "err", err)
+		}
+		if _, err := d.ExecContext(ctx, fmt.Sprintf(
+			`UPDATE %s SET %s = $1 WHERE %s = $2`, table, col, idCol), sealed, r.id); err != nil {
+			fatal("rewrap-credentials: update", "table", table, "id", r.id, "err", err)
+		}
+	}
+	return len(pending)
 }

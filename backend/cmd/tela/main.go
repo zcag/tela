@@ -118,6 +118,11 @@ func main() {
 		case "credits":
 			runCredits(d, os.Args[2:])
 			return
+		case "rewrap-credentials":
+			// Seal credentials still stored as plaintext (rows predating
+			// internal/secretbox). Idempotent; safe to re-run.
+			runRewrapCredentials(d)
+			return
 		case "list-users":
 			runListUsers(d)
 			return
@@ -125,7 +130,7 @@ func main() {
 			runDigest(d, os.Args[2:])
 			return
 		default:
-			fatal("unknown subcommand (known: reindex-all, summarize-all, rag-eval, ask-eval, create-admin, set-plan, grant, credits, list-users, digest)", "subcommand", os.Args[1])
+			fatal("unknown subcommand (known: reindex-all, summarize-all, rag-eval, ask-eval, create-admin, set-plan, grant, credits, list-users, digest, rewrap-credentials)", "subcommand", os.Args[1])
 		}
 	}
 

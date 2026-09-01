@@ -16,7 +16,7 @@ CREATE TABLE atlas_credentials (
   owner_id    BIGINT NOT NULL,
   name        TEXT   NOT NULL,
   kind        TEXT   NOT NULL,             -- 'git' | 'jira'
-  value       TEXT   NOT NULL DEFAULT '',  -- token; write-only over the API, plaintext at rest (encryption: future seam)
+  value       TEXT   NOT NULL DEFAULT '',  -- token; write-only over the API, encrypted at rest via internal/secretbox (unprefixed rows predate it and read as plaintext)
   meta_json   TEXT   NOT NULL DEFAULT '',  -- non-secret adornments (jira email/base, git username)
   created_at  TEXT   NOT NULL DEFAULT tela_now(),
   UNIQUE (owner_kind, owner_id, name)
