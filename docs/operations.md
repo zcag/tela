@@ -242,12 +242,47 @@ as before, plus a `metrics` block per row (`internal/api/admin_user_metrics.go`)
 
 | Column | Source | Notes |
 | --- | --- | --- |
-| Edits (+ agent share) | `page_revisions` | `source='agent'` is the agent-written subset |
+| Edits (human / agent / sync) | `page_revisions` | split on `source`: `agent`, `sync-*`, everything else is human |
 | Pages | `page_revisions` | pages whose *earliest* revision is this user's |
-| Views, Days active, Sign-ins | `events` | bounded by the events retention window |
+| Views, Sign-ins | `events` | bounded by the events retention window |
+| Days active | `events` **+** `page_revisions` | distinct days with either — see the sync note below |
 | Asks | `ask_log` | unpruned |
 | AI | `cloud_usage` | keyed by calendar month, so it follows month boundaries, not the exact day cut |
 | Storage / spaces | `buildUsage` | the same figures `limits.go` enforces against |
+| Status | `admin_user_segments.go` | lifecycle label; always last-30-days |
+| Trend | `metrics.weeks` | active days per ISO week over 26 weeks, + a 4-vs-4-week delta |
+
+**Why edits are split three ways.** Folding them together made a vault-sync
+account read as the instance's most prolific author: file sync snapshots the
+overwritten state as a revision (`sync-prior` / `sync-conflict`), so a busy
+synced vault posts thousands of revisions nobody typed. The columns keep them
+apart; the summary strip shows the instance-wide mix.
+
+**Why days-active counts revisions too.** `page.edit` events are recorded only
+on the interactive REST/MCP path (`pages.go`); the WebDAV sync path records
+none. An events-only measure therefore filed the heaviest writers as dormant
+while their edit count said otherwise — and the lifecycle segment inherited it.
+`activeDaysUnion` is the shared definition; three aggregates read it, so they
+cannot drift apart.
+
+**Lifecycle segments** (`admin_user_segments.go`) label each row Power (12+
+active days in the last 30) / Regular (4–11) / Dabbler (1–3) / Churned (was
+active, silent 30+ days) / Never started. Two rules matter: they always read the
+last 30 days *regardless of the selected window* — they describe the person, not
+the view — and recency outranks volume, so a prolific author who stopped is
+Churned, not Power. That's the row worth acting on. The segment bar doubles as a
+filter, and the whole view (window, segment, search, sort, group-by) lives in
+the URL so a finding can be bookmarked and sent to someone.
+
+**Group-by** (`GET /api/admin/activity/groups?by=space|org&window=`,
+`admin_activity_groups.go`) answers the question behind the question on a
+multi-team instance. The two groupings come from deliberately different sources:
+a **space's** activity is a property of its content (revisions on its pages,
+views of them, whoever did it), while an **org's** is a property of its people
+(its members' activity summed, wherever they did it — so a member of two orgs
+counts toward both; splitting them would make every number smaller than the
+truth). The org path reuses `loadAdminUserMetrics` rather than growing a second
+set of subtly different aggregates.
 
 Each metric is one batched `GROUP BY` over the population, never a per-user
 query. Sorting, filtering, the summary strip and CSV export are all client-side
@@ -262,6 +297,10 @@ Two honest limits worth knowing before reading the numbers:
   response carries that horizon as `events_since` and the table prints it — but
   only when it actually clips the selected window. Edits and pages created come
   from `page_revisions`, which is never pruned, so those *are* all-time.
+- **The retention horizon also caps the cohort grid.** The per-user weekly series
+  is 26 buckets — the practical ceiling under a 180-day retention. Signup cohorts
+  older than that can't be drawn, and the grid simply omits them rather than
+  showing a flat tail that reads as churn.
 - **The quota snapshot is still an N+1.** Each row calls `buildUsage` so the
   figures can't drift from the quota gate; batching it would mean forking
   `planFor`'s trial + top-up resolution, which is a worse trade than the extra

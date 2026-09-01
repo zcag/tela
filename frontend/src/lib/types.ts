@@ -337,6 +337,7 @@ export interface AdminUserRow {
   mcp_last_seen_at?: string | null // last authenticated MCP request
   // Activity inside the requested window. Always present on list rows.
   metrics?: AdminUserMetrics
+  segment?: AdminUserSegment
 }
 
 // Which slice of history the admin People table is showing. '1m'/'3m' are
@@ -347,15 +348,33 @@ export type AdminUserWindow = '1m' | '3m' | 'all'
 
 // One user's activity inside that window (backend's adminUserMetrics).
 export interface AdminUserMetrics {
-  edits: number // page revisions authored
-  agent_edits: number // of those, written through an agent
+  // edits is the total; the three below partition it by who wrote the revision.
+  edits: number
+  human_edits: number // typed in the app
+  agent_edits: number // written through an agent (MCP)
+  sync_edits: number // snapshots taken by file sync
   pages_created: number // pages whose first revision is theirs
   views: number
   asks: number
   logins: number
-  days_active: number // distinct days with any recorded activity
+  days_active: number // distinct days with an event OR an authored revision
   llm_calls: number // metered AI calls (calendar-month grain)
+  // Days active over a fixed last-30-days, whatever window is selected — what
+  // the lifecycle segment is computed from.
+  days30: number
+  // Active days per ISO week (0-7), oldest→newest, aligned to AdminUsersPage.weeks.
+  // Drives the trend sparkline, its delta, and the retention grid.
+  weeks: number[]
 }
+
+// Lifecycle label computed server-side (admin_user_segments.go). Always over the
+// last 30 days, so it describes the person rather than the selected window.
+export type AdminUserSegment =
+  | 'power'
+  | 'regular'
+  | 'dabbler'
+  | 'churned'
+  | 'never' 
 
 // GET /api/admin/users — the population plus the window it was computed over.
 export interface AdminUsersPage {
@@ -364,6 +383,9 @@ export interface AdminUsersPage {
   // Oldest surviving `events` row: views / sign-ins / days-active cannot see
   // further back than this, whatever window is selected. '' when empty.
   events_since: string
+  // Week-start dates (Monday, oldest→newest) every row's `metrics.weeks` is
+  // aligned to — the shared x-axis for sparklines and the cohort grid.
+  weeks: string[]
 }
 
 // Per-user resource snapshot in the admin list — current usage beside the plan

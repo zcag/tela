@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
   EVENT_TYPE_GROUPS,
   useInfiniteEvents,
@@ -15,13 +16,21 @@ import { cn } from '../../lib/utils'
 // and API request, newest-first, with type/search/date filters and keyset-based
 // infinite scroll (the first useInfiniteQuery in the app).
 export function SettingsEventsTab() {
+  // Deep-link filters from the People table: ?user=<id>&etypes=<type>&admins=1.
+  // Arriving with a user pinned is how a number in that table becomes the rows
+  // behind it — and `admins` comes along because this feed hides instance-admin
+  // activity by default, so clicking an admin's count would otherwise land on
+  // an empty feed that reads as broken.
+  const search$ = useSearch({ from: '/_app/settings' })
+  const navigate = useNavigate()
+  const pinnedUser = search$.user
   // Selected group labels (empty = all). Each group maps to one or more type
   // tokens passed to the backend.
   const [groups, setGroups] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [since, setSince] = useState('')
-  const [includeAdmins, setIncludeAdmins] = useState(false)
+  const [includeAdmins, setIncludeAdmins] = useState(search$.admins === 1)
 
   // Debounce the free-text box so each keystroke doesn't refetch.
   useEffect(() => {
@@ -33,13 +42,25 @@ export function SettingsEventsTab() {
     const types = EVENT_TYPE_GROUPS.filter((g) => groups.has(g.label)).flatMap(
       (g) => g.types,
     )
+    // An explicit ?etypes= from a deep link wins over the chips, which start
+    // empty on arrival — the caller asked for one kind of event, not all of them.
+    const deepTypes = search$.etypes ? search$.etypes.split(',') : undefined
     return {
-      types: types.length > 0 ? types : undefined,
+      types: deepTypes ?? (types.length > 0 ? types : undefined),
+      userId: pinnedUser,
       q: debouncedSearch.trim() || undefined,
       since: since || undefined,
       includeAdmins: includeAdmins || undefined,
     }
-  }, [groups, debouncedSearch, since, includeAdmins])
+  }, [groups, debouncedSearch, since, includeAdmins, pinnedUser, search$.etypes])
+
+  // Drop the deep-link narrowing and go back to the whole feed.
+  const clearPin = () =>
+    void navigate({
+      to: '/settings',
+      search: { tab: 'events' },
+      replace: true,
+    })
 
   const query = useInfiniteEvents(filters)
   const {
@@ -94,6 +115,18 @@ export function SettingsEventsTab() {
         Everything happening on this instance — sign-ins, page views and edits,
         access changes, asks, and API requests. Most recent first.
       </p>
+
+      {pinnedUser ? (
+        <div className="flex items-center gap-[var(--space-2)] rounded-[var(--radius-sm)] border border-[var(--accent)] bg-[var(--surface-2)] px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-sm)]">
+          <span className="text-[var(--text-primary)]">
+            Showing one person's activity
+            {search$.etypes ? ` · ${search$.etypes.split(',').join(', ')}` : ''}
+          </span>
+          <Button type="button" variant="ghost" size="sm" onClick={clearPin}>
+            Show everyone
+          </Button>
+        </div>
+      ) : null}
 
       {/* Filter bar */}
       <div className="flex flex-col gap-[var(--space-3)]">

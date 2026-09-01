@@ -332,13 +332,51 @@ const indexRoute = createRoute({
   ),
 })
 
+// Search state for /settings: the tab, plus the People table's view and the
+// Events tab's deep-link filters (see validateSearch below).
+export interface SettingsSearch {
+  tab?: string
+  window?: string
+  seg?: string
+  by?: string
+  q?: string
+  sort?: string
+  dir?: 'asc' | 'desc'
+  user?: number
+  etypes?: string
+  admins?: 1
+}
+
 const settingsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/settings',
   // `?tab=` deep-links a section so the per-org page can send "← Organizations"
   // back to the right tab. SettingsPage reads it for the initial selection.
-  validateSearch: (search: Record<string, unknown>): { tab?: string } =>
-    typeof search.tab === 'string' ? { tab: search.tab } : {},
+  //
+  // The rest is the People table's view state (window / segment / search / sort)
+  // and the Events tab's deep-link filters (user / etypes / admins). Both live
+  // in the URL so a filtered, sorted finding can be bookmarked and sent to
+  // someone — and so clicking a number in one tab can land you in the other,
+  // already narrowed.
+  validateSearch: (search: Record<string, unknown>): SettingsSearch => {
+    const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : undefined)
+    const num = (v: unknown) => {
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isFinite(n) && n > 0 ? n : undefined
+    }
+    return {
+      tab: str(search.tab),
+      window: str(search.window),
+      seg: str(search.seg),
+      by: str(search.by),
+      q: str(search.q),
+      sort: str(search.sort),
+      dir: search.dir === 'asc' || search.dir === 'desc' ? search.dir : undefined,
+      user: num(search.user),
+      etypes: str(search.etypes),
+      admins: search.admins === 1 || search.admins === '1' ? 1 : undefined,
+    }
+  },
   component: lazyRouteComponent(() => import('./settings'), 'SettingsPage'),
 })
 
