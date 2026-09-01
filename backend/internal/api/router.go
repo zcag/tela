@@ -396,6 +396,9 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	// AI endpoints & reliability (ai_endpoints.go): per-service health, latency,
 	// and the relief-proxy topology — the in-app failover breakdown.
 	mux.HandleFunc("GET /api/admin/ai-endpoints", srv.AdminAIEndpoints)
+	// Per-space / per-org activity for the People table's group-by (same windows
+	// as GET /api/admin/users, keyed by content or by team instead of by person).
+	mux.HandleFunc("GET /api/admin/activity/groups", srv.AdminActivityGroups)
 	mux.HandleFunc("GET /api/admin/feedback", srv.ListFeedback)
 	mux.HandleFunc("POST /api/admin/feedback/seen", srv.MarkFeedbackSeen)
 	// Registered after /seen: a literal segment and a wildcard can coexist here
