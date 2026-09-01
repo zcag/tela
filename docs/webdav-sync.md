@@ -94,6 +94,13 @@ flagged for review, and the overridden server version is kept as a revision
 (`source = sync-conflict`) — nothing is ever lost. Merge is line-based, so
 edits on adjacent lines may be treated as one conflicting block.
 
+Merging is independent of how your client *shapes* the write: `rclone bisync
+--conflict-loser delete` resolves a both-sides edit as DELETE(loser) +
+PUT(winner), which lands on the resurrect path (the file carries the page's
+`id:`, so the trashed page comes back) — that merges too. It did not until
+2026-09-01: it applied the incoming file blind, so that flag combination turned
+the documented merge into silent last-write-wins.
+
 > **First-edit caveat:** the merge needs a *base* (what your client last sent).
 > A page created in the app and edited locally **before your client has ever
 > uploaded it** has no base yet, so that first write is last-write-wins. After

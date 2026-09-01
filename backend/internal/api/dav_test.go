@@ -562,3 +562,54 @@ func TestSpaceTreeResolve(t *testing.T) {
 		t.Fatal("resolve unknown should fail")
 	}
 }
+
+// TestDAV_ThreeWayMergeSurvivesDeleteThenRepush: rclone bisync resolves a
+// both-sides edit as DELETE(loser) + PUT(winner) (`--conflict-loser delete`),
+// so the write lands on the RESURRECT path rather than the bound one. It must
+// merge exactly the same — applying the incoming file blind there made the
+// documented "your edits combine" contract silently last-write-wins.
+func TestDAV_ThreeWayMergeSurvivesDeleteThenRepush(t *testing.T) {
+	ts, d, spaceID, folder, token := davFixture(t)
+	ctx := context.Background()
+	path := "/dav/" + folder + "/note.md"
+
+	if resp, _ := davDo(t, ts, token, "PUT", path, "line1\nline2\nline3\n", nil); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("initial PUT = %d, want 201", resp.StatusCode)
+	}
+	page, ok := pageByTitle(t, d, spaceID, "note")
+	if !ok {
+		t.Fatal("note page not created")
+	}
+	// What the client holds on disk: the canonical file, id and all.
+	_, canonical := davDo(t, ts, token, "GET", path, "", nil)
+
+	// The app edits line 2 while the client edits line 3.
+	if _, err := d.ExecContext(ctx,
+		`UPDATE pages SET body = $1, updated_at = tela_now() WHERE id = $2`,
+		"line1\nline2-APP\nline3\n", page.ID); err != nil {
+		t.Fatalf("simulate app edit: %v", err)
+	}
+	local := strings.Replace(canonical, "line3", "line3-LOCAL", 1)
+
+	// The conflict resolution: delete the losing (remote) copy, re-push the winner.
+	if resp, _ := davDo(t, ts, token, "DELETE", path, "", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %d, want 204", resp.StatusCode)
+	}
+	if resp, _ := davDo(t, ts, token, "PUT", path, local, nil); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("re-push PUT = %d, want 201", resp.StatusCode)
+	}
+
+	merged, ok := pageByTitle(t, d, spaceID, "note")
+	if !ok {
+		t.Fatal("page not resurrected")
+	}
+	if merged.ID != page.ID {
+		t.Fatalf("resurrect forked a new page: id %d, want %d", merged.ID, page.ID)
+	}
+	if merged.Body != "line1\nline2-APP\nline3-LOCAL\n" {
+		t.Fatalf("merged body = %q, want both edits combined across the delete", merged.Body)
+	}
+	if n := countLivePages(t, d, spaceID); n != 1 {
+		t.Fatalf("%d live pages, want 1", n)
+	}
+}
