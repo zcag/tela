@@ -24,6 +24,7 @@ export function ActivityGroupsTable({
       key: 'name',
       header: by === 'org' ? 'Team' : 'Space',
       sticky: 'left',
+      group: 'Who',
       sortValue: (g) => g.name.toLowerCase(),
       cell: (g) => (
         <div className="flex flex-col gap-[2px] min-w-[10rem]">
@@ -39,6 +40,7 @@ export function ActivityGroupsTable({
     {
       key: 'people',
       header: by === 'org' ? 'Active members' : 'Contributors',
+      group: 'Who',
       title:
         by === 'org'
           ? 'Members with any activity in the window, out of the team’s size.'
@@ -57,6 +59,8 @@ export function ActivityGroupsTable({
     {
       key: 'edits',
       header: 'Edits',
+      group: 'Wrote',
+      scale: (g: ActivityGroup) => g.edits,
       title: 'Revisions written in the window. Agent and sync shares are called out — a synced vault can post thousands nobody typed.',
       numeric: true,
       sortValue: (g) => g.edits,
@@ -79,14 +83,18 @@ export function ActivityGroupsTable({
     {
       key: 'views',
       header: 'Views',
+      group: 'Read',
       numeric: true,
+      scale: (g: ActivityGroup) => g.views,
       sortValue: (g) => g.views,
       cell: (g) => <Num n={g.views} />,
     },
     {
       key: 'asks',
       header: 'Asks',
+      group: 'Read',
       numeric: true,
+      scale: (g: ActivityGroup) => g.asks,
       sortValue: (g) => g.asks,
       cell: (g) => <Num n={g.asks} />,
     },
@@ -95,6 +103,7 @@ export function ActivityGroupsTable({
           {
             key: 'ai',
             header: 'AI',
+            group: 'Read',
             numeric: true,
             sortValue: (g: ActivityGroup) => g.llm_calls,
             cell: (g: ActivityGroup) => <Num n={g.llm_calls} />,
@@ -104,6 +113,7 @@ export function ActivityGroupsTable({
           {
             key: 'pages',
             header: 'Pages',
+            group: 'Holds',
             title: 'Live pages in the space right now — not window-scoped.',
             numeric: true,
             sortValue: (g: ActivityGroup) => g.pages,
@@ -112,6 +122,7 @@ export function ActivityGroupsTable({
           {
             key: 'last',
             header: 'Last edited',
+            group: 'Holds',
             sortValue: (g: ActivityGroup) => g.last_active,
             cell: (g: ActivityGroup) =>
               g.last_active ? (
@@ -125,7 +136,15 @@ export function ActivityGroupsTable({
 
   if (groups.isLoading) {
     return (
-      <p className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">Loading…</p>
+      <div
+        aria-busy="true"
+        aria-label="Loading activity"
+        className="flex flex-col gap-[1px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-subtle)]"
+      >
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="h-[var(--space-8)] bg-[var(--surface-2)] opacity-60 animate-pulse" />
+        ))}
+      </div>
     )
   }
   if (groups.isError) {
@@ -143,6 +162,7 @@ export function ActivityGroupsTable({
         columns={columns}
         rowKey={(g) => g.id}
         defaultSort={{ key: 'edits', dir: 'desc' }}
+        stale={groups.isFetching}
         caption={by === 'org' ? 'Activity by team' : 'Activity by space'}
         empty={by === 'org' ? 'No teams yet.' : 'No spaces yet.'}
       />

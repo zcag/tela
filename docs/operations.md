@@ -265,6 +265,15 @@ while their edit count said otherwise — and the lifecycle segment inherited it
 `activeDaysUnion` is the shared definition; three aggregates read it, so they
 cannot drift apart.
 
+The screen's craft decisions are load-bearing, not decoration: columns are
+grouped into families (*Who / Wrote / Read / Cadence / Account*) with a rule
+only at each boundary; numeric columns carry a track scaled to the column's
+max, so a block of digits reads as a shape and a zero is an empty track rather
+than one more dash; a column that is empty for every row in view hides itself;
+and the trend sparklines share a fixed 0–7 domain — per-series auto-scaling
+drew "one active day a week" and "every day" as the identical shape, which is
+worse than no chart in a column meant for comparison.
+
 **Lifecycle segments** (`admin_user_segments.go`) label each row Power (12+
 active days in the last 30) / Regular (4–11) / Dabbler (1–3) / Churned (was
 active, silent 30+ days) / Never started. Two rules matter: they always read the

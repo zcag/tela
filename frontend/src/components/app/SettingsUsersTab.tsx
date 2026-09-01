@@ -3,6 +3,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
   Boxes,
   Download,
+  HelpCircle,
   MoreHorizontal,
   Plug,
   Search,
@@ -30,6 +31,7 @@ import {
   daysSinceSqlite,
   localDateFromSqlite,
   relativeTimeFromSqlite,
+  shortRelativeFromSqlite,
 } from '../../lib/relativeTime'
 import { formatBytes } from '../../lib/format'
 import type {
@@ -44,9 +46,10 @@ import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Checkbox } from '../ui/checkbox'
 import { DataTable, type DataTableColumn, type SortDir } from '../ui/data-table'
+import { Sparkline } from '../ui/sparkline'
 import { ActivityGroupsTable } from './ActivityGroupsTable'
 import type { ActivityGroupBy } from '../../lib/queries/admin-activity-groups'
-import { Sparkline } from '../ui/sparkline'
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import {
   Dialog,
   DialogClose,
@@ -63,8 +66,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu'
+import { EmptyState } from '../ui/empty-state'
 import { Input } from '../ui/input'
 import { cn } from '../../lib/utils'
+import {
+  DELTA_WEEKS,
+  buildCohorts,
+  isNewcomer,
+  trendDelta,
+} from '../../lib/people-analytics'
 
 const MIN_PASSWORD_LEN = 8
 
@@ -81,9 +91,11 @@ type GroupBy = 'people' | ActivityGroupBy
 // events-retention ceiling) because the cohort grid needs the depth; a row-height
 // sparkline can only resolve a quarter of that, and a longer one just looks noisy.
 const TREND_WEEKS = 12
-// Weeks per side of the trend delta: last 4 vs the 4 before them. A month is
-// short enough to catch someone falling off while you can still do something.
-const DELTA_WEEKS = 4
+// DELTA_WEEKS (4 either side) lives with the arithmetic in lib/people-analytics.
+// Active days per week is bounded at 7 by definition, so every sparkline in the
+// column shares that domain. Per-series auto-scaling would draw "one day a week"
+// and "every day" as the same shape — see Sparkline's `domain` prop.
+const WEEK_DOMAIN: [number, number] = [0, 7]
 
 const NO_METRICS: AdminUserMetrics = {
   edits: 0,
@@ -102,19 +114,64 @@ const NO_METRICS: AdminUserMetrics = {
 
 const metricsOf = (row: AdminUserRow): AdminUserMetrics => row.metrics ?? NO_METRICS
 
-// The lifecycle vocabulary, in the order a human reads it: best to worst, with
-// the two that are actually actionable ('never', 'churned') at the ends.
+// The lifecycle vocabulary, best to worst. Tone rides the semantic accent scale
+// rather than --accent, which means "interactive" everywhere else in the app.
 const SEGMENTS: {
   key: AdminUserSegment
   label: string
-  tone: 'accent' | 'muted' | 'danger'
+  short: string
+  tone: 'positive' | 'accent' | 'muted' | 'warning' | 'negative'
+  // `band` fills the proportional bar (a large area, so it's mixed toward the
+  // surface); `dot` is the same hue at full strength for the small legend mark.
+  band: string
+  dot: string
   hint: string
 }[] = [
-  { key: 'power', label: 'Power', tone: 'accent', hint: '12+ active days in the last 30' },
-  { key: 'regular', label: 'Regular', tone: 'accent', hint: '4–11 active days in the last 30' },
-  { key: 'dabbler', label: 'Dabbler', tone: 'muted', hint: '1–3 active days in the last 30' },
-  { key: 'churned', label: 'Churned', tone: 'danger', hint: 'was active once, silent for 30+ days' },
-  { key: 'never', label: 'Never started', tone: 'danger', hint: 'signed up and never did anything' },
+  {
+    key: 'power',
+    label: 'Power',
+    short: 'Power',
+    tone: 'positive',
+    band: 'color-mix(in srgb, var(--accent-positive-fg) 62%, var(--surface-1))',
+    dot: 'var(--accent-positive-fg)',
+    hint: '12+ active days in the last 30',
+  },
+  {
+    key: 'regular',
+    label: 'Regular',
+    short: 'Regular',
+    tone: 'accent',
+    band: 'color-mix(in srgb, var(--accent) 62%, var(--surface-1))',
+    dot: 'var(--accent)',
+    hint: '4–11 active days in the last 30',
+  },
+  {
+    key: 'dabbler',
+    label: 'Dabbler',
+    short: 'Dabbler',
+    tone: 'muted',
+    band: 'color-mix(in srgb, var(--text-muted) 48%, var(--surface-1))',
+    dot: 'var(--text-muted)',
+    hint: '1–3 active days in the last 30',
+  },
+  {
+    key: 'churned',
+    label: 'Churned',
+    short: 'Churned',
+    tone: 'warning',
+    band: 'color-mix(in srgb, var(--accent-warning-fg) 62%, var(--surface-1))',
+    dot: 'var(--accent-warning-fg)',
+    hint: 'was active once, then silent for 30+ days',
+  },
+  {
+    key: 'never',
+    label: 'Never started',
+    short: 'Never',
+    tone: 'negative',
+    band: 'color-mix(in srgb, var(--accent-negative-fg) 62%, var(--surface-1))',
+    dot: 'var(--accent-negative-fg)',
+    hint: 'signed up and never did anything',
+  },
 ]
 const SEGMENT_BY_KEY = new Map(SEGMENTS.map((s) => [s.key, s]))
 // Sort order for the segment column: healthiest first, so a descending sort
@@ -147,6 +204,7 @@ export function SettingsUsersTab() {
   const [mcp, setMcp] = useState<McpFilter>('all')
   const [activityFor, setActivityFor] = useState<AdminUserRow | null>(null)
   const [resetFor, setResetFor] = useState<AdminUserRow | null>(null)
+  const [planFor, setPlanFor] = useState<AdminUserRow | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
   const updateUser = useUpdateAdminUser()
 
@@ -225,128 +283,162 @@ export function SettingsUsersTab() {
     [navigate],
   )
 
-  const columns = useMemo<DataTableColumn<AdminUserRow>[]>(
-    () => [
+  // A column of nothing but dashes is worse than no column: on most instances
+  // Asks and AI are empty, and hiding them gives the ones that do carry data
+  // room to breathe.
+  const hasAny = useCallback(
+    (pick: (m: AdminUserMetrics) => number) => all.some((u) => pick(metricsOf(u)) > 0),
+    [all],
+  )
+
+  const columns = useMemo<DataTableColumn<AdminUserRow>[]>(() => {
+    const cols: DataTableColumn<AdminUserRow>[] = [
       {
         key: 'person',
         header: 'Person',
+        group: 'Who',
         sticky: 'left',
         sortValue: (u) => (u.display_name || u.username).toLowerCase(),
-        cell: (u) => (
-          <div className="flex flex-col gap-[2px] min-w-[9rem]">
-            <div className="flex items-center gap-[var(--space-2)] flex-wrap">
-              <span className="font-medium">{u.display_name || u.username}</span>
-              {u.is_instance_admin ? <Badge variant="accent">Admin</Badge> : null}
-              {!u.is_active ? <Badge variant="muted">Deactivated</Badge> : null}
-              {me.data?.id === u.id ? <Badge variant="muted">You</Badge> : null}
-              <McpBadge row={u} />
-            </div>
-            <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
-              {u.display_name ? `@${u.username}` : u.email || `Joined ${localDateFromSqlite(u.created_at)}`}
-            </span>
-          </div>
-        ),
+        cell: (u) => <PersonCell row={u} isSelf={me.data?.id === u.id} />,
       },
       {
         key: 'segment',
         header: 'Status',
-        title: 'Lifecycle, from activity over the last 30 days — independent of the selected window, so it describes the person and not the view.',
+        group: 'Who',
+        title:
+          'Lifecycle, from activity over the last 30 days — independent of the selected window, so it describes the person and not the view.',
         sortValue: (u) => (u.segment ? SEGMENT_RANK[u.segment] : -1),
         cell: (u) => <SegmentBadge segment={u.segment} />,
       },
       {
         key: 'trend',
         header: 'Trend',
-        title: `Active days per week over the last ${TREND_WEEKS} weeks, and the change from the previous ${DELTA_WEEKS} weeks to the last ${DELTA_WEEKS}.`,
+        group: 'Who',
+        title: `Active days per week over the last ${TREND_WEEKS} weeks (all rows share a 0–7 scale, so shapes are comparable), and the change from the previous ${DELTA_WEEKS} weeks to the last ${DELTA_WEEKS}.`,
         // Sort by the delta: "who is ramping up" and "who is falling off" are
         // the two ends of the same column.
         sortValue: (u) => trendDelta(metricsOf(u).weeks) ?? -999,
-        cell: (u) => <TrendCell weeks={metricsOf(u).weeks} />,
+        cell: (u) => <TrendCell row={u} />,
       },
       {
         key: 'edits',
         header: 'Edits',
-        title: 'Page revisions in this window, split by who wrote them. Sync snapshots are counted separately — a synced vault can post thousands of revisions nobody typed.',
+        group: 'Wrote',
+        title:
+          'Page revisions in this window, split by who wrote them. Sync snapshots are counted separately — a synced vault can post thousands of revisions nobody typed.',
         numeric: true,
+        scale: (u) => metricsOf(u).edits,
         sortValue: (u) => metricsOf(u).edits,
         cell: (u) => {
           const m = metricsOf(u)
           return (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                openEvents(u, 'page.edit')
-              }}
-              className="flex flex-col items-end bg-transparent border-0 p-0 cursor-pointer text-inherit rounded-[var(--radius-xs)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] hover:underline"
-              title="Open these edits in Events"
-            >
-              <Count n={m.edits} />
+            <DrillCount n={m.edits} onClick={() => openEvents(u, 'page.edit')}>
               <EditSplit m={m} />
-            </button>
+            </DrillCount>
           )
         },
       },
-      {
+    ]
+
+    if (hasAny((m) => m.pages_created)) {
+      cols.push({
         key: 'pages',
         header: 'Pages',
+        group: 'Wrote',
         title: 'Pages this user created in the window (they authored the page’s first revision).',
         numeric: true,
+        scale: (u) => metricsOf(u).pages_created,
         sortValue: (u) => metricsOf(u).pages_created,
         cell: (u) => <Count n={metricsOf(u).pages_created} />,
-      },
-      {
+      })
+    }
+    if (hasAny((m) => m.views)) {
+      cols.push({
         key: 'views',
         header: 'Views',
+        group: 'Read',
         title: 'Page views recorded for this user. Limited by the activity-log retention window.',
         numeric: true,
+        scale: (u) => metricsOf(u).views,
         sortValue: (u) => metricsOf(u).views,
         cell: (u) => (
           <DrillCount n={metricsOf(u).views} onClick={() => openEvents(u, 'page.view')} />
         ),
-      },
-      {
+      })
+    }
+    if (hasAny((m) => m.asks)) {
+      cols.push({
         key: 'asks',
         header: 'Asks',
+        group: 'Read',
         title: 'Questions they put to Ask.',
         numeric: true,
+        scale: (u) => metricsOf(u).asks,
         sortValue: (u) => metricsOf(u).asks,
         cell: (u) => <DrillCount n={metricsOf(u).asks} onClick={() => openEvents(u, 'ask')} />,
-      },
-      {
+      })
+    }
+    if (hasAny((m) => m.llm_calls)) {
+      cols.push({
         key: 'ai',
         header: 'AI',
-        title: 'Metered AI calls. Counted per calendar month, so this follows month boundaries rather than the exact window.',
+        group: 'Read',
+        title:
+          'Metered AI calls. Counted per calendar month, so this follows month boundaries rather than the exact window.',
         numeric: true,
+        scale: (u) => metricsOf(u).llm_calls,
         sortValue: (u) => metricsOf(u).llm_calls,
         cell: (u) => <Count n={metricsOf(u).llm_calls} />,
-      },
+      })
+    }
+
+    const anyStorage = all.some(
+      (u) => (u.usage?.spaces ?? 0) > 0 || (u.usage?.storage_bytes ?? 0) > 0,
+    )
+
+    cols.push(
       {
         key: 'days',
         header: 'Days',
-        title: 'Distinct days with any activity — an event or an authored revision. One busy afternoon and a month of daily use look identical under a raw event count.',
+        group: 'Cadence',
+        title:
+          'Distinct days with any activity — an event or an authored revision. One busy afternoon and a month of daily use look identical under a raw event count.',
         numeric: true,
+        scale: (u) => metricsOf(u).days_active,
         sortValue: (u) => metricsOf(u).days_active,
         cell: (u) => <Count n={metricsOf(u).days_active} />,
       },
       {
         key: 'last_active',
-        header: 'Last seen',
+        header: 'Seen',
+        group: 'Cadence',
+        title: 'Time since the account’s last authenticated request. Hover a value for the exact date.',
+        // Never-signed-in sorts below every real timestamp in both directions.
         sortValue: (u) => u.last_active_at ?? '',
         cell: (u) =>
           u.last_active_at ? (
-            <span className="whitespace-nowrap">{relativeTimeFromSqlite(u.last_active_at)}</span>
+            <span
+              className="whitespace-nowrap tabular-nums"
+              title={`${relativeTimeFromSqlite(u.last_active_at)} · ${localDateFromSqlite(u.last_active_at)}`}
+            >
+              {shortRelativeFromSqlite(u.last_active_at)}
+            </span>
           ) : (
             <span className="text-[var(--text-muted)]">Never</span>
           ),
       },
-      {
+    )
+    if (anyStorage) {
+      cols.push({
         key: 'storage',
         header: 'Storage',
+        group: 'Account',
         title: 'Owned spaces and attachment bytes, against the account’s plan limits.',
         sortValue: (u) => u.usage?.storage_bytes ?? -1,
         cell: (u) => {
           const usage = u.usage
+          // No spaces and nothing stored is the common case — a row of "0 · 0 B"
+          // is just noise next to the accounts that actually hold something.
           if (!usage || (usage.spaces === 0 && usage.storage_bytes === 0)) {
             return <span className="text-[var(--text-muted)]">—</span>
           }
@@ -361,26 +453,14 @@ export function SettingsUsersTab() {
             </span>
           )
         },
-      },
-      {
-        key: 'plan',
-        header: 'Plan',
-        sortValue: (u) => u.plan_key,
-        cell: (u) => (
-          <div onClick={(e) => e.stopPropagation()}>
-            <PlanTierSelect
-              accountKind="user"
-              accountId={u.id}
-              currentKey={u.plan_key}
-              className="w-[6.5rem]"
-            />
-          </div>
-        ),
-      },
-      {
-        key: 'actions',
-        header: <span className="sr-only">Actions</span>,
-        sticky: 'right',
+      })
+    }
+
+    cols.push({
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      group: 'Account',
+      sticky: 'right',
         cell: (u) =>
           me.data?.id === u.id ? null : (
             <div onClick={(e) => e.stopPropagation()} className="text-right">
@@ -404,6 +484,12 @@ export function SettingsUsersTab() {
                     Open in Events
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
+                  {/* Plan lives here rather than as a column: an inline select
+                      fought row-click for the same pixels and cost the width
+                      that pushed these actions off the screen. */}
+                  <DropdownMenuItem onSelect={() => setPlanFor(u)}>
+                    Change plan…
+                  </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => setResetFor(u)}>
                     Reset password
                   </DropdownMenuItem>
@@ -423,10 +509,11 @@ export function SettingsUsersTab() {
               </DropdownMenu>
             </div>
           ),
-      },
-    ],
-    [me.data?.id, runUpdate, updateUser.isPending, openEvents],
-  )
+    })
+    return cols
+  }, [me.data?.id, runUpdate, updateUser.isPending, openEvents, hasAny, all])
+
+  const isEmptyInstance = !users.isLoading && all.length <= 1
 
   return (
     <section
@@ -434,7 +521,7 @@ export function SettingsUsersTab() {
       className="flex flex-col gap-[var(--space-4)]"
     >
       <header className="flex items-start justify-between gap-[var(--space-3)]">
-        <p className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)] leading-[var(--leading-relaxed)]">
+        <p className="m-0 max-w-[42rem] text-[length:var(--text-sm)] text-[var(--text-muted)] leading-[var(--leading-relaxed)]">
           Everyone on this instance, with what they've actually done. Sort any
           column, or filter by lifecycle to get straight to the people worth a
           message — the ones ramping up, the ones going quiet, the ones who
@@ -462,74 +549,95 @@ export function SettingsUsersTab() {
         </div>
       </header>
 
-      {/* Filter bar. The window pills sit first — they change what every
-          activity column MEANS, so they read as the frame for the rest. */}
-      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-        <FilterPills<GroupBy>
-          value={groupBy}
-          onChange={(next) => setView({ by: next === 'people' ? undefined : next })}
-          options={[
-            ['people', 'People'],
-            ['org', 'Teams'],
-            ['space', 'Spaces'],
-          ]}
-        />
-        <FilterPills<AdminUserWindow>
-          value={range}
-          onChange={(next) => setView({ window: next === '1m' ? undefined : next })}
-          options={[
-            ['1m', 'Last 30 days'],
-            ['3m', 'Last 3 months'],
-            ['all', 'All time'],
-          ]}
-        />
-        {groupBy !== 'people' ? null : (
-        <div className="relative flex-1 min-w-[12rem]">
-          <Search
-            width={14}
-            height={14}
-            aria-hidden
-            className="pointer-events-none absolute left-[var(--space-2)] top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
-          />
-          <Input
-            value={q}
-            onChange={(e) => setView({ q: e.target.value || undefined })}
-            placeholder="Search name or email…"
-            aria-label="Search users"
-            className="pl-[var(--space-6)]"
+      {/* Two controls, two jobs, two weights: the group-by changes the SUBJECT
+          of the whole table so it reads as tabs; the window only reframes the
+          numbers, so it sits quietly on the right. Identical segmented controls
+          side by side made them look interchangeable. */}
+      <div className="flex flex-wrap items-end justify-between gap-[var(--space-3)] border-b border-[var(--border-subtle)]">
+        <div className="flex items-center gap-[var(--space-1)]">
+          {(
+            [
+              ['people', 'People'],
+              ['org', 'Teams'],
+              ['space', 'Spaces'],
+            ] as [GroupBy, string][]
+          ).map(([val, label]) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => setView({ by: val === 'people' ? undefined : val })}
+              aria-current={groupBy === val ? 'page' : undefined}
+              className={cn(
+                'relative px-[var(--space-3)] py-[var(--space-2)]',
+                'text-[length:var(--text-sm)] font-medium bg-transparent border-0 cursor-pointer',
+                'rounded-t-[var(--radius-sm)] outline-none',
+                'focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+                groupBy === val
+                  ? 'text-[var(--text-primary)] after:absolute after:inset-x-[var(--space-2)] after:-bottom-px after:h-[2px] after:bg-[var(--accent)] after:rounded-[var(--radius-full)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="pb-[var(--space-2)]">
+          <FilterPills<AdminUserWindow>
+            value={range}
+            onChange={(next) => setView({ window: next === '1m' ? undefined : next })}
+            options={[
+              ['1m', '30 days'],
+              ['3m', '3 months'],
+              ['all', 'All time'],
+            ]}
           />
         </div>
-        )}
-        {groupBy !== 'people' ? null : (
-        <>
-        <FilterPills<RoleFilter>
-          value={role}
-          onChange={setRole}
-          options={[
-            ['all', 'All'],
-            ['admin', 'Admins'],
-          ]}
-        />
-        <FilterPills<StatusFilter>
-          value={status}
-          onChange={setStatus}
-          options={[
-            ['all', 'Any status'],
-            ['active', 'Active'],
-            ['inactive', 'Inactive'],
-          ]}
-        />
-        <FilterPills<McpFilter>
-          value={mcp}
-          onChange={setMcp}
-          options={[
-            ['all', 'Any MCP'],
-            ['yes', 'MCP set up'],
-          ]}
-        />
-        </>
-        )}
       </div>
+
+      {groupBy === 'people' ? (
+        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+          <div className="relative flex-1 min-w-[12rem]">
+            <Search
+              width={14}
+              height={14}
+              aria-hidden
+              className="pointer-events-none absolute left-[var(--space-2)] top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+            />
+            <Input
+              value={q}
+              onChange={(e) => setView({ q: e.target.value || undefined })}
+              placeholder="Search name or email…"
+              aria-label="Search users"
+              className="pl-[var(--space-6)]"
+            />
+          </div>
+          <FilterPills<RoleFilter>
+            value={role}
+            onChange={setRole}
+            options={[
+              ['all', 'All'],
+              ['admin', 'Admins'],
+            ]}
+          />
+          <FilterPills<StatusFilter>
+            value={status}
+            onChange={setStatus}
+            options={[
+              ['all', 'Any status'],
+              ['active', 'Active'],
+              ['inactive', 'Inactive'],
+            ]}
+          />
+          <FilterPills<McpFilter>
+            value={mcp}
+            onChange={setMcp}
+            options={[
+              ['all', 'Any MCP'],
+              ['yes', 'MCP set up'],
+            ]}
+          />
+        </div>
+      ) : null}
 
       {rowError ? (
         <p role="alert" className="m-0 text-[length:var(--text-sm)] text-[var(--danger)]">
@@ -538,18 +646,28 @@ export function SettingsUsersTab() {
       ) : null}
 
       {users.isLoading ? (
-        <p className="m-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">
-          Loading users…
-        </p>
+        <TableSkeleton />
       ) : users.isError ? (
         <p className="m-0 text-[length:var(--text-sm)] text-[var(--danger)]">
           Couldn't load users.
         </p>
       ) : groupBy !== 'people' ? (
         <ActivityGroupsTable by={groupBy} window={range} />
+      ) : isEmptyInstance ? (
+        <EmptyState
+          icon={UserPlus}
+          title="Nothing to measure yet"
+          description="Invite someone, or wait for activity — reads, edits and questions all show up here as they happen."
+          actions={
+            <Button type="button" variant="primary" onClick={() => setCreateOpen(true)}>
+              <UserPlus width={14} height={14} />
+              <span>Create user</span>
+            </Button>
+          }
+        />
       ) : (
         <>
-          <SegmentBar
+          <SegmentBand
             rows={all}
             active={segment}
             onPick={(next) => setView({ seg: next === 'all' ? undefined : next })}
@@ -562,19 +680,21 @@ export function SettingsUsersTab() {
             sort={{ key: sortKey, dir: sortDir }}
             onSortChange={(next) => setView({ sort: next.key, dir: next.dir })}
             onRowClick={(u) => setActivityFor(u)}
+            rowActionLabel={(u) => `Open details for ${u.display_name || u.username}`}
+            stale={users.isFetching}
             caption="Users on this instance with their activity"
             empty={hasFilters ? 'No users match these filters.' : 'No users found.'}
           />
-          <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)] tabular-nums">
-            {filtered.length} of {all.length} {all.length === 1 ? 'user' : 'users'}
+          <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+            <span className="tabular-nums">
+              {filtered.length} of {all.length} {all.length === 1 ? 'user' : 'users'}
+            </span>
             {retentionClips ? (
               <>
                 {' · '}
-                <span>
-                  Views, sign-ins and days-active only go back to{' '}
-                  <span className="tabular-nums">{localDateFromSqlite(eventsSince)}</span>{' '}
-                  (activity-log retention)
-                </span>
+                Views, sign-ins and days-active only go back to{' '}
+                <span className="tabular-nums">{localDateFromSqlite(eventsSince)}</span>{' '}
+                (activity-log retention)
               </>
             ) : null}
           </p>
@@ -590,6 +710,13 @@ export function SettingsUsersTab() {
           onOpenChange={(next) => !next && setResetFor(null)}
         />
       ) : null}
+      {planFor ? (
+        <ChangePlanDialog
+          user={planFor}
+          open
+          onOpenChange={(next) => !next && setPlanFor(null)}
+        />
+      ) : null}
       {activityFor ? (
         <UserActivitySheet
           user={activityFor}
@@ -601,11 +728,40 @@ export function SettingsUsersTab() {
   )
 }
 
-// The lifecycle census, doubling as the filter. Reads as a sentence about the
-// instance ("6 power, 12 regular, 40 never started") and every number is the
-// list behind it — which is the whole point: "never started" is a to-do, not a
-// statistic.
-function SegmentBar({
+// One line per person: name, then role → capability → state, in descending
+// weight. Everything past the first two chips collapses so rows keep a rhythm —
+// a table whose row heights wobble reads as unfinished.
+function PersonCell({ row, isSelf }: { row: AdminUserRow; isSelf: boolean }) {
+  const chips: React.ReactNode[] = []
+  if (row.is_instance_admin) chips.push(<Badge key="admin" variant="solid">Admin</Badge>)
+  if (row.used_mcp) chips.push(<Badge key="mcp" variant="muted">MCP</Badge>)
+  else if (row.has_api_key) chips.push(<Badge key="key" variant="muted">API key</Badge>)
+  if (!row.is_active) chips.push(<Badge key="off" variant="ghost">Deactivated</Badge>)
+  if (isSelf) chips.push(<Badge key="you" variant="ghost">You</Badge>)
+
+  const shown = chips.slice(0, 2)
+  const rest = chips.length - shown.length
+
+  return (
+    <div className="flex flex-col gap-[1px] min-w-[9rem] max-w-[16rem]">
+      <span className="flex items-center gap-[var(--space-2)] whitespace-nowrap">
+        <span className="truncate font-medium">{row.display_name || row.username}</span>
+        {shown}
+        {rest > 0 ? (
+          <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">+{rest}</span>
+        ) : null}
+      </span>
+      <span className="truncate text-[length:var(--text-xs)] text-[var(--text-muted)]">
+        {row.display_name ? `@${row.username}` : row.email || `Joined ${localDateFromSqlite(row.created_at)}`}
+      </span>
+    </div>
+  )
+}
+
+// The lifecycle census as one proportional band. Six numbers in six pills is
+// something you read; a band is something you SEE — a fat "never started" slab
+// lands in a way that "Never started 1" never does. Each slice is the filter.
+function SegmentBand({
   rows,
   active,
   onPick,
@@ -619,104 +775,192 @@ function SegmentBar({
     for (const r of rows) if (r.segment) c.set(r.segment, (c.get(r.segment) ?? 0) + 1)
     return c
   }, [rows])
+  const total = rows.length || 1
 
   return (
-    <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      <button
-        type="button"
-        onClick={() => onPick('all')}
-        aria-pressed={active === 'all'}
-        className={cn(segmentChipClass, active === 'all' ? segmentChipActive : '')}
-      >
-        Everyone <span className="tabular-nums">{rows.length}</span>
-      </button>
-      {SEGMENTS.map((s) => {
-        const n = counts.get(s.key) ?? 0
-        return (
+    <div className="flex flex-col gap-[var(--space-2)]">
+      <div className="flex items-center gap-[var(--space-2)]">
+        <span className="text-[length:var(--text-xs)] font-medium text-[var(--text-muted)]">
+          Lifecycle
+        </span>
+        <SegmentRules />
+        {active !== 'all' ? (
           <button
-            key={s.key}
             type="button"
-            onClick={() => onPick(active === s.key ? 'all' : s.key)}
-            aria-pressed={active === s.key}
-            title={s.hint}
-            disabled={n === 0}
-            className={cn(
-              segmentChipClass,
-              active === s.key ? segmentChipActive : '',
-              n === 0 ? 'opacity-40 cursor-default' : '',
-              s.tone === 'danger' && n > 0 ? 'text-[var(--danger)]' : '',
-            )}
+            onClick={() => onPick('all')}
+            className="ml-auto bg-transparent border-0 p-0 cursor-pointer text-[length:var(--text-xs)] text-[var(--accent)] hover:underline rounded-[var(--radius-xs)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
-            {s.label} <span className="tabular-nums">{n}</span>
+            Clear filter
           </button>
-        )
-      })}
+        ) : null}
+      </div>
+
+      <div
+        className="flex h-[var(--space-2)] w-full overflow-hidden rounded-[var(--radius-full)] bg-[var(--surface-2)]"
+        role="group"
+        aria-label="Filter by lifecycle"
+      >
+        {SEGMENTS.map((s) => {
+          const n = counts.get(s.key) ?? 0
+          if (n === 0) return null
+          const selected = active === s.key
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => onPick(selected ? 'all' : s.key)}
+              aria-pressed={selected}
+              aria-label={`${s.label}: ${n} — ${s.hint}`}
+              title={`${s.label} · ${n} · ${s.hint}`}
+              style={{ width: `${(n / total) * 100}%`, background: s.band }}
+              className={cn(
+                'h-full border-0 cursor-pointer p-0 transition-[width,opacity] duration-300',
+                'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--text-primary)]',
+                // Selecting one slice dims the others rather than hiding them,
+                // so the proportions stay legible while filtered.
+                active !== 'all' && !selected ? 'opacity-30' : 'opacity-100 hover:opacity-80',
+              )}
+            />
+          )
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[var(--space-1)]">
+        {SEGMENTS.map((s) => {
+          const n = counts.get(s.key) ?? 0
+          const selected = active === s.key
+          return (
+            <button
+              key={s.key}
+              type="button"
+              disabled={n === 0}
+              onClick={() => onPick(selected ? 'all' : s.key)}
+              aria-pressed={selected}
+              className={cn(
+                'inline-flex items-center gap-[var(--space-2)] bg-transparent border-0 p-0',
+                'text-[length:var(--text-xs)] rounded-[var(--radius-xs)] outline-none',
+                'focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+                n === 0 ? 'opacity-40' : 'cursor-pointer hover:text-[var(--text-primary)]',
+                selected ? 'text-[var(--text-primary)] font-medium' : 'text-[var(--text-muted)]',
+              )}
+            >
+              <span
+                aria-hidden
+                className="h-[var(--space-2)] w-[var(--space-2)] rounded-[var(--radius-full)]"
+                style={{ background: s.dot }}
+              />
+              {s.label}
+              <span className="tabular-nums">{n}</span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-const segmentChipClass =
-  'inline-flex items-center gap-[var(--space-1)] rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-3)] py-[var(--space-1)] text-[length:var(--text-xs)] font-medium text-[var(--text-muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] hover:text-[var(--text-primary)]'
-const segmentChipActive = 'bg-[var(--surface-3)] text-[var(--text-primary)] border-[var(--accent)]'
+// The thresholds drive decisions, so they belong on screen rather than in a
+// docs page nobody opens mid-triage.
+function SegmentRules() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="How lifecycle is calculated"
+          className="inline-flex items-center text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-transparent border-0 p-0 cursor-pointer rounded-[var(--radius-xs)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        >
+          <HelpCircle width={13} height={13} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[22rem] flex flex-col gap-[var(--space-2)]">
+        <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+          Counted over the <strong className="text-[var(--text-primary)]">last 30 days</strong>,
+          whatever window is selected — it describes the person, not the view. An
+          active day is one with any recorded activity, including writes that
+          arrive over file sync.
+        </p>
+        <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-[length:var(--text-xs)]">
+          {SEGMENTS.map((s) => (
+            <div key={s.key} className="contents">
+              <dt className="m-0 inline-flex items-center gap-[var(--space-2)] text-[var(--text-primary)]">
+                <span
+                  aria-hidden
+                  className="h-[var(--space-2)] w-[var(--space-2)] rounded-[var(--radius-full)]"
+                  style={{ background: s.dot }}
+                />
+                {s.label}
+              </dt>
+              <dd className="m-0 text-[var(--text-muted)]">{s.hint}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
+          Recency outranks volume: someone who wrote hundreds of pages and hasn't
+          appeared in six weeks is <em>churned</em>, not <em>power</em>.
+        </p>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 function SegmentBadge({ segment }: { segment?: AdminUserSegment }) {
   const s = segment ? SEGMENT_BY_KEY.get(segment) : undefined
   if (!s) return <span className="text-[var(--text-muted)]">—</span>
   return (
-    <Badge variant={s.tone} title={s.hint}>
-      {s.label}
+    <Badge variant={s.tone} title={`${s.label} — ${s.hint}`}>
+      {s.short}
     </Badge>
   )
 }
 
 // Sparkline of weekly active days plus the change across the last DELTA_WEEKS.
-// A total says how much someone did; only the shape says whether they're still
-// doing it.
-function TrendCell({ weeks }: { weeks: number[] }) {
+// A total says how much someone did; only the shape says whether they still are.
+function TrendCell({ row }: { row: AdminUserRow }) {
+  const weeks = metricsOf(row).weeks
   const series = weeks.slice(-TREND_WEEKS)
   const delta = trendDelta(weeks)
   const flat = series.every((v) => v === 0)
-  if (flat) return <span className="text-[var(--text-muted)]">—</span>
-  // Stacked, not side by side: laid out in a row this cell was wide enough to
-  // push the row actions off the screen, and the delta sat close enough to the
-  // next column to read as part of it.
+  if (flat) {
+    return (
+      <span className="flex h-[var(--space-6)] items-center text-[var(--text-muted)]">—</span>
+    )
+  }
+
+  // Somebody with no earlier weeks to compare against isn't "0%" — they're new,
+  // which is the most interesting thing a row can say.
+  const isNew = delta == null && isNewcomer(weeks)
+  const tone =
+    delta == null
+      ? 'text-[var(--text-muted)]'
+      : delta > 0
+        ? 'text-[var(--accent-positive-fg)]'
+        : delta < 0
+          ? 'text-[var(--accent-warning-fg)]'
+          : 'text-[var(--text-muted)]'
+
   return (
-    <div className="flex flex-col items-start gap-[1px] w-[3.75rem]">
+    <div className="flex h-[var(--space-6)] flex-col items-start justify-center gap-[1px] w-[3.75rem]">
       <Sparkline
         values={series}
         width={60}
         height={16}
+        domain={WEEK_DOMAIN}
+        showLast
+        baseline
         className={cn(
           'w-full',
-          delta != null && delta < 0 ? 'text-[var(--text-muted)]' : 'text-[var(--accent)]',
+          delta != null && delta < 0
+            ? 'text-[var(--text-muted)]'
+            : 'text-[var(--accent)]',
         )}
         ariaLabel={`Active days per week over the last ${series.length} weeks`}
       />
-      {delta != null ? (
-        <span
-          className={cn(
-            'text-[length:var(--text-xs)] tabular-nums whitespace-nowrap leading-none',
-            delta > 0 ? 'text-[var(--success)]' : delta < 0 ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]',
-          )}
-        >
-          {delta > 0 ? '+' : ''}
-          {delta}%
-        </span>
-      ) : null}
+      <span className={cn('text-[length:var(--text-xs)] tabular-nums whitespace-nowrap leading-none', tone)}>
+        {isNew ? 'new' : delta == null ? '' : `${delta > 0 ? '+' : ''}${delta}%`}
+      </span>
     </div>
   )
-}
-
-// Percent change in active days: the last DELTA_WEEKS against the DELTA_WEEKS
-// before them. Null when there's no prior activity to compare against — an
-// account's first weeks are not "+∞% growth", they're just new.
-function trendDelta(weeks: number[]): number | null {
-  if (weeks.length < DELTA_WEEKS * 2) return null
-  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
-  const recent = sum(weeks.slice(-DELTA_WEEKS))
-  const prior = sum(weeks.slice(-DELTA_WEEKS * 2, -DELTA_WEEKS))
-  if (prior === 0) return null
-  return Math.round(((recent - prior) / prior) * 100)
 }
 
 // Signup-cohort retention: of the people who joined in week N, how many were
@@ -728,6 +972,8 @@ function CohortGrid({ rows, weeks }: { rows: AdminUserRow[]; weeks: string[] }) 
   const cohorts = useMemo(() => buildCohorts(rows, weeks), [rows, weeks])
   if (weeks.length === 0 || cohorts.length === 0) return null
   const span = Math.min(8, Math.max(...cohorts.map((c) => c.retention.length)))
+  const covered = cohorts.reduce((n, c) => n + c.size, 0)
+  const older = rows.length - covered
 
   return (
     <section className="flex flex-col gap-[var(--space-2)]">
@@ -744,23 +990,31 @@ function CohortGrid({ rows, weeks }: { rows: AdminUserRow[]; weeks: string[] }) 
           <p className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">
             Each row is the people who signed up that week; each column is how
             many were still active that many weeks later. Week 0 is the signup
-            week itself — anything below it that fades to nothing is the churn
-            you're looking for.
+            week itself — a row that fades to nothing is the churn you're looking
+            for.
+            {older > 0 ? (
+              <>
+                {' '}
+                {older} {older === 1 ? 'account' : 'accounts'} signed up before this
+                window and can't be shown: the activity log only reaches back{' '}
+                {weeks.length} weeks.
+              </>
+            ) : null}
           </p>
           <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--border-subtle)]">
-            <table className="w-full border-collapse text-[length:var(--text-xs)]">
+            <table className="border-collapse text-[length:var(--text-xs)]">
               <thead>
                 <tr>
                   <th className="sticky left-0 bg-[var(--surface-2)] px-[var(--space-3)] py-[var(--space-2)] text-left font-semibold text-[var(--text-muted)] whitespace-nowrap">
                     Signed up
                   </th>
-                  <th className="px-[var(--space-2)] py-[var(--space-2)] text-right font-semibold text-[var(--text-muted)]">
+                  <th className="bg-[var(--surface-2)] px-[var(--space-2)] py-[var(--space-2)] text-right font-semibold text-[var(--text-muted)]">
                     People
                   </th>
                   {Array.from({ length: span }, (_, i) => (
                     <th
                       key={i}
-                      className="px-[var(--space-2)] py-[var(--space-2)] text-right font-semibold text-[var(--text-muted)] whitespace-nowrap"
+                      className="bg-[var(--surface-2)] w-[2.75rem] px-0 py-[var(--space-2)] text-center font-semibold text-[var(--text-muted)]"
                     >
                       W{i}
                     </th>
@@ -770,34 +1024,15 @@ function CohortGrid({ rows, weeks }: { rows: AdminUserRow[]; weeks: string[] }) 
               <tbody>
                 {cohorts.map((c) => (
                   <tr key={c.week} className="border-t border-[var(--border-subtle)]">
-                    <td className="sticky left-0 bg-[var(--surface-1)] px-[var(--space-3)] py-[var(--space-2)] whitespace-nowrap tabular-nums">
+                    <td className="sticky left-0 bg-[var(--surface-1)] px-[var(--space-3)] py-[2px] whitespace-nowrap tabular-nums">
                       {c.week}
                     </td>
-                    <td className="px-[var(--space-2)] py-[var(--space-2)] text-right tabular-nums text-[var(--text-muted)]">
+                    <td className="px-[var(--space-2)] py-[2px] text-right tabular-nums text-[var(--text-muted)]">
                       {c.size}
                     </td>
-                    {Array.from({ length: span }, (_, i) => {
-                      const pct = c.retention[i]
-                      return (
-                        <td key={i} className="px-[var(--space-2)] py-[var(--space-2)] text-right tabular-nums">
-                          {pct == null ? (
-                            <span className="text-[var(--text-muted)]">·</span>
-                          ) : (
-                            <span
-                              className="inline-block w-full rounded-[var(--radius-xs)] px-[var(--space-1)]"
-                              style={{
-                                // Opacity carries the value so the grid reads as
-                                // a heatmap at a glance; the number stays for
-                                // anyone who needs the actual figure.
-                                background: `color-mix(in srgb, var(--accent) ${Math.round(pct * 0.6)}%, transparent)`,
-                              }}
-                            >
-                              {pct}%
-                            </span>
-                          )}
-                        </td>
-                      )
-                    })}
+                    {Array.from({ length: span }, (_, i) => (
+                      <CohortCell key={i} pct={c.retention[i] ?? null} />
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -809,53 +1044,48 @@ function CohortGrid({ rows, weeks }: { rows: AdminUserRow[]; weeks: string[] }) 
   )
 }
 
-interface Cohort {
-  week: string
-  size: number
-  // retention[k] = % of the cohort active k weeks after signup; null once the
-  // week hasn't happened yet (so an incomplete cohort reads as absent, not 0%).
-  retention: (number | null)[]
-}
-
-function buildCohorts(rows: AdminUserRow[], weeks: string[]): Cohort[] {
-  if (weeks.length === 0) return []
-  const idxOfWeek = new Map(weeks.map((w, i) => [w, i]))
-  // Signup week = the Monday on or before created_at, matching the server axis.
-  const groups = new Map<string, AdminUserRow[]>()
-  for (const r of rows) {
-    const wk = mondayOf(r.created_at)
-    if (!idxOfWeek.has(wk)) continue // signed up before the series begins
-    const g = groups.get(wk)
-    if (g) g.push(r)
-    else groups.set(wk, [r])
+// One heatmap cell. Value rides the fill; the number only prints once the fill
+// is dark enough to carry it, so a near-empty grid reads as a shape rather than
+// a wall of "0%". A week that hasn't happened yet is hatched, not blank —
+// "no data" and "nobody came back" must not look the same.
+function CohortCell({ pct }: { pct: number | null }) {
+  if (pct == null) {
+    return (
+      <td
+        aria-label="not yet"
+        className="w-[2.75rem] h-[2rem] p-0 align-middle"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(45deg, var(--surface-2) 0 3px, transparent 3px 6px)',
+        }}
+      />
+    )
   }
-  return [...groups.entries()]
-    .sort((a, b) => (a[0] < b[0] ? 1 : -1)) // newest cohort first
-    .map(([week, members]) => {
-      const start = idxOfWeek.get(week) as number
-      const available = weeks.length - start
-      const retention: (number | null)[] = []
-      for (let k = 0; k < available; k++) {
-        const active = members.filter((m) => (metricsOf(m).weeks[start + k] ?? 0) > 0).length
-        retention.push(Math.round((active / members.length) * 100))
-      }
-      return { week, size: members.length, retention }
-    })
+  return (
+    <td className="w-[2.75rem] h-[2rem] p-0 align-middle text-center">
+      <span
+        className="flex h-[2rem] w-full items-center justify-center tabular-nums transition-colors duration-200"
+        style={{
+          background: `color-mix(in srgb, var(--accent) ${Math.round(pct * 0.65)}%, transparent)`,
+          color: pct >= 55 ? 'var(--accent-fg)' : 'var(--text-primary)',
+        }}
+      >
+        {pct >= 15 ? (
+          `${pct}%`
+        ) : pct === 0 ? (
+          // A measured zero and a week that hasn't happened yet must not both
+          // render as blank space — the hatch says "not yet", this says "none".
+          <span className="opacity-40">0</span>
+        ) : (
+          ''
+        )}
+      </span>
+    </td>
+  )
 }
 
-// The Monday on or before a SQLite-native timestamp, as 'YYYY-MM-DD' — the same
-// bucket key the backend's week axis uses.
-function mondayOf(ts: string): string {
-  const d = new Date(`${ts.replace(' ', 'T')}Z`)
-  if (Number.isNaN(d.getTime())) return ''
-  const back = (d.getUTCDay() + 6) % 7
-  d.setUTCDate(d.getUTCDate() - back)
-  return d.toISOString().slice(0, 10)
-}
-
-// Totals across the rows currently in view — the same numbers the table holds,
-// added up, so filtering to a segment answers "how much does this group
-// actually do" without a second endpoint.
+// Totals across the rows currently in view. One figure leads — five equal cards
+// gave the eye nothing to land on — and the rest support it.
 function SummaryStrip({ rows }: { rows: AdminUserRow[] }) {
   const t = useMemo(() => {
     return rows.reduce(
@@ -875,31 +1105,78 @@ function SummaryStrip({ rows }: { rows: AdminUserRow[] }) {
     )
   }, [rows])
   const share = (n: number) => (t.edits > 0 ? Math.round((n / t.edits) * 100) : 0)
+  const pct = rows.length > 0 ? Math.round((t.active / rows.length) * 100) : 0
+
   return (
-    <dl className="m-0 grid grid-cols-2 sm:grid-cols-5 gap-[var(--space-2)]">
-      <SummaryStat label="Active people" value={`${t.active} of ${rows.length}`} />
-      <SummaryStat
-        label="Edits"
-        value={t.edits.toLocaleString()}
-        sub={t.edits > 0 ? `${share(t.human)}% human · ${share(t.agent)}% agent · ${share(t.sync)}% sync` : undefined}
-      />
-      <SummaryStat label="Pages created" value={t.pages.toLocaleString()} />
-      <SummaryStat label="Asks" value={t.asks.toLocaleString()} />
-      <SummaryStat label="AI calls" value={t.ai.toLocaleString()} />
-    </dl>
+    <div className="flex flex-wrap items-stretch gap-[var(--space-3)]">
+      <div className="flex min-w-[13rem] flex-col justify-center gap-[2px] rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-4)] py-[var(--space-3)]">
+        <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+          Active people
+        </span>
+        <span className="text-[length:var(--text-2xl)] font-semibold leading-[var(--leading-tight)] tabular-nums text-[var(--text-primary)]">
+          {t.active}
+          <span className="text-[length:var(--text-base)] font-normal text-[var(--text-muted)]">
+            {' '}
+            / {rows.length}
+          </span>
+        </span>
+        <span
+          aria-hidden
+          className="mt-[var(--space-1)] block h-[3px] w-full overflow-hidden rounded-[var(--radius-full)] bg-[var(--surface-3)]"
+        >
+          <span
+            className="block h-full rounded-[var(--radius-full)] bg-[var(--accent)] transition-[width] duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        </span>
+      </div>
+      <dl className="m-0 grid flex-1 grid-cols-2 sm:grid-cols-4 gap-[var(--space-2)]">
+        <SummaryStat
+          label="Edits"
+          value={t.edits.toLocaleString()}
+          sub={
+            t.edits > 0
+              ? `${share(t.human)}% human · ${share(t.agent)}% agent · ${share(t.sync)}% sync`
+              : undefined
+          }
+        />
+        <SummaryStat label="Pages created" value={t.pages.toLocaleString()} />
+        <SummaryStat label="Asks" value={t.asks.toLocaleString()} />
+        <SummaryStat label="AI calls" value={t.ai.toLocaleString()} />
+      </dl>
+    </div>
   )
 }
 
 function SummaryStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="flex flex-col gap-[2px] rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-3)] py-[var(--space-2)]">
+    <div className="flex flex-col justify-center gap-[1px] rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-3)] py-[var(--space-2)]">
       <dt className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">{label}</dt>
-      <dd className="m-0 text-[length:var(--text-base)] font-medium tabular-nums text-[var(--text-primary)]">
+      <dd className="m-0 text-[length:var(--text-lg)] font-medium tabular-nums leading-[var(--leading-tight)] text-[var(--text-primary)]">
         {value}
       </dd>
       {sub ? (
         <dd className="m-0 text-[length:var(--text-xs)] text-[var(--text-muted)]">{sub}</dd>
       ) : null}
+    </div>
+  )
+}
+
+// Rows of the right height, so switching windows doesn't jump the layout.
+function TableSkeleton() {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading users"
+      className="flex flex-col gap-[1px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-subtle)]"
+    >
+      {Array.from({ length: 6 }, (_, i) => (
+        <div
+          key={i}
+          className="h-[var(--space-8)] bg-[var(--surface-2)] opacity-60 animate-pulse"
+          style={{ animationDelay: `${i * 60}ms` }}
+        />
+      ))}
     </div>
   )
 }
@@ -913,14 +1190,14 @@ function EditSplit({ m }: { m: AdminUserMetrics }) {
   if (m.sync_edits > 0) parts.push(`${m.sync_edits.toLocaleString()} sync`)
   if (parts.length === 0) return null
   return (
-    <span className="text-[length:var(--text-xs)] text-[var(--text-muted)] whitespace-nowrap">
+    <span className="block text-[length:var(--text-xs)] text-[var(--text-muted)] whitespace-nowrap">
       {parts.join(' · ')}
     </span>
   )
 }
 
-// A count cell: zero is real data, but rendering a wall of 0s buries the rows
-// that matter, so it dims to a dash.
+// A count cell: zero is real data, but a wall of 0s buries the rows that matter,
+// so it dims to a dash (and the column's scale track shows empty).
 function Count({ n }: { n: number }) {
   if (n === 0) return <span className="text-[var(--text-muted)]">—</span>
   return <span>{n.toLocaleString()}</span>
@@ -928,7 +1205,15 @@ function Count({ n }: { n: number }) {
 
 // A count that opens the rows behind it. A number you can't click is a dead end
 // — you read it, wonder what's in it, and there's nowhere to go.
-function DrillCount({ n, onClick }: { n: number; onClick: () => void }) {
+function DrillCount({
+  n,
+  onClick,
+  children,
+}: {
+  n: number
+  onClick: () => void
+  children?: React.ReactNode
+}) {
   if (n === 0) return <span className="text-[var(--text-muted)]">—</span>
   return (
     <button
@@ -937,10 +1222,11 @@ function DrillCount({ n, onClick }: { n: number; onClick: () => void }) {
         e.stopPropagation()
         onClick()
       }}
-      className="bg-transparent border-0 p-0 cursor-pointer text-inherit tabular-nums rounded-[var(--radius-xs)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] hover:underline"
+      className="block w-full bg-transparent border-0 p-0 cursor-pointer text-inherit text-right tabular-nums rounded-[var(--radius-xs)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] hover:underline"
       title="Open these in Events"
     >
       {n.toLocaleString()}
+      {children}
     </button>
   )
 }
@@ -978,6 +1264,44 @@ function exportUsersCsv(rows: AdminUserRow[], range: AdminUserWindow) {
   a.download = `tela-users-${range}-${new Date().toISOString().slice(0, 10)}.csv`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// Plan changes moved out of the row and into a dialog — see the row menu.
+function ChangePlanDialog({
+  user,
+  open,
+  onOpenChange,
+}: {
+  user: AdminUserRow
+  open: boolean
+  onOpenChange: (next: boolean) => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Plan for {user.display_name || user.username}</DialogTitle>
+          <DialogDescription>
+            Sets the tier this account is metered against. Takes effect immediately;
+            there's no charge either way.
+          </DialogDescription>
+        </DialogHeader>
+        <PlanTierSelect
+          accountKind="user"
+          accountId={user.id}
+          currentKey={user.plan_key}
+          className="w-full"
+        />
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="ghost">
+              Done
+            </Button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 // A small segmented control of mutually-exclusive filter values.
@@ -1123,16 +1447,6 @@ function isOverLimit(u: AdminUserUsage): boolean {
     (u.max_storage_bytes != null && u.storage_bytes > u.max_storage_bytes) ||
     (u.max_spaces != null && u.spaces > u.max_spaces)
   )
-}
-
-// The MCP-setup signal: an accent "MCP" badge once the user has actually hit
-// /api/mcp; a quieter "API key" mark if they have a PAT but no MCP traffic yet;
-// nothing otherwise. (OAuth/cowork connections leave no DB trace, so a green
-// badge can under-report — never over-report.)
-function McpBadge({ row }: { row: AdminUserRow }) {
-  if (row.used_mcp) return <Badge variant="accent">MCP</Badge>
-  if (row.has_api_key) return <Badge variant="muted">API key</Badge>
-  return null
 }
 
 // One labeled stat in the user detail sheet's grid.
