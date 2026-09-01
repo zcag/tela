@@ -20,6 +20,11 @@ export interface DataTableColumn<Row> {
   sortValue?: (row: Row) => number | string
   // Numeric columns right-align and get tabular figures so digits line up.
   numeric?: boolean
+  // Pin the column to an edge while the rest of the table scrolls under it.
+  // A table wide enough to need this is exactly the one where the identity
+  // column and the row actions must stay reachable — scrolling away from the
+  // name you're reading, or off the end of the actions, makes it unusable.
+  sticky?: 'left' | 'right'
   // Applied to both the <th> and every <td> in the column.
   className?: string
   // Long-form explanation shown as the header's title attribute.
@@ -34,6 +39,10 @@ export interface DataTableProps<Row> {
   rowKey: (row: Row) => string | number
   // Initial sort. Defaults to the table's natural (unsorted) row order.
   defaultSort?: { key: string; dir: SortDir }
+  // Controlled sort: pass both to own the state (e.g. to keep it in the URL),
+  // or neither and the table keeps its own.
+  sort?: { key: string; dir: SortDir }
+  onSortChange?: (next: { key: string; dir: SortDir }) => void
   onRowClick?: (row: Row) => void
   // Rendered in place of the table body when there are no rows.
   empty?: React.ReactNode
@@ -46,14 +55,18 @@ export function DataTable<Row>({
   columns,
   rowKey,
   defaultSort,
+  sort: sortProp,
+  onSortChange,
   onRowClick,
   empty,
   caption,
   className,
 }: DataTableProps<Row>) {
-  const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(
+  const [ownSort, setOwnSort] = useState<{ key: string; dir: SortDir } | null>(
     defaultSort ?? null,
   )
+  const controlled = sortProp !== undefined
+  const sort = controlled ? sortProp : ownSort
 
   const sorted = useMemo(() => {
     if (!sort) return rows
@@ -70,16 +83,25 @@ export function DataTable<Row>({
     })
   }, [rows, columns, sort])
 
+  function nextSort(
+    prev: { key: string; dir: SortDir } | null,
+    col: DataTableColumn<Row>,
+  ): { key: string; dir: SortDir } {
+    if (prev?.key !== col.key) {
+      // First click on a numeric column shows the biggest values — that's the
+      // question being asked ("who edits most"), not "who edits least".
+      return { key: col.key, dir: col.numeric ? 'desc' : 'asc' }
+    }
+    return { key: col.key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+  }
+
   function toggle(col: DataTableColumn<Row>) {
     if (!col.sortValue) return
-    setSort((prev) => {
-      if (prev?.key !== col.key) {
-        // First click on a numeric column shows the biggest values — that's the
-        // question being asked ("who edits most"), not "who edits least".
-        return { key: col.key, dir: col.numeric ? 'desc' : 'asc' }
-      }
-      return { key: col.key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-    })
+    if (controlled) {
+      onSortChange?.(nextSort(sortProp ?? null, col))
+      return
+    }
+    setOwnSort((prev) => nextSort(prev, col))
   }
 
   return (
@@ -106,7 +128,12 @@ export function DataTable<Row>({
                     active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'
                   }
                   className={cn(
-                    'sticky top-0 z-[1] bg-[var(--surface-2)]',
+                    'sticky top-0 bg-[var(--surface-2)]',
+                    // A pinned header cell has to outrank both its own row and
+                    // the pinned body cells sliding beneath it.
+                    col.sticky ? 'z-[3]' : 'z-[1]',
+                    col.sticky === 'left' && 'left-0',
+                    col.sticky === 'right' && 'right-0',
                     'border-b border-[var(--border-subtle)]',
                     col.numeric
                       ? 'px-[var(--space-2)] py-[var(--space-2)]'
@@ -173,6 +200,9 @@ export function DataTable<Row>({
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
                 className={cn(
                   'border-b border-[var(--border-subtle)] last:border-b-0',
+                  // An explicit row background is what pinned cells inherit —
+                  // without it the scrolling columns show straight through them.
+                  'bg-[var(--surface-1)]',
                   onRowClick && 'cursor-pointer hover:bg-[var(--surface-2)]',
                 )}
               >
@@ -184,6 +214,9 @@ export function DataTable<Row>({
                         ? 'px-[var(--space-2)] py-[var(--space-2)] text-right tabular-nums'
                         : 'px-[var(--space-3)] py-[var(--space-2)]',
                       'text-[var(--text-primary)] align-middle',
+                      col.sticky && 'sticky z-[2] bg-inherit',
+                      col.sticky === 'left' && 'left-0',
+                      col.sticky === 'right' && 'right-0',
                       col.className,
                     )}
                   >

@@ -73,6 +73,31 @@ export const Clickable: Story = {
   },
 }
 
+// A table wider than its container: the identity column and the row actions
+// stay pinned while the middle scrolls, so you never lose track of whose row
+// you're reading or scroll the actions off the end.
+export const PinnedEdges: Story = {
+  render: () => (
+    <div className="max-w-[28rem]">
+      <DataTable<Person>
+        rows={people}
+        rowKey={(p) => p.id}
+        defaultSort={{ key: 'edits', dir: 'desc' }}
+        columns={[
+          { ...columns[0], sticky: 'left' },
+          ...columns.slice(1),
+          {
+            key: 'actions',
+            header: <span className="sr-only">Actions</span>,
+            sticky: 'right',
+            cell: () => <span aria-hidden>⋯</span>,
+          },
+        ]}
+      />
+    </div>
+  ),
+}
+
 export const Empty: Story = {
   args: { rows: [], columns, rowKey: (p: Person) => p.id, empty: 'No people match these filters.' },
 }
