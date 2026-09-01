@@ -71,7 +71,7 @@ COOLDOWN = envint("TELA_AI_COOLDOWN", 30)
 TIMEOUT = envint("TELA_AI_TIMEOUT", 900)
 
 
-def deployment(model_name, url, model, key, provider, max_parallel=0, rpm=0):
+def deployment(model_name, url, model, key, provider, max_parallel=0, rpm=0, mode=None):
     # provider is the part before the first "/", so a model name that itself
     # contains slashes (e.g. mlx-community/Qwen3-…) still resolves correctly.
     params = {"model": f"{provider}/{model}", "api_base": url, "api_key": key or "none"}
@@ -79,7 +79,15 @@ def deployment(model_name, url, model, key, provider, max_parallel=0, rpm=0):
         params["max_parallel_requests"] = max_parallel
     if rpm > 0:
         params["rpm"] = rpm
-    return {"model_name": model_name, "litellm_params": params}
+    d = {"model_name": model_name, "litellm_params": params}
+    # /health probes each deployment by `model_info.mode`, defaulting to a CHAT
+    # completion. It can infer the mode from litellm's cost map, but only for
+    # models it ships — a local embedder isn't in there, so it must be declared
+    # or the probe chat-calls it, gets "does not support chat", and marks it
+    # unhealthy forever (a firing alert that can never resolve).
+    if mode:
+        d["model_info"] = {"mode": mode}
+    return d
 
 
 model_list = []
@@ -129,6 +137,7 @@ if embed_url:
         em, embed_url, em,
         env("TELA_EMBED_KEY", "TELA_EMBED_PRIMARY_KEY", default="none"),
         env("TELA_EMBED_PROVIDER", "TELA_EMBED_PRIMARY_PROVIDER", default="openai"),
+        mode="embedding",
     ))
 
 if not model_list:
