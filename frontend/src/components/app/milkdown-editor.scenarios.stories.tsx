@@ -700,3 +700,33 @@ export const LinkHoverPopover: Story = {
     })
   },
 }
+
+// …and any scroll must dismiss it. The popover is position:fixed at the
+// coordinates captured on hover, so a scroll strands it: it hangs at the old
+// viewport spot, describing a link that has moved away, and the anchor's own
+// mouseleave can't be relied on to clean up (the pointer never moved, and
+// milkdown may have replaced the <a> under it). Reported from the live app.
+export const LinkHoverPopoverDismissesOnScroll: Story = {
+  args: { defaultValue: 'See [the example](https://example.com) here.' },
+  play: async ({ canvasElement }) => {
+    const pm = await getEditable(canvasElement)
+    const link = pm.querySelector('a')
+    expect(link, 'link should render').toBeTruthy()
+    await userEvent.hover(link as HTMLElement)
+    await waitFor(() => {
+      expect(
+        document.querySelector('.tela-link-popover[data-show="true"]'),
+      ).not.toBeNull()
+    })
+    // A scroll of the frame the body lives in. Scroll events don't bubble, so
+    // only a capture-phase listener on window sees this one — which is exactly
+    // the shape the fix needs to have to catch tela's inner scroll frames.
+    pm.dispatchEvent(new Event('scroll'))
+    await waitFor(() => {
+      expect(
+        document.querySelector('.tela-link-popover[data-show="true"]'),
+        'popover must not survive a scroll',
+      ).toBeNull()
+    })
+  },
+}

@@ -39,6 +39,7 @@ export const linkPopoverPlugin = $prose((ctx) => {
   let current: HTMLAnchorElement | null = null
   let view: EditorView | null = null
   let hideTimer: number | null = null
+  let dismissBound = false
 
   const cancelHide = () => {
     if (hideTimer != null) {
@@ -50,8 +51,28 @@ export const linkPopoverPlugin = $prose((ctx) => {
     cancelHide()
     hideTimer = window.setTimeout(hide, HIDE_DELAY)
   }
+  // The popover is position:fixed at coordinates captured on hover, so ANY
+  // scroll strands it: it hangs at the old viewport spot while the link it
+  // describes moves away, and the anchor's mouseleave can't be relied on to
+  // clean up (the pointer never moved, and milkdown may have replaced the <a>
+  // element under it, taking the listener with it). Dismiss instead — the same
+  // call the wikilink hover preview makes. Listeners live only while shown, and
+  // scroll is captured so an inner scroll frame counts, not just the window.
+  function bindDismiss() {
+    if (dismissBound) return
+    dismissBound = true
+    window.addEventListener('scroll', hide, true)
+    window.addEventListener('resize', hide)
+  }
+  function unbindDismiss() {
+    if (!dismissBound) return
+    dismissBound = false
+    window.removeEventListener('scroll', hide, true)
+    window.removeEventListener('resize', hide)
+  }
   function hide() {
     cancelHide()
+    unbindDismiss()
     if (el) {
       setShow(el, false)
       el.dataset.mode = 'view'
@@ -173,8 +194,11 @@ export const linkPopoverPlugin = $prose((ctx) => {
       { top: rect.top, bottom: rect.bottom, left: rect.left },
       { place: 'above', align: 'start' },
     )
-    // Hide when the pointer leaves this link (cancelled if it enters the popover).
+    // Hide when the pointer leaves this link (cancelled if it enters the popover)
+    // — a best-effort signal, backed by the scroll/resize dismissal and the
+    // off-link mouseover below.
     a.addEventListener('mouseleave', scheduleHide, { once: true })
+    bindDismiss()
   }
 
   return new Plugin({
@@ -194,16 +218,25 @@ export const linkPopoverPlugin = $prose((ctx) => {
       handleDOMEvents: {
         mouseover(editorView, event) {
           if (!editorView.editable) return false
-          const a = (event.target as HTMLElement | null)?.closest('a') as
-            | HTMLAnchorElement
-            | null
-          if (!a || !editorView.dom.contains(a)) return false
+          const a = (event.target as HTMLElement | null)?.closest(
+            'a',
+          ) as HTMLAnchorElement | null
           // Skip wikilinks / internal atoms — they have their own affordances and
           // aren't plain editable links.
-          const href = a.getAttribute('href') ?? ''
-          if (href.startsWith('tela:') || a.closest('.tela-wikilink'))
+          const href = a?.getAttribute('href') ?? ''
+          const eligible =
+            !!a &&
+            editorView.dom.contains(a) &&
+            !href.startsWith('tela:') &&
+            !a.closest('.tela-wikilink')
+          if (!eligible) {
+            // Pointer is over the editor but not over a link: close whatever is
+            // open. Covers the case the anchor's own mouseleave misses — milkdown
+            // re-renders the <a> on an edit, and the once-listener goes with it.
+            if (current) scheduleHide()
             return false
-          show(a)
+          }
+          show(a as HTMLAnchorElement)
           return false
         },
       },
