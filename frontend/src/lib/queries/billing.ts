@@ -156,7 +156,7 @@ export function useSetPlan() {
       }
       // The admin Users + Orgs lists now carry plan_key — refresh their badges.
       void qc.invalidateQueries({ queryKey: orgKeys.list() })
-      void qc.invalidateQueries({ queryKey: adminUserKeys.list() })
+      void qc.invalidateQueries({ queryKey: adminUserKeys.lists() })
     },
   })
 }

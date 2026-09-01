@@ -35,6 +35,9 @@ interface SettingsTab {
   // surfaced elsewhere (e.g. the unseen-feedback dot on the account menu) points
   // at the tab it actually belongs to instead of going cold at /settings.
   badge?: number
+  // Opt out of the 48rem reading measure. Settings is prose-width by default —
+  // right for forms and copy, too narrow for a data table with a dozen columns.
+  wide?: boolean
 }
 
 // A labeled cluster of tabs in the left nav — the label says why you can see them.
@@ -76,6 +79,7 @@ const API_KEYS_TAB: SettingsTab = {
 const USERS_TAB: SettingsTab = {
   id: 'users',
   label: 'Users',
+  wide: true,
   render: () => <SettingsUsersTab />,
 }
 
@@ -287,7 +291,12 @@ export function SettingsPage() {
         ))}
       </nav>
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-[48rem] w-full mx-auto p-[var(--space-7)] flex flex-col gap-[var(--space-6)]">
+        <div
+          className={cn(
+            'w-full mx-auto p-[var(--space-7)] flex flex-col gap-[var(--space-6)]',
+            active.wide ? 'max-w-[84rem]' : 'max-w-[48rem]',
+          )}
+        >
           <header className="flex flex-col gap-[var(--space-1)]">
             <h1 className="m-0 font-[family-name:var(--font-sans)] text-[length:var(--text-2xl)] leading-[var(--leading-tight)] text-[var(--text-primary)]">
               {active.label}

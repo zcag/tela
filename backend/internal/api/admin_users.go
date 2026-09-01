@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zcag/tela/backend/internal/auth"
 )
@@ -35,10 +36,12 @@ type adminUserDTO struct {
 	LastActiveAt *string         `json:"last_active_at,omitempty"`
 	Usage        *adminUserUsage `json:"usage,omitempty"`
 	Orgs         int             `json:"orgs,omitempty"`             // org memberships
-	LLMCalls     int64           `json:"llm_calls,omitempty"`        // AI calls this calendar month
 	HasAPIKey    bool            `json:"has_api_key,omitempty"`      // ≥1 non-revoked PAT
 	UsedMCP      bool            `json:"used_mcp,omitempty"`         // connected MCP (PAT-via-/api/mcp OR any MCP request, incl. OAuth)
 	McpLastSeen  *string         `json:"mcp_last_seen_at,omitempty"` // last authenticated MCP request, any credential
+	// Activity inside the requested ?window= (admin_user_metrics.go). Always set
+	// on list rows, including for accounts that did nothing (all-zero).
+	Metrics *adminUserMetrics `json:"metrics,omitempty"`
 }
 
 // adminUserUsage is the per-user resource snapshot the admin list shows: current
@@ -66,11 +69,17 @@ type adminUserPatchRequest struct {
 }
 
 // ListAdminUsers returns every user row, including inactive ones, newest account
-// first (most recent signup on top). Instance-admin only.
+// first (most recent signup on top), each enriched with its activity inside
+// ?window=1m|3m|all. Instance-admin only.
+//
+// The whole population ships in one payload and the table sorts client-side:
+// this list is admin-only and bounded, so paging + server-side sort keys would
+// buy nothing but two more things to keep in sync.
 func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireInstanceAdmin(w, r); !ok {
 		return
 	}
+	win := parseAdminUserWindow(r.URL.Query().Get("window"), time.Now().UTC())
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at
 		  FROM users
@@ -116,10 +125,9 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	// Org-membership counts.
 	orgCount := scanInt64Map(ctx, s.DB, `SELECT user_id, COUNT(*) FROM org_members GROUP BY user_id`)
-	// AI calls this calendar month, per personal account.
-	llm := scanInt64Map(ctx, s.DB,
-		`SELECT account_id, llm_calls FROM cloud_usage
-		  WHERE account_kind='user' AND period = to_char((now() AT TIME ZONE 'UTC'),'YYYY-MM')`)
+	// Windowed activity: edits, pages created, views, asks, sign-ins, days active,
+	// AI calls — one batched aggregate each.
+	metrics := loadAdminUserMetrics(ctx, s.DB, win)
 	// MCP signal per user: has a live PAT, and/or has actually hit /api/mcp with one.
 	hasKey, usedMCP := map[int64]bool{}, map[int64]bool{}
 	if kr, err := s.DB.QueryContext(ctx, `
@@ -144,7 +152,11 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 			users[i].LastActiveAt = &ls
 		}
 		users[i].Orgs = int(orgCount[id])
-		users[i].LLMCalls = llm[id]
+		if m, ok := metrics[id]; ok {
+			users[i].Metrics = m
+		} else {
+			users[i].Metrics = &adminUserMetrics{}
+		}
 		users[i].HasAPIKey = hasKey[id]
 		users[i].UsedMCP = users[i].UsedMCP || usedMCP[id] // scan set it from mcp_last_seen_at (covers OAuth)
 		u, err := s.buildUsage(ctx, account{Kind: accountUser, ID: id})
@@ -158,7 +170,13 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 			MaxStorageBytes: u.Plan.MaxStorageBytes,
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"users":  users,
+		"window": win.Key,
+		// The retention horizon behind the events-derived columns (views,
+		// sign-ins, days active) — they cannot see further back than this.
+		"events_since": eventsHorizon(ctx, s.DB),
+	})
 }
 
 // CreateAdminUser inserts a new user. 409 on duplicate username, 400 on

@@ -28,7 +28,8 @@ redirects there automatically; the form creates a pre-verified instance admin
 and signs in). After that, instance-admins manage users and plans in the app
 under
 **Settings → Users** (create users, reset passwords, toggle active/admin, assign
-plan tiers) and configure the instance under **Settings** (admin tabs).
+plan tiers — and read per-account activity, see *People table* below) and
+configure the instance under **Settings** (admin tabs).
 
 Instance settings (runtime config) are also available via the admin API:
 
@@ -221,6 +222,41 @@ the layer above it failed (a real degradation), and `deployment_state > 0` means
 layer is down. Treat L2 engaging as a warning and L3 (the paid backstop) as a
 higher-severity page. A ready dashboard + alert rules ship for the maintainer's
 Grafana; adapt the PromQL (`tela_ai_*`, `litellm_*`) to your stack.
+
+## People table (Settings → Users)
+
+**Settings → Users** (instance-admin) is the per-account counterpart to Insights'
+instance-wide roll-ups: one sortable row per user, so "who actually uses this"
+is a column sort rather than a psql session. `GET /api/admin/users?window=1m|3m|all`
+returns the whole population in one payload — identity + plan + quota snapshot
+as before, plus a `metrics` block per row (`internal/api/admin_user_metrics.go`):
+
+| Column | Source | Notes |
+| --- | --- | --- |
+| Edits (+ agent share) | `page_revisions` | `source='agent'` is the agent-written subset |
+| Pages | `page_revisions` | pages whose *earliest* revision is this user's |
+| Views, Days active, Sign-ins | `events` | bounded by the events retention window |
+| Asks | `ask_log` | unpruned |
+| AI | `cloud_usage` | keyed by calendar month, so it follows month boundaries, not the exact day cut |
+| Storage / spaces | `buildUsage` | the same figures `limits.go` enforces against |
+
+Each metric is one batched `GROUP BY` over the population, never a per-user
+query. Sorting, filtering, the summary strip and CSV export are all client-side
+over that payload — there are no server sort keys or an export endpoint to keep
+in sync. Switching the window is the only thing that refetches.
+
+Two honest limits worth knowing before reading the numbers:
+
+- **The events-derived columns can't outrun retention.** `events` is pruned at
+  `TELA_EVENTS_RETENTION_DAYS` (180 default, `events_gc.go`), so "All time" views /
+  sign-ins / days-active really mean "since the oldest surviving event". The
+  response carries that horizon as `events_since` and the table prints it — but
+  only when it actually clips the selected window. Edits and pages created come
+  from `page_revisions`, which is never pruned, so those *are* all-time.
+- **The quota snapshot is still an N+1.** Each row calls `buildUsage` so the
+  figures can't drift from the quota gate; batching it would mean forking
+  `planFor`'s trial + top-up resolution, which is a worse trade than the extra
+  queries on an admin-only, bounded list. Revisit if the population gets large.
 
 ## Insights dashboard
 

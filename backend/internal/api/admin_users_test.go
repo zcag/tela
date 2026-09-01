@@ -306,3 +306,96 @@ func TestDeleteAdminUser_Idempotent(t *testing.T) {
 // intStr is a tiny strconv.FormatInt alias used throughout the M6.2 tests
 // to build path strings like /api/admin/users/{id}.
 func intStr(id int64) string { return strconv.FormatInt(id, 10) }
+
+// The People table's activity columns are window-scoped: an old edit counts
+// under ?window=all but must fall outside 1m, and every row carries a metrics
+// block even when the account did nothing.
+func TestListAdminUsers_WindowedMetrics(t *testing.T) {
+	d := newAPITestDB(t)
+	srv := New(d)
+	ctx := context.Background()
+
+	admin := seedUser(t, d, "admin", "adminpw123", true)
+	alice := seedUser(t, d, "alice", "alicepw123", false)
+	seedUser(t, d, "idle", "idlepw1234", false) // never does anything — the all-zero row
+	spaceID := seedSpace(t, d, "Alice Space", "alice-space", alice)
+	oldPage := seedPage(t, d, spaceID, "Alice Note")
+	newPage := seedPage(t, d, spaceID, "Fresh Note")
+
+	// oldPage was created a year ago (agent-written) and edited today; newPage
+	// was created today. So the window decides BOTH how many edits alice has
+	// and how many pages she counts as having created.
+	if _, err := d.ExecContext(ctx,
+		`INSERT INTO page_revisions (page_id, title, body, author_id, source, byte_size, created_at)
+		 VALUES ($1,'Alice Note','y',$3,'agent', 1, '2025-01-01 00:00:00'),
+		        ($1,'Alice Note','x',$3,'manual',1, tela_now()),
+		        ($2,'Fresh Note','z',$3,'create',1, tela_now())`,
+		oldPage, newPage, alice); err != nil {
+		t.Fatalf("seed revisions: %v", err)
+	}
+	// One view today, one outside the 1m window.
+	if _, err := d.ExecContext(ctx,
+		`INSERT INTO events (type, actor_user_id, created_at)
+		 VALUES ('page.view',$1, tela_now()), ('page.view',$1,'2025-01-01 00:00:00')`,
+		alice); err != nil {
+		t.Fatalf("seed events: %v", err)
+	}
+
+	get := func(window string) map[string]adminUserDTO {
+		t.Helper()
+		rec := recordHandler(srv.ListAdminUsers,
+			userRequest(http.MethodGet, "/api/admin/users?window="+window, "", authUser(admin, "admin", true)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("window=%s status=%d body=%q", window, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Users  []adminUserDTO `json:"users"`
+			Window string         `json:"window"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v body=%q", err, rec.Body.String())
+		}
+		want := window
+		if window == "bogus" {
+			want = "1m" // unknown values fall back, never 500 or list everything
+		}
+		if out.Window != want {
+			t.Fatalf("window echo=%q want %q", out.Window, want)
+		}
+		by := map[string]adminUserDTO{}
+		for _, u := range out.Users {
+			if u.Metrics == nil {
+				t.Fatalf("metrics nil for %q", u.Username)
+			}
+			by[u.Username] = u
+		}
+		return by
+	}
+
+	month := get("1m")
+	if got := month["alice"].Metrics; got.Edits != 2 || got.AgentEdits != 0 || got.Views != 1 {
+		t.Fatalf("1m alice metrics = %+v, want edits=2 agent=0 views=1", got)
+	}
+	// Only newPage was created inside the window; the year-old page's first
+	// revision falls outside it, so editing it today doesn't re-count as a
+	// creation.
+	if got := month["alice"].Metrics.PagesCreated; got != 1 {
+		t.Fatalf("1m alice pages_created=%d want 1 (only the page first written in-window)", got)
+	}
+	if got := month["idle"].Metrics; got.Edits != 0 || got.Views != 0 || got.DaysActive != 0 {
+		t.Fatalf("idle account should be all-zero, got %+v", got)
+	}
+
+	all := get("all")
+	if got := all["alice"].Metrics; got.Edits != 3 || got.AgentEdits != 1 || got.Views != 2 {
+		t.Fatalf("all alice metrics = %+v, want edits=3 agent=1 views=2", got)
+	}
+	if got := all["alice"].Metrics.PagesCreated; got != 2 {
+		t.Fatalf("all alice pages_created=%d want 2", got)
+	}
+	if got := all["alice"].Metrics.DaysActive; got != 2 {
+		t.Fatalf("all alice days_active=%d want 2 (two distinct event days)", got)
+	}
+
+	get("bogus")
+}

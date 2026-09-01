@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { AdminUserRow } from '../types'
+import type { AdminUserRow, AdminUsersPage, AdminUserWindow } from '../types'
 import type { RecentChange } from './recent-changes'
 import { authKeys } from './auth'
 
 export const adminUserKeys = {
   all: ['admin-users'] as const,
-  list: () => [...adminUserKeys.all, 'list'] as const,
+  // Prefix over every window's list — what mutations invalidate, so a user
+  // edited while viewing 3m doesn't leave a stale 1m list behind it.
+  lists: () => [...adminUserKeys.all, 'list'] as const,
+  list: (window: AdminUserWindow) => [...adminUserKeys.lists(), window] as const,
   activity: (id: number) => [...adminUserKeys.all, 'activity', id] as const,
 }
 
@@ -27,19 +30,16 @@ export function useAdminUserActivity(userId: number, enabled: boolean) {
   })
 }
 
-// Lists every user (active + inactive) for the instance-admin Settings tab.
-// Sorted by username ASC on the backend. 403 to non-admins surfaces as the
-// query erroring — the UI only mounts this hook from an admin-gated tab so
-// that path should not fire in practice.
-export function useAdminUsers() {
+// Lists every user (active + inactive) for the instance-admin Settings tab,
+// with each row's activity aggregated over `window`. The whole population comes
+// down in one payload and the table sorts client-side, so switching a sort
+// column costs no request — only switching the window does. 403 to non-admins
+// surfaces as the query erroring; the UI only mounts this from an admin-gated
+// tab so that path should not fire in practice.
+export function useAdminUsers(window: AdminUserWindow = '1m') {
   return useQuery({
-    queryKey: adminUserKeys.list(),
-    queryFn: async () => {
-      const { users } = await api<{ users: AdminUserRow[] }>(
-        '/api/admin/users',
-      )
-      return users
-    },
+    queryKey: adminUserKeys.list(window),
+    queryFn: () => api<AdminUsersPage>(`/api/admin/users?window=${window}`),
     staleTime: 30_000,
   })
 }
@@ -64,7 +64,7 @@ export function useCreateAdminUser() {
       return user
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: adminUserKeys.list() })
+      void qc.invalidateQueries({ queryKey: adminUserKeys.lists() })
     },
   })
 }
@@ -92,7 +92,7 @@ export function useUpdateAdminUser() {
       return user
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: adminUserKeys.list() })
+      void qc.invalidateQueries({ queryKey: adminUserKeys.lists() })
       // Defensive: if the patch ever targeted the caller (the UI hides
       // self-actions, but the backend would also reject), invalidate /me
       // so any cached state stays consistent.

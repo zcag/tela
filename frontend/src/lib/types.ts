@@ -332,10 +332,38 @@ export interface AdminUserRow {
   usage: AdminUserUsage | null
   // List-only enrichments (absent ⇒ zero/false).
   orgs?: number // org memberships
-  llm_calls?: number // AI calls this calendar month
   has_api_key?: boolean // ≥1 non-revoked PAT
   used_mcp?: boolean // connected MCP (any credential, incl. OAuth)
   mcp_last_seen_at?: string | null // last authenticated MCP request
+  // Activity inside the requested window. Always present on list rows.
+  metrics?: AdminUserMetrics
+}
+
+// Which slice of history the admin People table is showing. '1m'/'3m' are
+// rolling day windows; 'all' is everything the tables still hold — see
+// AdminUsersPage.events_since for what that means for the events-derived
+// columns.
+export type AdminUserWindow = '1m' | '3m' | 'all'
+
+// One user's activity inside that window (backend's adminUserMetrics).
+export interface AdminUserMetrics {
+  edits: number // page revisions authored
+  agent_edits: number // of those, written through an agent
+  pages_created: number // pages whose first revision is theirs
+  views: number
+  asks: number
+  logins: number
+  days_active: number // distinct days with any recorded activity
+  llm_calls: number // metered AI calls (calendar-month grain)
+}
+
+// GET /api/admin/users — the population plus the window it was computed over.
+export interface AdminUsersPage {
+  users: AdminUserRow[]
+  window: AdminUserWindow
+  // Oldest surviving `events` row: views / sign-ins / days-active cannot see
+  // further back than this, whatever window is selected. '' when empty.
+  events_since: string
 }
 
 // Per-user resource snapshot in the admin list — current usage beside the plan
