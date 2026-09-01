@@ -27,6 +27,7 @@ import {
 import { accentForValue, statLineClass } from '../../lib/blocks/stat-trend'
 import { enhanceTables } from '../../lib/blocks/table-enhance'
 import { wikilinkSlug } from '../../lib/markdown/transforms/wikilink'
+import { isExternalUrl } from '../../lib/markdown/link-target'
 import { isSafeUrl } from '../../lib/markdown/remark-safe-links'
 import { embedIframeSrc } from '../../lib/markdown/embed'
 import { isPdf, PdfPreviewDialog } from '../ui/pdf-viewer'
@@ -709,16 +710,24 @@ function renderNode(node: MdNode, key: number | string): ReactNode {
       return <hr key={key} />
     case 'blockquote':
       return <blockquote key={key}>{renderChildren(node)}</blockquote>
-    case 'link':
+    case 'link': {
+      const raw = String(node.url ?? '')
+      const href = isSafeUrl(raw) ? raw : '#'
+      // External links open in a new tab so following a citation doesn't cost
+      // the reader their place; internal ones stay in the tab (see
+      // lib/markdown/link-target). noopener/noreferrer is required with _blank.
+      const external = isExternalUrl(href)
       return (
         <a
           key={key}
-          href={isSafeUrl(String(node.url ?? '')) ? String(node.url ?? '') : '#'}
+          href={href}
           title={node.title ? String(node.title) : undefined}
+          {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         >
           {renderChildren(node)}
         </a>
       )
+    }
     case 'image':
       return (
         <img
