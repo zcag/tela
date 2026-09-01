@@ -67,17 +67,22 @@ func authURL(src core.Source) string {
 }
 
 // defaultGitUser is the git auth username to use when the credential carries
-// none. The no-username form (token as the whole userinfo) is accepted by GitHub
-// for CLASSIC ghp_ tokens but REJECTED for fine-grained github_pat_ ones — git
-// then prompts for the missing password half and, with no tty, dies with
-// "could not read Password ... No such device or address". That reads like an
-// expired token, so the failure gets misattributed and the token re-issued,
-// which doesn't help. Supplying the username the host expects is the fix.
+// none. This is about the ERROR MESSAGE, not about whether auth works:
+// token-as-username (the no-username form) authenticates fine on GitHub, for
+// fine-grained github_pat_ tokens as well as classic ghp_ ones.
 //
-// Deliberately narrow: only hosts where the no-username form is known to fail.
-// An unknown host keeps the previous behaviour, because a wrong guess here
-// breaks a working self-hosted remote and stays invisible until someone reads
-// probe_error. Everything else sets meta.username explicitly (the UI offers it).
+// What it does badly is fail. When the token is rejected, GitHub 401s with a
+// Basic challenge; git — having sent no password half — tries to prompt for one
+// and, with no tty, dies "could not read Password ... No such device or address".
+// That names the wrong thing twice: it reads as a tty/environment problem about
+// a password, when the truth is an expired or unscoped token. Sending
+// user:token instead means git has nothing left to ask for, so GitHub's own
+// "Invalid username or token" reaches probe_error and the operator.
+//
+// Deliberately narrow: only hosts whose expected username is known. An unknown
+// host keeps the previous form, because a wrong guess here changes how a working
+// self-hosted remote authenticates and stays invisible until someone reads
+// probe_error. Those set meta.username explicitly (the UI offers it).
 func defaultGitUser(host string) string {
 	host = strings.ToLower(host)
 	switch {

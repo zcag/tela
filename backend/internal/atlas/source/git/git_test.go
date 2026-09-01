@@ -8,9 +8,11 @@ import (
 )
 
 // TestAuthURL covers the credential→URL shape, including the host-supplied
-// default username. The no-username form (token as userinfo) is what silently
-// broke fine-grained GitHub PATs: GitHub rejects it, git asks for the missing
-// password half, and with no tty the failure reads as an expired token.
+// default username. Both forms authenticate on GitHub; the default exists so a
+// REJECTED token surfaces GitHub's "Invalid username or token" instead of git's
+// misleading "could not read Password ... No such device or address" (which it
+// emits when it wants to prompt for the password half the no-username form
+// never sent).
 func TestAuthURL(t *testing.T) {
 	tests := []struct {
 		name     string
