@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zcag/tela/backend/internal/auth"
 	"golang.org/x/net/webdav"
@@ -75,6 +76,13 @@ type davReqState struct {
 
 	trees    map[int64]*spaceTree
 	fileSets map[int64]map[int64][]spaceFile
+	mtimes   map[int64]map[int64]string
+
+	// clientMtime is the X-OC-Mtime the write carried (zero when absent), and
+	// respHeader is the response's header map so the write path can confirm the
+	// stamp with `X-OC-Mtime: accepted`. See dav_mtime.go.
+	clientMtime time.Time
+	respHeader  http.Header
 }
 
 func (st *davReqState) spaces(ctx context.Context, db *sql.DB) ([]davSpace, error) {
@@ -109,6 +117,22 @@ func (st *davReqState) files(ctx context.Context, db *sql.DB, spaceID int64) (ma
 	}
 	st.fileSets[spaceID] = set
 	return set, nil
+}
+
+// syncMtimes returns the space's live client-supplied mtime stamps (page id →
+// stamp), loaded at most once per request like tree/files.
+func (st *davReqState) syncMtimes(ctx context.Context, db *sql.DB, spaceID int64) map[int64]string {
+	if m, ok := st.mtimes[spaceID]; ok {
+		return m
+	}
+	m, err := loadSyncMtimes(ctx, db, spaceID)
+	if err != nil {
+		// A missing stamp only costs an extra transfer; never fail a listing on it.
+		slog.Error("dav: load sync mtimes", "space_id", spaceID, "err", err)
+		m = map[int64]string{}
+	}
+	st.mtimes[spaceID] = m
+	return m
 }
 
 // loadDavSpaces lists the spaces the principal can reach as deduped folders,
@@ -230,9 +254,10 @@ func (s *Server) davAuthenticate(w http.ResponseWriter, r *http.Request) (*auth.
 // headers) on top of our davFS + an in-memory lock system; we wrap it with PAT
 // auth and scope gating and seed the per-request state.
 func (s *Server) DAVHandler() http.Handler {
+	fsys := &davFS{s: s}
 	h := &webdav.Handler{
 		Prefix:     davPrefix,
-		FileSystem: &davFS{s: s},
+		FileSystem: fsys,
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(r *http.Request, err error) {
 			// os.ErrNotExist is the normal "probe before create" 404 every client
@@ -256,10 +281,29 @@ func (s *Server) DAVHandler() http.Handler {
 			return
 		}
 		st := &davReqState{
-			pr:       davPrincipal{u: u, k: k},
-			trees:    map[int64]*spaceTree{},
-			fileSets: map[int64]map[int64][]spaceFile{},
+			pr:          davPrincipal{u: u, k: k},
+			trees:       map[int64]*spaceTree{},
+			fileSets:    map[int64]map[int64][]spaceFile{},
+			mtimes:      map[int64]map[int64]string{},
+			clientMtime: davClientMtime(r),
+			respHeader:  w.Header(),
 		}
-		h.ServeHTTP(w, r.WithContext(withDavState(r.Context(), st)))
+		r = r.WithContext(withDavState(r.Context(), st))
+		// A DELETE of a path that is already gone is a success, not a 404. A
+		// rename over rclone bisync arrives as PUT(new name) + DELETE(old name),
+		// and the PUT — bound by the file's `id:` — has by then moved the page to
+		// its new name, so the old path resolves to nothing. x/net/webdav would
+		// 404 it, rclone counts that as a failed delete, and bisync aborts the
+		// whole run with "critical error … must run --resync": a plain
+		// `mv note.md journal.md` broke the vault until manual recovery. Deleting
+		// nothing is idempotent; every delete guard still applies to a path that
+		// DOES resolve.
+		if r.Method == http.MethodDelete {
+			if _, err := fsys.Stat(r.Context(), strings.TrimPrefix(r.URL.Path, davPrefix)); errors.Is(err, os.ErrNotExist) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
 	})
 }

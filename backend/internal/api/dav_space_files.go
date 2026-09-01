@@ -47,6 +47,9 @@ type spaceFile struct {
 	mime      string
 	size      int64
 	updatedAt string
+	// syncMtime is the client-supplied mtime still standing for this file (see
+	// dav_mtime.go); "" → updatedAt is reported as getlastmodified.
+	syncMtime string
 }
 
 // isSyncJunkName matches the OS/editor cruft we accept-and-drop rather than
@@ -88,7 +91,8 @@ func detectFileMime(name string, data []byte) string {
 // the page tree. Blob data is excluded.
 func loadSpaceFiles(ctx context.Context, db *sql.DB, spaceID int64) (map[int64][]spaceFile, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, parent_page_id, name, content_hash, mime, byte_size, updated_at
+		SELECT id, parent_page_id, name, content_hash, mime, byte_size, updated_at,
+		       CASE WHEN sync_mtime_at = updated_at THEN sync_mtime ELSE NULL END
 		  FROM space_files
 		 WHERE space_id = $1 AND deleted_at IS NULL
 		 ORDER BY name ASC, id ASC`, spaceID)
@@ -99,10 +103,14 @@ func loadSpaceFiles(ctx context.Context, db *sql.DB, spaceID int64) (map[int64][
 	out := map[int64][]spaceFile{}
 	for rows.Next() {
 		f := spaceFile{spaceID: spaceID}
-		var parent sql.NullInt64
-		if err := rows.Scan(&f.id, &parent, &f.name, &f.hash, &f.mime, &f.size, &f.updatedAt); err != nil {
+		var (
+			parent sql.NullInt64
+			mtime  sql.NullString
+		)
+		if err := rows.Scan(&f.id, &parent, &f.name, &f.hash, &f.mime, &f.size, &f.updatedAt, &mtime); err != nil {
 			return nil, err
 		}
+		f.syncMtime = mtime.String
 		if parent.Valid {
 			pid := parent.Int64
 			f.parentID = &pid

@@ -42,6 +42,9 @@ type davInfo struct {
 	page *models.Page
 	enc  []byte     // memoised Encode(page) for Size; nil until first needed
 	file *spaceFile // set for a non-markdown space_file node (mutually exclusive with page)
+	// sync is the client-supplied mtime that still stands for this node (see
+	// dav_mtime.go); "" → the row's own updated_at is reported.
+	sync string
 }
 
 func (i *davInfo) Name() string { return i.name }
@@ -56,6 +59,9 @@ func (i *davInfo) Mode() os.FileMode {
 }
 
 func (i *davInfo) ModTime() time.Time {
+	if i.sync != "" {
+		return davModTime(i.sync)
+	}
 	if i.page != nil {
 		return davModTime(i.page.UpdatedAt)
 	}
@@ -103,9 +109,9 @@ func (i *davInfo) ETag(_ context.Context) (string, error) {
 
 // pageFileInfo builds a file FileInfo for a page under the given on-disk name
 // (the deduped `<slug>.md` the resolver already computed for that sibling group).
-func pageFileInfo(name string, p models.Page) *davInfo {
+func pageFileInfo(name string, p models.Page, syncMtime string) *davInfo {
 	cp := p
-	return &davInfo{name: name, page: &cp}
+	return &davInfo{name: name, page: &cp, sync: syncMtime}
 }
 
 func dirInfo(name string, mod time.Time) *davInfo {
@@ -120,24 +126,24 @@ type davReadFile struct {
 	rd   *bytes.Reader
 }
 
-func newDavReadFile(name string, p models.Page) *davReadFile {
+func newDavReadFile(name string, p models.Page, syncMtime string) *davReadFile {
 	enc := pagemd.Encode(p, canonicalBaseURL())
 	cp := p
-	info := &davInfo{name: name, page: &cp, enc: enc}
+	info := &davInfo{name: name, page: &cp, enc: enc, sync: syncMtime}
 	return &davReadFile{info: info, rd: bytes.NewReader(enc)}
 }
 
 // spaceFileInfo is the os.FileInfo for a stored non-markdown file (listing/Stat).
 func spaceFileInfo(f spaceFile) *davInfo {
 	cf := f
-	return &davInfo{name: f.name, file: &cf}
+	return &davInfo{name: f.name, file: &cf, sync: f.syncMtime}
 }
 
 // newDavBlobFile serves a stored file's raw bytes for GET. Like davReadFile but
 // the body is the blob, not encoded markdown.
 func newDavBlobFile(f spaceFile, data []byte) *davReadFile {
 	cf := f
-	return &davReadFile{info: &davInfo{name: f.name, file: &cf}, rd: bytes.NewReader(data)}
+	return &davReadFile{info: &davInfo{name: f.name, file: &cf, sync: f.syncMtime}, rd: bytes.NewReader(data)}
 }
 
 func (f *davReadFile) Read(p []byte) (int, error)                { return f.rd.Read(p) }
@@ -199,6 +205,7 @@ type davWriteFile struct {
 	tooBig  bool
 	flushed bool
 	result  models.Page
+	mtime   string // the client mtime we accepted for the page, "" if none
 	err     error
 }
 
@@ -223,12 +230,21 @@ func (f *davWriteFile) flush() error {
 	}
 	f.flushed = true
 	pr := davPrincipalFrom(f.ctx)
-	p, _, ae := f.fs.s.ApplyFileSync(f.ctx, pr.u, pr.k, f.spaceID, f.parentID, f.filename, f.buf.Bytes())
+	p, action, ae := f.fs.s.ApplyFileSync(f.ctx, pr.u, pr.k, f.spaceID, f.parentID, f.filename, f.buf.Bytes())
 	if ae != nil {
 		f.err = ae
 		return ae
 	}
 	f.result = p
+	// Modtime write support: keep the client's mtime when its file is a faithful
+	// copy of what we now serve, else let the page's updated_at stand so the
+	// client pulls the canonical rendering (with its `id:`) down. dav_mtime.go.
+	if st := davStateFrom(f.ctx); st != nil && !st.clientMtime.IsZero() &&
+		davAcceptClientMtime(f.buf.Bytes(), p, action) {
+		f.mtime = davMtimeStamp(st.clientMtime)
+		stampPageSyncMtime(f.ctx, f.fs.s.DB, p.ID, f.mtime, p.UpdatedAt)
+		st.respHeader.Set(davMtimeHeader, "accepted")
+	}
 	return nil
 }
 
@@ -238,7 +254,7 @@ func (f *davWriteFile) Stat() (os.FileInfo, error) {
 	}
 	// Name is unused by handlePut (it only reads the ETag); the page's own slug
 	// is the best-effort display name.
-	return pageFileInfo(mdSlugOr(f.result.Title, "page")+".md", f.result), nil
+	return pageFileInfo(mdSlugOr(f.result.Title, "page")+".md", f.result, f.mtime), nil
 }
 
 func (f *davWriteFile) Close() error                       { return f.flush() }
@@ -301,6 +317,13 @@ func (f *davSpaceWriteFile) flush() error {
 		return err
 	}
 	f.result = sf
+	// A stored file round-trips byte-for-byte, so the client's copy is current by
+	// construction — its mtime always stands (dav_mtime.go).
+	if st := davStateFrom(f.ctx); st != nil && !st.clientMtime.IsZero() {
+		f.result.syncMtime = davMtimeStamp(st.clientMtime)
+		stampFileSyncMtime(f.ctx, f.fs.s.DB, sf.id, f.result.syncMtime, sf.updatedAt)
+		st.respHeader.Set(davMtimeHeader, "accepted")
+	}
 	// Store-and-announce: a synced file is the fourth ingress (after editor, MCP
 	// base64, handshake PUT) — enqueue indexing too. Unconditional: a no-op
 	// re-sync reindexes cheaply (the per-chunk vector cache skips the embedder),
