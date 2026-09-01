@@ -79,7 +79,8 @@ func authURL(src core.Source) string {
 // breaks a working self-hosted remote and stays invisible until someone reads
 // probe_error. Everything else sets meta.username explicitly (the UI offers it).
 func defaultGitUser(host string) string {
-	switch host := strings.ToLower(host); {
+	host = strings.ToLower(host)
+	switch {
 	case host == "github.com" || strings.HasSuffix(host, ".github.com"):
 		// What actions/checkout uses; valid for classic AND fine-grained tokens.
 		return "x-access-token"

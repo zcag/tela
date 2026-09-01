@@ -76,11 +76,19 @@ func TestAuthURL(t *testing.T) {
 
 // The token must never survive in text that reaches a run event, the overview
 // page or the logs — including the percent-encoded form authURL produces.
+//
+// The github.com location is deliberate: defaultGitUser puts the token in the
+// PASSWORD half there, while redactSecret computes its encoded form from the
+// USERNAME half (url.User). That only works because Go escapes both halves with
+// the same table — this test is what holds that invariant down, since a token
+// leaking into a run event is silent.
 func TestRedactSecret(t *testing.T) {
 	secret := "tok@n/with+specials"
-	out := redactSecret("fatal: could not read Password for '"+authURL(core.Source{
-		Location: "https://github.com/acme/repo.git", SecretValue: secret,
-	})+"'", secret)
+	url := authURL(core.Source{Location: "https://github.com/acme/repo.git", SecretValue: secret})
+	if !strings.Contains(url, "x-access-token:") {
+		t.Fatalf("expected the secret in the password half, got %q", url)
+	}
+	out := redactSecret("fatal: could not read Password for '"+url+"'", secret)
 	if strings.Contains(out, secret) || strings.Contains(out, "tok%40n") {
 		t.Fatalf("secret survived redaction: %q", out)
 	}

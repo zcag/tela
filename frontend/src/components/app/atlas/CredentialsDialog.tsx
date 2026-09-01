@@ -108,7 +108,7 @@ export function CredentialsDialog({
               <div className="grid grid-cols-2 gap-[var(--space-3)]">
                 <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="github-readonly" /></Field>
                 <Field label="Type">
-                  <Select value={kind} onChange={(e) => setKind(e.target.value as AtlasSourceType)}>
+                  <Select value={kind} onChange={(e) => { setKind(e.target.value as AtlasSourceType); setUser('') }}>
                     <option value="git">Git token</option>
                     <option value="jira">Jira token</option>
                   </Select>
@@ -127,7 +127,7 @@ export function CredentialsDialog({
               {err && <p className="text-[length:var(--text-sm)] text-[var(--accent-negative-fg)]">{err}</p>}
               <div className="flex justify-end gap-[var(--space-2)]">
                 <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
-                <Button variant="primary" size="sm" disabled={!name.trim() || !value.trim() || create.isPending} onClick={add}>
+                <Button variant="primary" size="sm" disabled={!name.trim() || !value.trim() || (kind === 'jira' && !user.trim()) || create.isPending} onClick={add}>
                   {create.isPending && <Loader2 className="size-[var(--space-4)] motion-safe:animate-spin" />}Save credential
                 </Button>
               </div>
