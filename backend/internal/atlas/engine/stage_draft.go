@@ -328,6 +328,9 @@ func renderReferenceBody(ctx context.Context, rc *RunContext, p *core.Page, emph
 			if summary == "" {
 				summary = sm // only part 1 is asked for one; later parts must not overwrite it
 			}
+			if partIdx == 0 {
+				clean = stripPartSuffix(clean)
+			}
 			if partIdx > 0 {
 				out.WriteString("\n\n")
 			}
@@ -338,6 +341,32 @@ func renderReferenceBody(ctx context.Context, rc *RunContext, p *core.Page, emph
 		}
 	}
 	return out.String(), summary, nil
+}
+
+// partSuffixRE matches a part marker the opening part appended to its own H1
+// ("… (Part 1)", "… – Part 1 of 4", "…: Part 1"). The prompt forbids it, but a
+// prompt rule alone is not enough here — the same lesson as thisPageOpenerRE,
+// which exists because the 30B ignores its instruction ~40% of the time.
+//
+// It matters more than it looks: the parts are concatenated into ONE page, so an
+// H1 reading "(Part 1)" tells the reader that Part 2 is a page that should exist
+// and doesn't. Nothing is actually missing.
+var partSuffixRE = regexp.MustCompile(`(?i)[\s]*[-–—:(\[]+\s*part\s+\d+\s*(?:of\s+\d+)?\s*[)\]]?\s*$`)
+
+// stripPartSuffix removes that marker from the body's first H1 line.
+func stripPartSuffix(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, "# ") {
+			continue
+		}
+		if cleaned := partSuffixRE.ReplaceAllString(ln, ""); cleaned != ln && strings.TrimSpace(cleaned) != "#" {
+			lines[i] = cleaned
+			return strings.Join(lines, "\n")
+		}
+		break // only the first H1 is the page title
+	}
+	return body
 }
 
 // emphasisFor renders repair's "these were omitted" preamble for the items of

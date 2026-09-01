@@ -218,3 +218,27 @@ func TestRenderReferenceBody_EmptySurfaceStillDrafts(t *testing.T) {
 		t.Fatalf("empty surface took %d calls, want exactly 1", n)
 	}
 }
+
+// TestStripPartSuffix covers the real strings run 134 published: a multi-part
+// reference page whose opening part titled itself "(Part 1)". The parts are
+// concatenated into ONE page, so that H1 tells the reader Part 2 is a page that
+// should exist and doesn't — nothing is actually missing.
+func TestStripPartSuffix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"# Reference: Entry Points, Flags & Environment (Part 1)\nbody",
+			"# Reference: Entry Points, Flags & Environment\nbody"},
+		{"# Reference Page: Components & Exported Types – Part 1\nbody",
+			"# Reference Page: Components & Exported Types\nbody"},
+		{"# API & Routes - Part 2 of 5\nbody", "# API & Routes\nbody"},
+		{"# Flags: Part 1\nbody", "# Flags\nbody"},
+		// Must not touch a title that merely contains the word, or a lower heading.
+		{"# Participants and Partitions\nbody", "# Participants and Partitions\nbody"},
+		{"# Flags\n## Part 1 of the pipeline\nbody", "# Flags\n## Part 1 of the pipeline\nbody"},
+		{"# Flags\nbody", "# Flags\nbody"},
+	}
+	for _, c := range cases {
+		if got := stripPartSuffix(c.in); got != c.want {
+			t.Errorf("stripPartSuffix(%q)\n got %q\nwant %q", c.in, got, c.want)
+		}
+	}
+}

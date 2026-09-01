@@ -206,7 +206,10 @@ func refUser(rp refPrompt) string {
 		shape = "Write a Markdown reference page:\n1. An H1 title and a short intro explaining what this surface is.\n2. " +
 			item + "\n3. " + group + "\n" + summaryDirective
 	case rp.part == 0:
-		shape = "Write the OPENING of a Markdown reference page:\n1. An H1 title and a short intro explaining what this surface is.\n2. " +
+		// The H1 rule is explicit because the model otherwise titles this
+		// "<page> (Part 1)" — the parts are stitched into ONE page, so a part
+		// number in the title reads to a reader as if Part 2 went missing.
+		shape = "Write the OPENING of a Markdown reference page:\n1. An H1 title — EXACTLY the page title above, with NO part number: the parts are joined into a single page, so the reader never sees them as separate pages. Then a short intro explaining what this surface is.\n2. " +
 			item + "\n3. " + group + " Later parts will continue this page, so do not write a conclusion.\n" + summaryDirective
 	default:
 		shape = "CONTINUE the reference page — its title, introduction and earlier items are already written:\n" +
