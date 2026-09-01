@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -31,7 +32,7 @@ func linkifyCitations(src core.Source, files []core.File, body string) string {
 		if inFence {
 			continue
 		}
-		lines[i] = linkifyLine(src, files, line)
+		lines[i] = linkifyLine(src, files, unwrapCitationCodeSpans(line))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -52,12 +53,21 @@ func linkifyLine(src core.Source, files []core.File, line string) string {
 	if ms == nil {
 		return line
 	}
+	spans := inlineCodeSpans(line)
 	var b strings.Builder
 	last := 0
 	for _, m := range ms {
 		start, end := m[0], m[1]
 		// already inside a markdown link target/label → leave it.
 		if alreadyLinked(line, start, end) {
+			continue
+		}
+		// Inside an inline code span → leave it. Writing a markdown link into a
+		// code span produces markup that can never render: the reader sees the
+		// literal [`path`](https://…) including the whole URL. Fenced blocks were
+		// always skipped (above); inline spans were not, which is how every run
+		// since at least #108 published broken citations.
+		if inSpan(spans, start, end) {
 			continue
 		}
 		cite := line[start:end]
@@ -120,6 +130,53 @@ func alreadyLinked(line string, start, end int) bool {
 	}
 	if start >= 2 && line[start-2] == ']' && line[start-1] == '(' {
 		return true
+	}
+	return false
+}
+
+// --- inline code spans -----------------------------------------------------
+
+// sourcesLabelRE is the "Sources:" label the draft prompt asks for inline. The
+// prompt shows the format inside backticks — `Sources: [path:start-end]` — and
+// the model copies those backticks into its answer often enough to matter.
+var sourcesLabelRE = regexp.MustCompile(`(?i)^sources?\s*:\s*`)
+
+// citeFillerRE is everything allowed to surround citations inside such a span.
+var citeFillerRE = regexp.MustCompile(`[\[\](),;\s]+`)
+
+// unwrapCitationCodeSpans drops the backticks around a code span that holds
+// nothing but citations (optionally labelled "Sources:"), so the citation can be
+// linked instead of frozen as literal code.
+//
+// It only unwraps spans that are ENTIRELY citations: a span mentioning a
+// path:line amid real code (`open("a.py:12")`) keeps its backticks and is then
+// skipped by the inSpan guard, which is the behaviour code deserves.
+func unwrapCitationCodeSpans(line string) string {
+	return codeSpanRE.ReplaceAllStringFunc(line, func(span string) string {
+		inner := span[1 : len(span)-1]
+		rest := sourcesLabelRE.ReplaceAllString(inner, "")
+		if !citeRe.MatchString(rest) {
+			return span // no citation in here — leave the code span alone
+		}
+		if citeFillerRE.ReplaceAllString(citeRe.ReplaceAllString(rest, ""), "") != "" {
+			return span // there is real content besides citations — keep it code
+		}
+		return inner
+	})
+}
+
+// codeSpanRE matches a single-backtick inline code span.
+var codeSpanRE = regexp.MustCompile("`[^`]*`")
+
+// inlineCodeSpans returns the [start,end) ranges of the line's code spans.
+func inlineCodeSpans(line string) [][]int { return codeSpanRE.FindAllStringIndex(line, -1) }
+
+// inSpan reports whether [start,end) falls inside any of the given ranges.
+func inSpan(spans [][]int, start, end int) bool {
+	for _, s := range spans {
+		if start >= s[0] && end <= s[1] {
+			return true
+		}
 	}
 	return false
 }
