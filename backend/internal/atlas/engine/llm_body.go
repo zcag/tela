@@ -37,17 +37,25 @@ const minBodyChars = 80
 // all require an H1 and sections) for catching wordier provider errors. Failing
 // is the point: a run that stops with a clear error beats a wiki that quietly
 // fills with them.
-func chatBody(ctx context.Context, rc *RunContext, system, user string, temperature float64) (string, error) {
-	body, err := rc.LLM.Chat(ctx, system, user, temperature)
+//
+// It also reports TRUNCATION (the provider stopped at max_tokens rather than at
+// a natural end). That is not a provider failure — the text is real, it is just
+// incomplete — so it is returned alongside the body for the caller to act on:
+// a reference part re-splits and retries, refine keeps the existing draft
+// rather than replacing it with a half-written one. Before this, a cut-off
+// answer was published verbatim and its missing items were then reported as
+// documentation gaps. See docs/atlas-output-budget-experiment.md.
+func chatBody(ctx context.Context, rc *RunContext, system, user string, temperature float64) (string, bool, error) {
+	body, truncated, err := rc.LLM.ChatFull(ctx, system, user, temperature)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	trimmed := strings.TrimSpace(body)
 	if len(trimmed) < minBodyChars || !strings.Contains(trimmed, "\n") {
-		return "", fmt.Errorf("provider returned a %d-char %s answer where a page body was expected — treating as a provider failure, not content: %q",
+		return "", false, fmt.Errorf("provider returned a %d-char %s answer where a page body was expected — treating as a provider failure, not content: %q",
 			len(trimmed), lineShape(trimmed), clip(trimmed, 120))
 	}
-	return body, nil
+	return body, truncated, nil
 }
 
 func lineShape(s string) string {

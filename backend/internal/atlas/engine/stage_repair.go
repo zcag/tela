@@ -2,8 +2,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/zcag/tela/backend/internal/atlas/core"
 )
@@ -74,6 +72,27 @@ func repairMustCover(ctx context.Context, rc *RunContext) error {
 		if len(targets) == 0 {
 			break // nothing actionable (gaps in kinds without a reference page)
 		}
+		// EXPERIMENT 2026-09-01 (atlas output-budget pack) — accept the pass only
+		// if it actually helped. docs/atlas-output-budget-experiment.md
+		//
+		// A repair pass REGENERATES the whole page from the item list; it does not
+		// receive the previous body. So every item the page already covered is
+		// re-rolled on every pass, and the pass is only worth keeping if the audit
+		// says it came out ahead. It frequently did not: measured across the four
+		// production runs where repair moved the number at all, the must-covered
+		// deltas were +27, +18, -72 and -41. Without an acceptance test the loop
+		// publishes whichever sample it happened to draw last.
+		//
+		// refineStage has had exactly this instinct all along (its shrink guard
+		// refuses a degenerate rewrite); repair overwrote unconditionally. Note
+		// this is a RATCHET, not a fix for why a pass loses items — that is the
+		// truncation the batching change addresses. It guarantees the loop can no
+		// longer end below where it started.
+		before := rc.Coverage.MustCovered
+		prev := make([]string, len(targets))
+		for t, tg := range targets {
+			prev[t] = rc.Art.Pages[tg.i].Body
+		}
 		err := parallelN(ctx, pageFanout, len(targets), func(ctx context.Context, t int) error {
 			p := &rc.Art.Pages[targets[t].i]
 			body, err := redraftReference(ctx, rc, p, targets[t].miss)
@@ -86,6 +105,28 @@ func repairMustCover(ctx context.Context, rc *RunContext) error {
 		if err != nil {
 			return err
 		}
+		after := computeCoverage(rc)
+		if after.MustCovered < before {
+			for t, tg := range targets {
+				rc.Art.Pages[tg.i].Body = prev[t]
+				if uerr := rc.Store.UpdatePageBody(rc.Art.Pages[tg.i].ID, prev[t]); uerr != nil {
+					return uerr
+				}
+			}
+			rc.Warn("repair pass %d lost coverage (%d → %d must-cover items) — rolled back and stopping", iter, before, after.MustCovered)
+			rc.Coverage = computeCoverage(rc)
+			return nil
+		}
+		rc.Coverage = after
+		if after.MustCovered == before {
+			// The pass cost a full re-draft of every responsible page and moved
+			// nothing. repairThreshold (0.95) is unreachable from most real
+			// starting points, so without this the loop always burns all
+			// repairMaxIter passes to arrive back where it began.
+			rc.Info("repair pass %d changed no coverage (%d must-cover items) — stopping", iter, after.MustCovered)
+			return nil
+		}
+		rc.Info("repair pass %d: must-cover %d → %d items", iter, before, after.MustCovered)
 	}
 	return nil
 }
@@ -152,50 +193,29 @@ Do not add commentary, headings, or code fences around your answer — output on
 // redraftMermaid asks the model to rewrite a page, repairing its mermaid blocks.
 func redraftMermaid(ctx context.Context, rc *RunContext, p *core.Page) (string, error) {
 	user := "PAGE TITLE: " + p.Title + "\n\nREWRITE THIS PAGE, fixing only its Mermaid diagrams per the rules:\n\n" + p.Body
-	body, err := chatBody(ctx, rc, mermaidRepairSystem, user, 0.2)
+	body, truncated, err := chatBody(ctx, rc, mermaidRepairSystem, user, 0.2)
+	if err == nil && truncated {
+		// Same hazard as refine: this rewrites a complete page, so a reply cut off
+		// at max_tokens would replace it with a prefix of itself.
+		rc.Warn("mermaid repair of %q hit the model's output cap — keeping the existing page", p.Title)
+		return p.Body, nil
+	}
 	return sanitizePage(body), err
 }
 
 // redraftReference regenerates a reference page, forcing the previously-missing
-// items to appear.
+// items to appear. Batching, evidence and truncation handling are the draft
+// stage's (renderReferenceBody) — repair only supplies the omissions, so the two
+// paths cannot drift apart the way they did when each batched for itself.
 func redraftReference(ctx context.Context, rc *RunContext, p *core.Page, miss []core.Gap) (string, error) {
-	// Batched exactly like draftReference: this path re-sent the WHOLE surface in
-	// one prompt too, so a large page's repair hit the same OOM that made it need
-	// repairing. Each part carries only the omissions that fall inside it, so the
-	// CRITICAL emphasis stays about items the model can actually see.
 	missBy := make(map[string]core.Gap, len(miss))
 	for _, g := range miss {
 		missBy[g.Name] = g
 	}
-	batches := spineBatches(rc.Art.SpineByKind(p.SpineKinds...), refListBudget)
-	var out strings.Builder
-	for i, batch := range batches {
-		list, query := renderSpineList(batch)
-		var emph strings.Builder
-		for _, it := range batch {
-			if g, ok := missBy[it.Name]; ok {
-				fmt.Fprintf(&emph, "- %s (%s:%d)\n", g.Name, g.File, g.Line)
-			}
-		}
-		chunks, err := retrieve(ctx, rc, query, retrieveK)
-		if err != nil {
-			return "", err
-		}
-		prompt := refUser(p.Title, list, assembleContext(chunks), i, len(batches))
-		if emph.Len() > 0 {
-			prompt = "CRITICAL: the previous draft OMITTED these items. They MUST each appear in your output:\n" +
-				emph.String() + "\n" + prompt
-		}
-		body, err := chatBody(ctx, rc, refSystem, prompt, 0.2)
-		if err != nil {
-			return "", err
-		}
-		if i > 0 {
-			out.WriteString("\n\n")
-		}
-		out.WriteString(strings.TrimSpace(sanitizePage(body)))
-	}
-	return out.String(), nil
+	// The summary is deliberately dropped: repair rewrites the body, and a page's
+	// standfirst is owned by the draft stage.
+	body, _, err := renderReferenceBody(ctx, rc, p, missBy)
+	return body, err
 }
 
 func mustCoverGaps(gaps []core.Gap) []core.Gap {

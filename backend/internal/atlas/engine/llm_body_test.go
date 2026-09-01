@@ -45,7 +45,7 @@ func rcServing(t *testing.T, content string) *RunContext {
 // seven pages. A 200 is not consent to publish.
 func TestChatBody_RejectsProviderErrorAsContent(t *testing.T) {
 	rc := rcServing(t, "Not logged in · Please run /login")
-	body, err := chatBody(context.Background(), rc, "sys", "user", 0.2)
+	body, _, err := chatBody(context.Background(), rc, "sys", "user", 0.2)
 	if err == nil {
 		t.Fatalf("provider error was accepted as a page body: %q", body)
 	}
@@ -69,7 +69,7 @@ func TestChatBody_RejectsWordierProviderErrors(t *testing.T) {
 	if len(long) <= minBodyChars {
 		t.Fatalf("fixture must be longer than the %d-char floor to test the structural rule", minBodyChars)
 	}
-	if _, err := chatBody(context.Background(), rcServing(t, long), "sys", "user", 0.2); err == nil {
+	if _, _, err := chatBody(context.Background(), rcServing(t, long), "sys", "user", 0.2); err == nil {
 		t.Fatal("a long single-line provider error was accepted as a page body")
 	}
 }
@@ -78,7 +78,10 @@ func TestChatBody_RejectsWordierProviderErrors(t *testing.T) {
 func TestChatBody_AcceptsRealPage(t *testing.T) {
 	page := "# API & Routes\n\nSUMMARY: how requests are routed.\n\n" +
 		"## Handlers\n\n- `GET /v1/models` — lists the pinned model.\n- `POST /v1/chat/completions` — chat.\n"
-	body, err := chatBody(context.Background(), rcServing(t, page), "sys", "user", 0.2)
+	body, truncated, err := chatBody(context.Background(), rcServing(t, page), "sys", "user", 0.2)
+	if truncated {
+		t.Fatal("a finish_reason=stop answer was reported as truncated")
+	}
 	if err != nil {
 		t.Fatalf("real page rejected: %v", err)
 	}

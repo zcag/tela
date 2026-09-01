@@ -90,7 +90,11 @@ type RunContext struct {
 	Publisher Publisher      // delivers finished pages into the bound space (nil = no delivery)
 	Art       core.Artifacts // shared state threaded through stages
 	Retriever *Retriever     // built by the index stage, used by generation
-	Coverage  core.Coverage  // computed by validate, refined by repair, written by publish
+	// Evidence resolves a spine item's file:line to the source around it. Built
+	// beside Retriever (index stage + resume) and used by the reference pages,
+	// which know exactly where each item lives and so must not guess.
+	Evidence *EvidenceIndex
+	Coverage core.Coverage // computed by validate, refined by repair, written by publish
 
 	// MaxFiles refuses a source larger than the owner's plan allows, checked right
 	// after inventory — before chunking or embedding, so an oversized repo costs

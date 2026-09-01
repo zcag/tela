@@ -278,6 +278,12 @@ type chatReq struct {
 type chatResp struct {
 	Choices []struct {
 		Message chatMsg `json:"message"`
+		// FinishReason is why the model stopped. "length" means the answer was
+		// CUT OFF at max_tokens — the provider reports this on every call and
+		// atlas used to discard it, so a reference page truncated mid-word was
+		// indistinguishable from one the model simply chose to end. See
+		// docs/atlas-output-budget-experiment.md.
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage usageBlock `json:"usage"`
 	Error *apiError  `json:"error,omitempty"`
@@ -286,13 +292,28 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
-// Chat sends a system+user turn over the OpenAI-compatible HTTP endpoint and
-// returns the assistant text.
+// MaxTokens is the configured output cap per chat call (0 = unset, i.e. the
+// endpoint's own default). Generation stages need it to size a request to what
+// the provider can actually answer, so it is read here rather than re-derived
+// from env in the engine.
+func (c *Client) MaxTokens() int { return c.cfg.MaxTokens }
+
+// Chat sends a system+user turn and returns the assistant text, discarding
+// whether the answer was truncated. Callers that build a page body should use
+// ChatFull instead.
 func (c *Client) Chat(ctx context.Context, system, user string, temperature float64) (string, error) {
+	body, _, err := c.ChatFull(ctx, system, user, temperature)
+	return body, err
+}
+
+// ChatFull is Chat plus the truncation flag: truncated reports that the provider
+// stopped at max_tokens rather than at a natural end, so the text is an
+// incomplete answer that happens to be well-formed HTTP.
+func (c *Client) ChatFull(ctx context.Context, system, user string, temperature float64) (body string, truncated bool, err error) {
 	// One chat call = one slot of the global gate.
 	release, err := c.acquire(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer release()
 	var resp chatResp
@@ -300,16 +321,16 @@ func (c *Client) Chat(ctx context.Context, system, user string, temperature floa
 		{Role: "system", Content: system}, {Role: "user", Content: user},
 	}}
 	if err := c.post(ctx, c.cfg.BaseURL, "/chat/completions", req, &resp, chatTimeout); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if resp.Error != nil {
-		return "", fmt.Errorf("chat: %s", resp.Error.Message)
+		return "", false, fmt.Errorf("chat: %s", resp.Error.Message)
 	}
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("chat: empty response")
+		return "", false, fmt.Errorf("chat: empty response")
 	}
 	c.addChat(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
-	return resp.Choices[0].Message.Content, nil
+	return resp.Choices[0].Message.Content, resp.Choices[0].FinishReason == "length", nil
 }
 
 // --- transport (with retry/backoff) ---

@@ -49,7 +49,17 @@ func (refineStage) Run(ctx context.Context, rc *RunContext) error {
 		if rc.Source != nil && rc.Source.Type == core.SourceJira {
 			user = refineUserJira(p.Title, p.Body, assembleContext(chunks))
 		}
-		improved, err := chatBody(ctx, rc, refineSystem, user, 0.3)
+		improved, truncated, err := chatBody(ctx, rc, refineSystem, user, 0.3)
+		if err == nil && truncated {
+			// Refine REPLACES a complete draft. A reply cut off at max_tokens is a
+			// half-written page, and the shrink guard below does not catch it — a
+			// page truncated at 60% clears "at least half the length" comfortably.
+			// Keeping the draft is strictly better than replacing it with a
+			// prefix of itself.
+			rc.Warn("refine %q hit the model's output cap — keeping the complete draft", p.Title)
+			rc.StepDone(n, "refining: %s (kept draft)", p.Title)
+			return nil
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()

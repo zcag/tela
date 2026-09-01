@@ -76,6 +76,7 @@ func Rehydrate(ctx context.Context, rc *RunContext) error {
 	// index stage runs. Skipped when there are no chunks yet (resume before chunk).
 	if len(chunks) > 0 {
 		rc.Retriever = BuildRetriever(rc.Art.Chunks)
+		rc.Evidence = BuildEvidenceIndex(rc.Art.Chunks)
 	}
 	return nil
 }

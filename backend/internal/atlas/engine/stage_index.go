@@ -14,6 +14,7 @@ func (indexStage) Name() core.StageName { return core.StageIndex }
 
 func (indexStage) Run(ctx context.Context, rc *RunContext) error {
 	rc.Retriever = BuildRetriever(rc.Art.Chunks)
+	rc.Evidence = BuildEvidenceIndex(rc.Art.Chunks)
 	rc.Info("indexed %d chunks for hybrid retrieval (dense + BM25)", len(rc.Art.Chunks))
 	return nil
 }
