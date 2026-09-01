@@ -8,7 +8,8 @@ tela-own engine with push + in-app conflict UX comes later.
 
 > **Easiest setup: Settings → Sync → Connect a vault.** It mints a sync token and
 > shows the exact `rclone config create` + sync commands to paste (token included,
-> `--ignore-size` baked in). The rest of this doc is the manual reference.
+> `vendor=rclone` and `--ignore-size` baked in, Linux and macOS variants). The
+> rest of this doc is the manual reference.
 
 - **Endpoint:** `https://telawiki.com/dav/`
 - **Auth:** a **Personal Access Token (PAT)** as the password (any username).
@@ -98,21 +99,66 @@ edits on adjacent lines may be treated as one conflicting block.
 > uploaded it** has no base yet, so that first write is last-write-wins. After
 > the client has uploaded a page once, edits merge.
 
-## ⚠️ Always pass `--ignore-size`
+## ⚠️ Two client settings are load-bearing
+
+Get either of these wrong and rclone still exits 0 — it just stops syncing your
+edits. Both are baked into what **Settings → Sync** generates.
+
+### 1. `vendor = rclone` on the remote
+
+This is the rclone profile for a WebDAV server that accepts an upload
+modification time (`X-OC-Mtime`) — which tela does. With it, rclone reports
+`Precision: 1s` and compares modtimes. With `vendor = other` it reports
+`ModTimeNotSupported` and **ignores modtime entirely**.
+
+That matters because of the next setting. Fix an existing remote with:
+
+```bash
+rclone config update tela vendor rclone
+rclone backend features tela: | head -5   # Precision must NOT be 3153600000000000000
+```
+
+### 2. `--ignore-size` on everything that writes
 
 tela **transforms files on write** — it renders the YAML frontmatter (id,
 title, …) and may merge your edit with the server's. So the bytes stored differ
 from the bytes you uploaded, and rclone's default post-transfer **size check
 will call every upload "corrupted" and roll it back** (it can even delete the
-page). Pass `--ignore-size` on every command that writes:
+page).
 
 ```bash
 rclone copy   ./engineering tela:engineering --ignore-size
 rclone bisync ./engineering tela:engineering --ignore-size ...
 ```
 
-rclone then uses modtime (not size) to decide what changed — which is why
-modtime support (rclone ≥ 1.66) matters here. Pure sync-*down* doesn't need it.
+### Why the pair is the whole story
+
+rclone decides whether to transfer a file with `equal()`: **size, then
+modtime**. `--ignore-size` removes the first signal on purpose. If the remote
+also has no modtime, *nothing is left* — and `equal()` short-circuits on
+"Sizes identical" and calls every already-existing file unchanged:
+
+```
+DEBUG : notes.md: Sizes identical
+DEBUG : notes.md: Unchanged skipping
+```
+
+That was the shape of a real data-loss bug (fixed 2026-09-01, migration `0079`):
+new files uploaded fine, but **every edit to an already-synced page was silently
+dropped**. bisync detected the change and queued the copy correctly — the
+delegated copy refused it — and the run still printed `Bisync successful` and
+advanced its listings, so it was never retried. With `vendor = rclone` both
+sides have a real modtime and the comparison is correct again.
+
+**How tela's modtime works** (`backend/internal/api/dav_mtime.go`): a PUT
+carrying `X-OC-Mtime` keeps your file's own timestamp — but only when your file
+is a faithful copy of what tela serves (byte-identical, or an unchanged re-PUT
+of a file that already carries the page's `id:`). When tela transformed the
+write — a brand-new page getting its `id:`, a 3-way merge, a rename — the
+page's own `updated_at` stands instead, which is newer than your local file, so
+your next sync **pulls the canonical rendering down**. That is how a
+locally-created file learns its `id:` (see [How identity works](#how-identity-works-read-this-once))
+and how a merged body reaches the machine that wrote half of it.
 
 ## rclone config
 
@@ -123,7 +169,7 @@ modtime support (rclone ≥ 1.66) matters here. Pure sync-*down* doesn't need it
 [tela]
 type = webdav
 url = https://telawiki.com/dav/
-vendor = other
+vendor = rclone           # load-bearing — see above
 user = you@example.com
 pass = <obscured PAT>     # set via: rclone obscure 'tela_pat_xxx'
 ```
@@ -149,10 +195,25 @@ rclone bisync tela:engineering ./engineering --resync --ignore-size
 rclone bisync tela:engineering ./engineering \
   --ignore-size --max-delete 25 --check-access \
   --exclude-from ~/.config/rclone/tela-excludes.txt
+
+# …then bring tela's rendering back down (ids, merges, frontmatter)
+rclone copy tela:engineering ./engineering --update
 ```
 
 `--max-delete` is a safety rail (refuse a run that would delete an anomalous
 fraction of files); `--check-access` aborts if a side looks empty/unmounted.
+
+**Why the trailing `copy --update`.** bisync re-lists both sides at the end of a
+run, so a file tela rewrote *during* that run (a new page getting its `id:`, a
+merge) looks unchanged to the next run and never comes down on its own. The pull
+pass fixes that: `--update` only takes files whose server copy is newer, so it is
+a no-op once everything has settled, and the following bisync run sees matching
+modtimes and transfers nothing. Note it does **not** pass `--ignore-size` — a
+download is a straight copy, so the size check is a real integrity check there;
+keep it.
+
+Without that pass a locally-created file keeps a body with no `id:` — and since
+the id is identity, a later rename forks a new page instead of retitling it.
 
 ### Mount as an always-on folder (recommended)
 
@@ -199,10 +260,56 @@ WantedBy=default.target
 systemctl --user daemon-reload && systemctl --user enable --now tela-vault.service
 ```
 
-(macOS: a launchd agent; Windows: rclone + WinFsp as a service.) Prefer real
-local files synced periodically instead of a live mount? Use the **bisync**
-recipe above on a cron / systemd timer. Sub-second end-to-end is the job of the
-future push-based engine, not rclone.
+Prefer real local files synced periodically instead of a live mount? Use the
+**bisync** recipe above on a cron / systemd timer. Sub-second end-to-end is the
+job of the future push-based engine, not rclone.
+
+### Mount on macOS (`nfsmount`, no macFUSE)
+
+macOS has no FUSE: macFUSE is a kernel extension that needs Reduced Security
+and a reboot, so `rclone mount` is a non-starter for most people. `rclone
+nfsmount` serves the same VFS over a loopback NFS mount — no kext, no root, same
+flags:
+
+```bash
+rclone nfsmount tela: ~/tela \
+  --vfs-cache-mode full --dir-cache-time 10s --vfs-write-back 2s --ignore-size
+```
+
+Keep it mounted with a **launchd agent** —
+`~/Library/LaunchAgents/com.telawiki.tela-vault.plist`. It runs under `/bin/sh`
+so `$HOME` expands on the machine (a plist has no systemd-style `%h`), and sets
+`PATH` explicitly because a launchd agent inherits none — Homebrew is
+`/opt/homebrew/bin` (Apple silicon) or `/usr/local/bin` (Intel):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.telawiki.tela-vault</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>mkdir -p "$HOME/tela" &amp;&amp; exec rclone nfsmount tela: "$HOME/tela" --vfs-cache-mode full --dir-cache-time 10s --vfs-write-back 2s --ignore-size</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/com.telawiki.tela-vault.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.telawiki.tela-vault.plist
+launchctl print gui/$(id -u)/com.telawiki.tela-vault | head
+```
+
+**Settings → Sync** generates both variants (Linux/macOS tabs) with your token
+and paths filled in. Windows: rclone + WinFsp as a service.
 
 ### Excludes (`tela-excludes.txt`)
 
@@ -222,12 +329,18 @@ Thumbs.db
 
 ## Notes & limits
 
-- **Modtime needs rclone ≥ 1.66** on WebDAV; tela reports `updated_at` as the
-  modification time and a strong `ETag` (page id + version) so unchanged files
-  are skipped without re-hashing.
-- **Renames over `rclone bisync`** show up as delete + re-upload (rclone doesn't
-  emit `MOVE` for `vendor=other`); because the re-uploaded file keeps its `id:`,
-  tela resurrects/rebinds the same page rather than forking it.
+- **Modtime.** tela accepts an upload modtime (`X-OC-Mtime`, hence
+  `vendor = rclone`) and reports it back as `getlastmodified`; without a stamp
+  the page's `updated_at` is reported. It also serves a strong `ETag` (page id +
+  version) so unchanged files are skipped without re-hashing. See
+  [Two client settings are load-bearing](#-two-client-settings-are-load-bearing).
+- **Renames over `rclone bisync`** show up as delete + re-upload; because the
+  re-uploaded file keeps its `id:`, tela rebinds the same page (and stamps the
+  new filename) rather than forking it. The delete then lands on a path that no
+  longer resolves — tela answers `204` there rather than `404`, because a 404
+  makes rclone count a failed delete and bisync abort the whole run with
+  "critical error … must run --resync". Deleting nothing is idempotent; the
+  delete guards below still apply to paths that DO resolve.
 - **Renaming a `.md` file** (e.g. in a mounted client) retitles the page;
   renaming a folder reparents it. Editing only the `slug:` in frontmatter is
   ignored — the slug is always derived from the title.

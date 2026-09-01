@@ -19,8 +19,10 @@ type syncConnResp struct {
 		RemotePath          string `json:"remote_path"`
 		ConfigCreateCommand string `json:"config_create_command"`
 		MountCommand        string `json:"mount_command"`
+		MountCommandMacos   string `json:"mount_command_macos"`
 		ServiceName         string `json:"service_name"`
 		SystemdUnit         string `json:"systemd_unit"`
+		LaunchdPlist        string `json:"launchd_plist"`
 	} `json:"rclone"`
 }
 
@@ -53,8 +55,21 @@ func TestSyncConnections_CreateListRevoke(t *testing.T) {
 	if !strings.Contains(got.Rclone.ConfigCreateCommand, "--obscure") {
 		t.Fatalf("config command must pass --obscure or rclone stores the PAT raw → 401:\n%s", got.Rclone.ConfigCreateCommand)
 	}
+	// vendor=rclone is what makes the client send/read a modtime (X-OC-Mtime).
+	// With vendor=other and the mandatory --ignore-size, rclone has no comparison
+	// signal left and silently skips every edit to an already-synced file.
+	if !strings.Contains(got.Rclone.ConfigCreateCommand, "vendor=rclone") {
+		t.Fatalf("config command must set vendor=rclone or edits never upload:\n%s", got.Rclone.ConfigCreateCommand)
+	}
 	if !strings.Contains(got.Rclone.MountCommand, "rclone mount") || !strings.Contains(got.Rclone.MountCommand, "--ignore-size") {
 		t.Fatalf("mount command should be `rclone mount … --ignore-size`:\n%s", got.Rclone.MountCommand)
+	}
+	// macOS has no FUSE, so its mount is nfsmount and its keep-alive is launchd.
+	if !strings.Contains(got.Rclone.MountCommandMacos, "rclone nfsmount") {
+		t.Fatalf("macOS mount command should be `rclone nfsmount …`:\n%s", got.Rclone.MountCommandMacos)
+	}
+	if !strings.Contains(got.Rclone.LaunchdPlist, "nfsmount") || strings.Contains(got.Rclone.LaunchdPlist, "%h") {
+		t.Fatalf("launchd plist should run nfsmount and expand $HOME itself:\n%s", got.Rclone.LaunchdPlist)
 	}
 	if !strings.HasSuffix(got.Rclone.RemotePath, ":engineering") {
 		t.Fatalf("remote path not scoped to the space slug: %q", got.Rclone.RemotePath)

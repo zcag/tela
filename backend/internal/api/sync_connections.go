@@ -36,10 +36,18 @@ type rcloneSetup struct {
 	LocalDir            string `json:"local_dir"`
 	ConfigCreateCommand string `json:"config_create_command"` // step 1, run once
 	MountCommand        string `json:"mount_command"`         // step 2: foreground mount to try it
-	ServiceName         string `json:"service_name"`          // the systemd unit name
-	SystemdUnit         string `json:"systemd_unit"`          // step 3: the .service file contents
-	SystemdInstall      string `json:"systemd_install"`       // step 3: enable + start it
-	ReadOnly            bool   `json:"read_only"`
+	MountCommandMacos   string `json:"mount_command_macos"`   // step 2 on macOS: nfsmount, no FUSE kext
+	ServiceName         string `json:"service_name"`          // the systemd unit / launchd label stem
+	SystemdUnit         string `json:"systemd_unit"`          // step 3 (Linux): the .service file contents
+	SystemdInstall      string `json:"systemd_install"`       // step 3 (Linux): enable + start it
+	LaunchdLabel        string `json:"launchd_label"`         // step 3 (macOS): the agent label / plist name
+	LaunchdPlist        string `json:"launchd_plist"`         // step 3 (macOS): the .plist contents
+	LaunchdInstall      string `json:"launchd_install"`       // step 3 (macOS): load it
+	// FixVendorCommand repairs a remote created before tela had modtime support
+	// (vendor=other). Without vendor=rclone the client sends no X-OC-Mtime and
+	// ignores ours, so rclone cannot tell an edited file from an unchanged one.
+	FixVendorCommand string `json:"fix_vendor_command"`
+	ReadOnly         bool   `json:"read_only"`
 }
 
 // CreateSyncConnection — POST /api/sync/connections. Any authenticated user mints
@@ -157,9 +165,9 @@ func (s *Server) ListSyncConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildRcloneSetup assembles the copy-paste rclone configuration for a freshly
-// minted token. The WebDAV URL and the --ignore-size flag (tela transforms files
-// on write, so rclone must not size-check — see docs/webdav-sync.md) are
-// server-authoritative, not hardcoded in the client.
+// minted token. The WebDAV URL, the vendor and the --ignore-size flag (tela
+// transforms files on write, so rclone must not size-check — see
+// docs/webdav-sync.md) are server-authoritative, not hardcoded in the client.
 func buildRcloneSetup(user, spaceSlug, rawKey string, readOnly bool) rcloneSetup {
 	url := strings.TrimRight(canonicalBaseURL(), "/") + "/dav/"
 	const remote = "tela"
@@ -181,7 +189,16 @@ func buildRcloneSetup(user, spaceSlug, rawKey string, readOnly bool) rcloneSetup
 	// to be a revealable string, so rclone assumes it's pre-obscured and stores it
 	// RAW. It then de-obscures the raw token into garbage on every request → 401.
 	// --obscure forces obscuring so the round-trip is correct.
-	configCreate := fmt.Sprintf("rclone config create %s webdav url=%s vendor=other user=%s pass=%s --obscure", remote, url, user, rawKey)
+	// vendor=rclone is LOAD-BEARING, not cosmetic. It is the profile for a WebDAV
+	// server that accepts an upload modtime via X-OC-Mtime (dav_mtime.go) — with
+	// it rclone reports Precision: 1s and compares modtimes; with vendor=other it
+	// reports ModTimeNotSupported, and since --ignore-size is mandatory here that
+	// leaves rclone with NO comparison signal at all: its equal() then returns
+	// "Sizes identical" for every file that already exists and silently skips
+	// every edit. It picks up nothing else from the vendor (no chunking, no
+	// checksum properties, no propset).
+	configCreate := fmt.Sprintf("rclone config create %s webdav url=%s vendor=rclone user=%s pass=%s --obscure", remote, url, user, rawKey)
+	fixVendor := fmt.Sprintf("rclone config update %s vendor rclone", remote)
 
 	// The vault is mounted (rclone mount), not bidirectionally synced: edits go
 	// straight up via PUT (the server merges), server-side changes appear after
@@ -199,6 +216,10 @@ func buildRcloneSetup(user, spaceSlug, rawKey string, readOnly bool) rcloneSetup
 	}
 	mountFlags := "--vfs-cache-mode full --dir-cache-time 10s --vfs-write-back 2s --ignore-size" + roFlag
 	mountCmd := fmt.Sprintf("rclone mount %s %s %s", remotePath, localDir, mountFlags)
+	// macOS has no FUSE (macFUSE is a kext needing Reduced Security + a reboot),
+	// so `rclone mount` is a non-starter there; nfsmount serves the same tree over
+	// a loopback NFS mount with no kext and no root.
+	mountCmdMac := fmt.Sprintf("rclone nfsmount %s %s %s", remotePath, localDir, mountFlags)
 
 	// systemd USER service — mounts on login, restarts if it drops (the pattern
 	// for an always-available cloud folder). %h is systemd's user-home specifier
@@ -226,6 +247,38 @@ WantedBy=default.target
 `)
 	install := fmt.Sprintf("systemctl --user daemon-reload\nsystemctl --user enable --now %s.service", service)
 
+	// launchd agent — the macOS half of "keep it mounted". The command runs under
+	// /bin/sh so $HOME expands on the user's machine (a plist has no %h, and we
+	// must not bake a username in), and PATH is set explicitly because a launchd
+	// agent inherits none — Homebrew lives in /opt/homebrew/bin (Apple silicon)
+	// or /usr/local/bin (Intel).
+	label := "com.telawiki." + service
+	plist := strings.NewReplacer(
+		"{label}", label,
+		"{remote}", remotePath,
+		"{rel}", localRel,
+		"{flags}", mountFlags,
+	).Replace(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>mkdir -p "$HOME/{rel}" &amp;&amp; exec rclone nfsmount {remote} "$HOME/{rel}" {flags}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/{label}.log</string>
+</dict>
+</plist>
+`)
+	launchdInstall := fmt.Sprintf("launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/%s.plist", label)
+
 	return rcloneSetup{
 		WebdavURL:           url,
 		RemoteName:          remote,
@@ -233,9 +286,14 @@ WantedBy=default.target
 		LocalDir:            localDir,
 		ConfigCreateCommand: configCreate,
 		MountCommand:        mountCmd,
+		MountCommandMacos:   mountCmdMac,
 		ServiceName:         service,
 		SystemdUnit:         unit,
 		SystemdInstall:      install,
+		LaunchdLabel:        label,
+		LaunchdPlist:        plist,
+		LaunchdInstall:      launchdInstall,
+		FixVendorCommand:    fixVendor,
 		ReadOnly:            readOnly,
 	}
 }
