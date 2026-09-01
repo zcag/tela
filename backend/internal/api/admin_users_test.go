@@ -376,6 +376,9 @@ func TestListAdminUsers_WindowedMetrics(t *testing.T) {
 	if got := month["alice"].Metrics; got.Edits != 2 || got.AgentEdits != 0 || got.Views != 1 {
 		t.Fatalf("1m alice metrics = %+v, want edits=2 agent=0 views=1", got)
 	}
+	if got := month["alice"].Metrics; got.HumanEdits != 2 || got.SyncEdits != 0 {
+		t.Fatalf("1m alice edit split = %+v, want human=2 sync=0", got)
+	}
 	// Only newPage was created inside the window; the year-old page's first
 	// revision falls outside it, so editing it today doesn't re-count as a
 	// creation.
@@ -398,4 +401,74 @@ func TestListAdminUsers_WindowedMetrics(t *testing.T) {
 	}
 
 	get("bogus")
+}
+
+// Days-active must count authored revisions, not only events. The file-sync
+// write path records NO events, so an events-only measure filed the instance's
+// heaviest writers as dormant while their edit count said otherwise — and the
+// lifecycle segment inherited the lie.
+func TestListAdminUsers_SyncWriterIsNotDormant(t *testing.T) {
+	d := newAPITestDB(t)
+	srv := New(d)
+	ctx := context.Background()
+
+	admin := seedUser(t, d, "admin", "adminpw123", true)
+	vault := seedUser(t, d, "vault", "vaultpw123", false)
+	spaceID := seedSpace(t, d, "Vault", "vault", vault)
+	pageID := seedPage(t, d, spaceID, "Synced Note")
+
+	// Three sync snapshots across two distinct days, and not one event row.
+	if _, err := d.ExecContext(ctx,
+		`INSERT INTO page_revisions (page_id, title, body, author_id, source, byte_size, created_at)
+		 VALUES ($1,'Synced Note','a',$2,'sync-prior',   1, to_char(now() - interval '1 day','YYYY-MM-DD HH24:MI:SS')),
+		        ($1,'Synced Note','b',$2,'sync-prior',   1, to_char(now() - interval '1 day','YYYY-MM-DD HH24:MI:SS')),
+		        ($1,'Synced Note','c',$2,'sync-conflict',1, tela_now())`,
+		pageID, vault); err != nil {
+		t.Fatalf("seed revisions: %v", err)
+	}
+
+	rec := recordHandler(srv.ListAdminUsers,
+		userRequest(http.MethodGet, "/api/admin/users?window=1m", "", authUser(admin, "admin", true)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Users []adminUserDTO `json:"users"`
+		Weeks []string       `json:"weeks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var row *adminUserDTO
+	for i := range out.Users {
+		if out.Users[i].Username == "vault" {
+			row = &out.Users[i]
+		}
+	}
+	if row == nil {
+		t.Fatal("vault user missing from list")
+	}
+	m := row.Metrics
+	if m.Edits != 3 || m.SyncEdits != 3 || m.HumanEdits != 0 {
+		t.Fatalf("edit split = %+v, want edits=3 sync=3 human=0", m)
+	}
+	if m.DaysActive != 2 {
+		t.Fatalf("days_active=%d, want 2 (from revisions alone — there are no events)", m.DaysActive)
+	}
+	if row.Segment == segNever {
+		t.Fatalf("a user writing every day is not %q", segNever)
+	}
+	// The weekly series is the axis every sparkline and the cohort grid indexes
+	// into, so it must be dense and aligned for every row.
+	if len(out.Weeks) != adminUserWeeks {
+		t.Fatalf("weeks axis = %d entries, want %d", len(out.Weeks), adminUserWeeks)
+	}
+	for _, u := range out.Users {
+		if len(u.Metrics.Weeks) != adminUserWeeks {
+			t.Fatalf("%s has %d week buckets, want %d", u.Username, len(u.Metrics.Weeks), adminUserWeeks)
+		}
+	}
+	if last := m.Weeks[len(m.Weeks)-1]; last == 0 {
+		t.Fatalf("this week's bucket is 0 for a user who wrote today: %v", m.Weeks)
+	}
 }

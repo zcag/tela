@@ -60,14 +60,32 @@ func parseAdminUserWindow(q string, now time.Time) adminUserWindow {
 // a real answer (an account that did nothing), so every field is a plain count
 // and the struct is always populated — never nil — on list rows.
 type adminUserMetrics struct {
-	Edits        int64 `json:"edits"`         // page revisions authored
-	AgentEdits   int64 `json:"agent_edits"`   // of those, written through an agent (source='agent')
+	// Edits is the total; the three below partition it by WHO actually wrote the
+	// revision. Folding them together is what made a vault-sync account read as
+	// the instance's most prolific author.
+	Edits      int64 `json:"edits"`       // page revisions authored (all sources)
+	HumanEdits int64 `json:"human_edits"` // typed in the app ('create' / 'manual')
+	AgentEdits int64 `json:"agent_edits"` // written through an agent (source='agent')
+	SyncEdits  int64 `json:"sync_edits"`  // snapshots taken by file sync ('sync-*')
+
 	PagesCreated int64 `json:"pages_created"` // pages whose first revision is theirs
 	Views        int64 `json:"views"`         // page.view events
 	Asks         int64 `json:"asks"`          // ask_log rows
 	Logins       int64 `json:"logins"`        // auth.login events
-	DaysActive   int64 `json:"days_active"`   // distinct days with any event
-	LLMCalls     int64 `json:"llm_calls"`     // metered AI calls (calendar-month grain)
+	// DaysActive counts distinct days with an event OR an authored revision.
+	// Events alone misses the sync path entirely (it records none), which made
+	// heavy sync users look dormant while their edit count said otherwise.
+	DaysActive int64 `json:"days_active"`
+	LLMCalls   int64 `json:"llm_calls"` // metered AI calls (calendar-month grain)
+
+	// Days30 is days-active over the last 30 days REGARDLESS of the selected
+	// window — the segment has to describe the person, not the view, or every
+	// account would change lifecycle when you switch to "all time".
+	Days30 int64 `json:"days30"`
+	// Weeks is active-days per ISO week (0-7) over adminUserWeeks, oldest→newest
+	// and dense. The sparkline, the trend delta and the retention grid are all
+	// read off this one series.
+	Weeks []int64 `json:"weeks"`
 }
 
 // loadAdminUserMetrics returns id→metrics for every user with any activity in
@@ -85,22 +103,25 @@ func loadAdminUserMetrics(ctx context.Context, d *sql.DB, w adminUserWindow) map
 		return m
 	}
 
-	// Revisions authored, and the agent-written subset. Deleted pages are
-	// excluded so the table counts surviving work, matching recent_changes.go.
+	// Revisions authored, split by who wrote them. Deleted pages are excluded so
+	// the table counts surviving work, matching recent_changes.go.
 	if rows, err := d.QueryContext(ctx, `
-		SELECT pr.author_id, COUNT(*), COUNT(*) FILTER (WHERE pr.source = 'agent')
+		SELECT pr.author_id, COUNT(*),
+		       COUNT(*) FILTER (WHERE pr.source = 'agent'),
+		       COUNT(*) FILTER (WHERE pr.source LIKE 'sync-%')
 		  FROM page_revisions pr
 		  JOIN pages p ON p.id = pr.page_id AND p.deleted_at IS NULL
 		 WHERE pr.author_id IS NOT NULL AND ($1 = '' OR pr.created_at >= $1)
 		 GROUP BY pr.author_id`, w.Cut); err == nil {
 		defer rows.Close()
 		for rows.Next() {
-			var id, n, agent int64
-			if err := rows.Scan(&id, &n, &agent); err != nil {
+			var id, n, agent, sync int64
+			if err := rows.Scan(&id, &n, &agent, &sync); err != nil {
 				break
 			}
 			m := at(id)
-			m.Edits, m.AgentEdits = n, agent
+			m.Edits, m.AgentEdits, m.SyncEdits = n, agent, sync
+			m.HumanEdits = n - agent - sync
 		}
 	}
 
@@ -145,16 +166,19 @@ func loadAdminUserMetrics(ctx context.Context, d *sql.DB, w adminUserWindow) map
 		}
 	}
 
-	// Days active: distinct calendar days on which the user did ANYTHING the
-	// events feed records. The best single "is this account alive" sort key —
-	// one busy afternoon and a month of daily use look identical under a raw
-	// event count, but not under this.
-	for id, n := range scanInt64Map(ctx, d, `
-		SELECT actor_user_id, COUNT(DISTINCT substr(created_at, 1, 10))
-		  FROM events
-		 WHERE actor_user_id IS NOT NULL AND ($1 = '' OR created_at >= $1)
-		 GROUP BY actor_user_id`, w.Cut) {
+	// Days active: distinct calendar days on which the user did ANYTHING —
+	// the best single "is this account alive" sort key, since one busy afternoon
+	// and a month of daily use look identical under a raw event count.
+	for id, n := range scanInt64Map(ctx, d,
+		`SELECT uid, COUNT(DISTINCT day) FROM (`+activeDaysUnion+`) x GROUP BY uid`, w.Cut) {
 		at(id).DaysActive = n
+	}
+
+	// The same measure over a FIXED last-30-days, for the lifecycle segment.
+	cut30 := time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02 15:04:05")
+	for id, n := range scanInt64Map(ctx, d,
+		`SELECT uid, COUNT(DISTINCT day) FROM (`+activeDaysUnion+`) x GROUP BY uid`, cut30) {
+		at(id).Days30 = n
 	}
 
 	for id, n := range scanInt64Map(ctx, d, `
@@ -173,7 +197,80 @@ func loadAdminUserMetrics(ctx context.Context, d *sql.DB, w adminUserWindow) map
 		at(id).LLMCalls = n
 	}
 
+	// Weekly shape: active days per week over the trailing adminUserWeeks. Dense
+	// and aligned to `axis` so every row's sparkline shares an x-axis.
+	axis, idx := weekAxis(time.Now().UTC())
+	for _, m := range out {
+		m.Weeks = make([]int64, len(axis))
+	}
+	if rows, err := d.QueryContext(ctx, `
+		SELECT uid, to_char(date_trunc('week', day::date), 'YYYY-MM-DD') AS wk, COUNT(DISTINCT day)
+		  FROM (`+activeDaysUnion+`) x
+		 GROUP BY uid, wk`, axis[0]+" 00:00:00"); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, n int64
+			var wk string
+			if err := rows.Scan(&id, &wk, &n); err != nil {
+				break
+			}
+			m := at(id)
+			if m.Weeks == nil {
+				m.Weeks = make([]int64, len(axis))
+			}
+			if i, ok := idx[wk]; ok {
+				m.Weeks[i] = n
+			}
+		}
+	}
+	// Rows discovered by the weekly pass alone still need a full-length series.
+	for _, m := range out {
+		if len(m.Weeks) != len(axis) {
+			grown := make([]int64, len(axis))
+			copy(grown, m.Weeks)
+			m.Weeks = grown
+		}
+	}
+
 	return out
+}
+
+// adminUserWeeks is how many trailing ISO weeks the per-user activity series
+// covers. 26 is the practical ceiling: `events` is pruned at 180 days by
+// default, so a longer axis would render a flat tail that looks like inactivity
+// rather than missing data. It also sets how far back the signup-cohort grid
+// can see.
+const adminUserWeeks = 26
+
+// activeDaysUnion is one (user, day) row per day the user did anything —
+// an event OR an authored revision. $1 is the lower bound ('' = unbounded).
+// Kept as one string because three different aggregates read the same
+// definition of "active", and they must not drift apart.
+const activeDaysUnion = `
+	SELECT actor_user_id AS uid, substr(created_at, 1, 10) AS day
+	  FROM events
+	 WHERE actor_user_id IS NOT NULL AND ($1 = '' OR created_at >= $1)
+	UNION ALL
+	SELECT pr.author_id, substr(pr.created_at, 1, 10)
+	  FROM page_revisions pr
+	  JOIN pages p ON p.id = pr.page_id AND p.deleted_at IS NULL
+	 WHERE pr.author_id IS NOT NULL AND ($1 = '' OR pr.created_at >= $1)`
+
+// weekAxis returns the dense list of trailing week-start dates (Monday,
+// oldest→newest) plus a label→index map. Postgres date_trunc('week') is
+// Monday-based, so the Go side matches it by rewinding to Monday.
+func weekAxis(now time.Time) ([]string, map[string]int) {
+	monday := now
+	// time.Weekday is Sunday=0; shift so Monday=0.
+	back := (int(monday.Weekday()) + 6) % 7
+	monday = monday.AddDate(0, 0, -back)
+	axis := make([]string, adminUserWeeks)
+	idx := make(map[string]int, adminUserWeeks)
+	for i := 0; i < adminUserWeeks; i++ {
+		axis[i] = monday.AddDate(0, 0, -7*(adminUserWeeks-1-i)).Format("2006-01-02")
+		idx[axis[i]] = i
+	}
+	return axis, idx
 }
 
 // eventsHorizon is the oldest surviving events row — the point before which the

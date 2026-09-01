@@ -42,6 +42,9 @@ type adminUserDTO struct {
 	// Activity inside the requested ?window= (admin_user_metrics.go). Always set
 	// on list rows, including for accounts that did nothing (all-zero).
 	Metrics *adminUserMetrics `json:"metrics,omitempty"`
+	// Lifecycle label (admin_user_segments.go): power|regular|dabbler|churned|never.
+	// Always computed from the last 30 days, never from the selected window.
+	Segment string `json:"segment,omitempty"`
 }
 
 // adminUserUsage is the per-user resource snapshot the admin list shows: current
@@ -79,7 +82,8 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireInstanceAdmin(w, r); !ok {
 		return
 	}
-	win := parseAdminUserWindow(r.URL.Query().Get("window"), time.Now().UTC())
+	now := time.Now().UTC()
+	win := parseAdminUserWindow(r.URL.Query().Get("window"), now)
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at
 		  FROM users
@@ -155,8 +159,9 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if m, ok := metrics[id]; ok {
 			users[i].Metrics = m
 		} else {
-			users[i].Metrics = &adminUserMetrics{}
+			users[i].Metrics = &adminUserMetrics{Weeks: make([]int64, adminUserWeeks)}
 		}
+		users[i].Segment = classifySegment(users[i].Metrics, users[i].LastActiveAt, now)
 		users[i].HasAPIKey = hasKey[id]
 		users[i].UsedMCP = users[i].UsedMCP || usedMCP[id] // scan set it from mcp_last_seen_at (covers OAuth)
 		u, err := s.buildUsage(ctx, account{Kind: accountUser, ID: id})
@@ -170,9 +175,13 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 			MaxStorageBytes: u.Plan.MaxStorageBytes,
 		}
 	}
+	weeks, _ := weekAxis(now)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"users":  users,
 		"window": win.Key,
+		// Week-start dates (Monday, oldest→newest) that every row's `weeks`
+		// series is aligned to — the x-axis for the sparklines and the cohort grid.
+		"weeks": weeks,
 		// The retention horizon behind the events-derived columns (views,
 		// sign-ins, days active) — they cannot see further back than this.
 		"events_since": eventsHorizon(ctx, s.DB),
