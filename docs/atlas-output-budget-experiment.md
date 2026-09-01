@@ -120,6 +120,49 @@ number at all: **+27, +18, −72, −41**.
   source (repowise or SerpApi) with expected *per-page* coverage, or this class of
   defect recurs. That is an ops change, not a code one.
 
+## Result — run 134 vs run 133 (measured 2026-09-01)
+
+Same source, same models, same 166-item must-cover surface (the commit advanced
+by 4 files; the spine is identical: `route=5 export=194 cli_flag=117 env_var=43
+outbound=18 db_model=1`). Only the generation code differs.
+
+|                                   | run 133      | run 134            |
+|-----------------------------------|--------------|--------------------|
+| surface coverage                  | 72% (271/378)| **100% (378/378)** |
+| must-cover                        | 80% (133/166)| **100% (166/166)** |
+| citations (unresolved)            | 353 (0)      | 483 (0)            |
+| Entry Points page: items present  | 63 / 118     | **118 / 118**      |
+| …of which env vars                | **0 / 36**   | **36 / 36**        |
+| chat calls (prompt / completion)  | 25 (147k/40k)| 31 (144k/50k)      |
+| embed calls / tokens              | 592 / 5,507k | 584 / 5,497k       |
+| draft                             | 8m00         | 15m09              |
+| repair                            | 6m10         | **0.06s (skipped)**|
+| total                             | 42m01        | 43m16              |
+
+**No reference page ends mid-item** — the primary check. Every one closes on a
+complete sentence or a closed fence.
+
+Three things worth keeping:
+
+- **Cost is flat, not doubled.** Only +6 chat calls, and *prompt* tokens went
+  DOWN (147k → 144k) because reference prompts no longer carry a 22k-char
+  retrieved-excerpt block. The +7m of drafting was almost exactly cancelled by
+  repair not running: at 100% must-cover it returns at its threshold check.
+  Fixing truncation makes the repair pathology moot rather than merely guarded.
+- **The retry earned its place.** Two parts of `Components & Exported Types`
+  came back truncated at the planned 51 items and were re-issued at 25. So
+  `refRichItemChars = 250` is ~2x optimistic for the `export` kind (long names
+  and signatures); the self-correction absorbed it for one extra call each.
+  Raising it for exports would save those two calls — a tuning note, not a bug.
+- **A page getting SHORTER can be the improvement.** `Data & Persistence` went
+  7,200 → 588 bytes. The old page documented its one db_model *plus* `async def
+  stats` and other items pulled from the excerpt block that belong to other
+  pages' surfaces. Coverage counts a name appearing ANYWHERE, so that
+  off-surface padding was quietly inflating the metric. The new page documents
+  exactly its own item, from the real class body. Note the implication for the
+  metric work below: this run's 100% is earned on the owning page, which the old
+  number was not.
+
 ## How to evaluate it
 
 Re-run SerpApi (project 19 / source 24) and compare against run 133:
