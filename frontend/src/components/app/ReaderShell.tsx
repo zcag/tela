@@ -12,6 +12,7 @@ import {
   postDateFromSqlite,
 } from '../../lib/relativeTime'
 import { useHeadMeta } from '../../lib/useHeadMeta'
+import { internalRoutePath } from '../../lib/markdown/link-target'
 import {
   stampHeadingIds,
   scrollToHashIn,
@@ -144,6 +145,11 @@ export interface ReaderShellProps {
    * decides whether/where to navigate (no-op for out-of-scope or broken).
    */
   onNavigateWikilink: (targetPageId: number) => void
+  // SPA-navigate an ordinary internal page link (not a wikilink). Optional and
+  // supplied as a prop rather than via a router hook, because ReaderShell also
+  // renders in print/share/public and in Storybook — omitting it keeps the
+  // browser's own (full-load) behaviour, which is what those want.
+  onNavigateInternal?: (to: string) => void
   /** Far-left of the top bar — close button (read) or wordmark (share). */
   topbarLeading?: ReactNode
   /** Right of the top bar, before the Display/Print controls — e.g. Sign in. */
@@ -203,6 +209,7 @@ export function ReaderShell({
   wikilinkMode,
   wikilinkResolveIndex,
   onNavigateWikilink,
+  onNavigateInternal,
   topbarLeading,
   topbarTrailing,
   sidebar,
@@ -455,15 +462,30 @@ export function ReaderShell({
         window.setTimeout(() => delete anchor.dataset.copied, 1100)
         return
       }
-      const id = parseWikilinkPageId(anchor.getAttribute('href') ?? '')
-      if (id == null) return
+      const href = anchor.getAttribute('href') ?? ''
+      const id = parseWikilinkPageId(href)
+      if (id == null) {
+        // Not a wikilink — an ordinary markdown link to another tela page still
+        // deserves SPA navigation instead of a full document reload. Modifier
+        // and middle clicks, external links (target=_blank), #anchors and
+        // server-owned paths all fall through untouched.
+        if (!onNavigateInternal) return
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+        if (anchor.target === '_blank') return
+        const to = internalRoutePath(href)
+        if (!to) return
+        e.preventDefault()
+        e.stopPropagation()
+        onNavigateInternal(to)
+        return
+      }
       e.preventDefault()
       e.stopPropagation()
       onNavigateWikilink(id)
     }
     el.addEventListener('click', onClick, true)
     return () => el.removeEventListener('click', onClick, true)
-  }, [onNavigateWikilink, jumpTo])
+  }, [onNavigateWikilink, onNavigateInternal, jumpTo])
 
   return (
     <div

@@ -139,6 +139,7 @@ import { BacklinksSection } from './BacklinksSection'
 import { RelatedPagesSection } from './RelatedPagesSection'
 import { PageTrustStrip } from './PageTrustStrip'
 import { MarkdownView } from '../view/MarkdownView'
+import { internalRoutePath } from '../../lib/markdown/link-target'
 import { scrollToHashIn } from '../../lib/markdown/heading-anchors'
 import { SheetExportMenu } from './sheet-export-menu'
 import { prefetchMilkdownEditor } from '../../lib/prefetchEditor'
@@ -572,19 +573,25 @@ function PageViewer({
     })
   }, [navigate, spaceId, page.id, page.title, scrollRef])
 
-  // SPA-navigate internal wikilink clicks (MarkdownView emits plain <a href>);
-  // without this they'd full-reload. External / non-page links fall through.
+  // SPA-navigate internal page links (MarkdownView emits plain <a href>);
+  // without this they'd full-reload the whole app. This covers wikilinks AND
+  // ordinary markdown links to another tela page — the latter used to reload,
+  // since only the tela:// wikilink form was ever intercepted.
+  //
+  // Everything else falls through to the browser on purpose: external links
+  // (which now carry target=_blank), #anchors, and server-owned paths like
+  // /api/ attachment downloads — see internalRoutePath. Modifier and middle
+  // clicks are left alone so "open in new tab" keeps working.
   const onContentClick = useCallback(
     (e: React.MouseEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.button !== 0) return
-      const a = (e.target as HTMLElement).closest(
-        'a.tela-wikilink[href]',
-      ) as HTMLAnchorElement | null
-      if (!a) return
-      const href = a.getAttribute('href') ?? ''
-      if (!href.startsWith('/spaces/')) return
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      if (e.button !== 0) return
+      const a = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null
+      if (!a || a.target === '_blank') return
+      const to = internalRoutePath(a.getAttribute('href') ?? '')
+      if (!to) return
       e.preventDefault()
-      void navigate({ to: href })
+      void navigate({ to })
     },
     [navigate],
   )

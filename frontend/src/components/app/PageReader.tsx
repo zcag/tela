@@ -100,6 +100,15 @@ function ReadModeView({ spaceId, pageId, title, summary, body, updatedAt }: Read
     [navigate, spaceByPageId],
   )
 
+  // Ordinary internal page links in the reader body: route them instead of
+  // letting the browser cold-boot the SPA.
+  const onNavigateInternal = useCallback(
+    (to: string) => {
+      void navigate({ to })
+    },
+    [navigate],
+  )
+
   const onEscape = useCallback(() => {
     void navigate(closeRoute)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -117,6 +126,7 @@ function ReadModeView({ spaceId, pageId, title, summary, body, updatedAt }: Read
       wikilinkResolveIndex={wikilinkResolveIndex}
       enableLinkPreview
       onNavigateWikilink={onNavigateWikilink}
+      onNavigateInternal={onNavigateInternal}
       onEscape={onEscape}
       attachmentStrip={<AttachmentStrip pageId={pageId} />}
       // Phone: the "Download PDF" label ate the bar and squeezed the title down

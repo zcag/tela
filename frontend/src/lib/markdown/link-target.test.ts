@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isExternalUrl } from './link-target'
+import { internalRoutePath, isExternalUrl } from './link-target'
 
 const SELF = 'https://telawiki.com'
 
@@ -38,5 +38,34 @@ describe('isExternalUrl', () => {
     expect(isExternalUrl('', SELF)).toBe(false)
     expect(isExternalUrl('   ', SELF)).toBe(false)
     expect(isExternalUrl('http://[bad', SELF)).toBe(false)
+  })
+})
+
+describe('internalRoutePath', () => {
+  it('routes same-origin absolute page links', () => {
+    expect(internalRoutePath(SELF + '/p/123', SELF)).toBe('/p/123')
+    expect(internalRoutePath(SELF + '/spaces/241/pages/2650/x', SELF)).toBe(
+      '/spaces/241/pages/2650/x',
+    )
+  })
+
+  it('routes root-relative page links, keeping search and hash', () => {
+    expect(internalRoutePath('/p/123', SELF)).toBe('/p/123')
+    expect(internalRoutePath(SELF + '/p/123?edit=true#intro', SELF)).toBe('/p/123?edit=true#intro')
+  })
+
+  it('leaves server-owned paths to the browser', () => {
+    // Intercepting these would turn a download into an SPA not-found page.
+    expect(internalRoutePath('/api/attachments/9/download', SELF)).toBeNull()
+    expect(internalRoutePath('/dav/space/file.md', SELF)).toBeNull()
+    expect(internalRoutePath(SELF + '/api/version', SELF)).toBeNull()
+  })
+
+  it('leaves external links, anchors and other schemes alone', () => {
+    expect(internalRoutePath('https://github.com/x/y', SELF)).toBeNull()
+    expect(internalRoutePath('#heading', SELF)).toBeNull()
+    expect(internalRoutePath('mailto:a@b.com', SELF)).toBeNull()
+    expect(internalRoutePath('tela://page/2650', SELF)).toBeNull()
+    expect(internalRoutePath('', SELF)).toBeNull()
   })
 })

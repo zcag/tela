@@ -33,3 +33,40 @@ export function isExternalUrl(url: string, origin?: string): boolean {
     return false // unparseable → treat as internal; never force a new tab on a guess
   }
 }
+
+// Page-route prefixes the SPA owns. Deliberately a SHORT allow-list rather than
+// a deny-list of server paths (/api/, /dav/, attachment downloads): getting an
+// allow-list wrong degrades to a full page load — today's behaviour — whereas a
+// wrong deny-list turns a file download into an SPA not-found page. Fail toward
+// the boring outcome.
+const SPA_PAGE_PREFIXES = ['/p/', '/spaces/']
+
+// internalRoutePath returns the in-app path a link should be SPA-navigated to,
+// or null to let the browser handle it normally.
+//
+// A plain markdown link to another tela page ("https://telawiki.com/p/123", or
+// "/spaces/241/pages/2650/x") is a bare <a href>: only tela:// wikilinks were
+// intercepted, so following one triggered a full document reload of the SPA —
+// cold boot, app state lost — for what is ordinary in-app navigation.
+export function internalRoutePath(href: string, origin?: string): string | null {
+  const u = href.trim()
+  if (!u || u.startsWith('#')) return null
+  if (isExternalUrl(u, origin)) return null
+  const self = origin ?? (typeof window === 'undefined' ? undefined : window.location.origin)
+  let path = u
+  if (!u.startsWith('/')) {
+    if (!self) return null
+    try {
+      const parsed = new URL(u, self)
+      if (parsed.origin !== self) return null
+      path = parsed.pathname + parsed.search + parsed.hash
+    } catch {
+      return null
+    }
+  } else if (self) {
+    // Root-relative already; keep as-is.
+  }
+  // An absolute same-origin URL arrives here as a full URL only via the branch
+  // above, so `path` is always root-relative by now.
+  return SPA_PAGE_PREFIXES.some((p) => path.startsWith(p)) ? path : null
+}
