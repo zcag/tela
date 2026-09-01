@@ -46,7 +46,7 @@ export function CredentialsDialog({
         name: name.trim(),
         kind,
         value: value.trim(),
-        meta: kind === 'jira' && user.trim() ? { username: user.trim() } : undefined,
+        meta: user.trim() ? (kind === 'jira' ? { email: user.trim() } : { username: user.trim() }) : undefined,
       })
       setAdding(false)
       setName('')
@@ -114,7 +114,15 @@ export function CredentialsDialog({
                   </Select>
                 </Field>
               </div>
-              {kind === 'jira' && <Field label="Jira username / email"><Input value={user} onChange={(e) => setUser(e.target.value)} placeholder="you@org.com" /></Field>}
+              {kind === 'jira' ? (
+                <Field label="Jira account email" hint="Jira authenticates as email + token; the token alone will not work.">
+                  <Input value={user} onChange={(e) => setUser(e.target.value)} placeholder="you@org.com" />
+                </Field>
+              ) : (
+                <Field label="Git username" hint="Optional — GitHub and GitLab are handled automatically. Set it for other hosts (Bitbucket: x-token-auth).">
+                  <Input value={user} onChange={(e) => setUser(e.target.value)} placeholder="x-access-token" />
+                </Field>
+              )}
               <Field label="Token" hint="Stored encrypted; never displayed again."><Input type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="ghp_…" /></Field>
               {err && <p className="text-[length:var(--text-sm)] text-[var(--accent-negative-fg)]">{err}</p>}
               <div className="flex justify-end gap-[var(--space-2)]">

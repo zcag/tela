@@ -38,10 +38,14 @@ func (*Connector) Type() string { return string(core.SourceGit) }
 // authURL injects the resolved credential into an https(s) git URL's userinfo
 // for the duration of a single git command — so the token NEVER lands on
 // core.Source.Location (which is printed in the overview page, logged, and
-// emitted in run events). A token-only secret becomes the userinfo (a GitHub
-// PAT); a username (GitHub "x-access-token", GitLab "oauth2", a real login)
-// becomes user:token. No secret, or a non-http scheme (ssh/local), returns
-// Location unchanged.
+// emitted in run events). A username (GitHub "x-access-token", GitLab "oauth2",
+// a real login) becomes user:token; with no username the token alone becomes
+// the userinfo. No secret, or a non-http scheme (ssh/local), returns Location
+// unchanged.
+//
+// When the credential carries no username the HOST supplies one — see
+// defaultGitUser. That default is why a credential with an empty meta_json can
+// still authenticate.
 func authURL(src core.Source) string {
 	if src.SecretValue == "" {
 		return src.Location
@@ -50,7 +54,11 @@ func authURL(src core.Source) string {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return src.Location
 	}
-	if user := src.SecretMeta["username"]; user != "" {
+	user := src.SecretMeta["username"]
+	if user == "" {
+		user = defaultGitUser(u.Hostname())
+	}
+	if user != "" {
 		u.User = url.UserPassword(user, src.SecretValue)
 	} else {
 		u.User = url.User(src.SecretValue)
@@ -58,17 +66,47 @@ func authURL(src core.Source) string {
 	return u.String()
 }
 
+// defaultGitUser is the git auth username to use when the credential carries
+// none. The no-username form (token as the whole userinfo) is accepted by GitHub
+// for CLASSIC ghp_ tokens but REJECTED for fine-grained github_pat_ ones — git
+// then prompts for the missing password half and, with no tty, dies with
+// "could not read Password ... No such device or address". That reads like an
+// expired token, so the failure gets misattributed and the token re-issued,
+// which doesn't help. Supplying the username the host expects is the fix.
+//
+// Deliberately narrow: only hosts where the no-username form is known to fail.
+// An unknown host keeps the previous behaviour, because a wrong guess here
+// breaks a working self-hosted remote and stays invisible until someone reads
+// probe_error. Everything else sets meta.username explicitly (the UI offers it).
+func defaultGitUser(host string) string {
+	switch host := strings.ToLower(host); {
+	case host == "github.com" || strings.HasSuffix(host, ".github.com"):
+		// What actions/checkout uses; valid for classic AND fine-grained tokens.
+		return "x-access-token"
+	case host == "gitlab.com" || strings.HasSuffix(host, ".gitlab.com"):
+		return "oauth2"
+	}
+	return ""
+}
+
 // redactSecret blanks the token in a string (git command output can echo the
 // auth'd URL on failure) so it never surfaces in a run error / log / event.
 // Both the raw token and its URL-percent-encoded form are replaced: authURL
 // passes the token through url.User / url.UserPassword, which percent-encodes
 // special characters (e.g. "@" → "%40"), so git may echo the encoded form.
+//
+// The encoded form is produced the way authURL produces it — USERINFO escaping,
+// via url.User(...).String() — not url.PathEscape, which was the previous
+// attempt at the same thing. They disagree on "@": PathEscape leaves it intact
+// while userinfo escaping turns it into %40, so a token containing one used to
+// slip through into run events and logs. Go escapes the username and password
+// halves identically, so one form covers both positions.
 func redactSecret(s, secret string) string {
 	if secret == "" {
 		return s
 	}
 	s = strings.ReplaceAll(s, secret, "***")
-	if enc := url.PathEscape(secret); enc != secret {
+	if enc := url.User(secret).String(); enc != secret {
 		s = strings.ReplaceAll(s, enc, "***")
 	}
 	return s
