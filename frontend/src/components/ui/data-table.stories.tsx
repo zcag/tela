@@ -98,6 +98,35 @@ export const PinnedEdges: Story = {
   ),
 }
 
+// Column families + scale tracks: the two things that turn a dozen equal-weight
+// numeric columns into something you can read at a glance.
+export const GroupedWithScales: Story = {
+  render: () => (
+    <DataTable<Person>
+      rows={people}
+      rowKey={(p) => p.id}
+      defaultSort={{ key: 'edits', dir: 'desc' }}
+      columns={[
+        { ...columns[0], group: 'Who' },
+        { ...columns[1], group: 'Who' },
+        {
+          ...columns[2],
+          group: 'Activity',
+          scale: (p: Person) => p.edits,
+          title: 'Revisions written in the window.',
+        },
+        {
+          ...columns[3],
+          group: 'Activity',
+          scale: (p: Person) => p.views,
+          title: 'Pages opened.',
+        },
+        { ...columns[4], group: 'Cadence' },
+      ]}
+    />
+  ),
+}
+
 export const Empty: Story = {
   args: { rows: [], columns, rowKey: (p: Person) => p.id, empty: 'No people match these filters.' },
 }

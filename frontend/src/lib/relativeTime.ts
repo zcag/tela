@@ -35,6 +35,20 @@ export function relativeTimeFromSqlite(s: string, now: Date = new Date()): strin
   return `${Math.floor(seconds / YEAR)} years ago`
 }
 
+// The same thing in as few characters as possible — "6h", "3d", "2mo" — for a
+// dense table where "6 hours ago" costs a column's worth of width. Pair it with
+// the full form in a tooltip; on its own it's terse, not cryptic.
+export function shortRelativeFromSqlite(s: string, now: Date = new Date()): string {
+  const seconds = Math.max(0, Math.floor((now.getTime() - parseSqliteTs(s).getTime()) / 1000))
+  if (seconds < 45) return 'now'
+  if (seconds < HOUR) return `${Math.max(1, Math.floor(seconds / MINUTE))}m`
+  if (seconds < DAY) return `${Math.floor(seconds / HOUR)}h`
+  if (seconds < WEEK) return `${Math.floor(seconds / DAY)}d`
+  if (seconds < MONTH) return `${Math.floor(seconds / WEEK)}w`
+  if (seconds < YEAR) return `${Math.floor(seconds / MONTH)}mo`
+  return `${Math.floor(seconds / YEAR)}y`
+}
+
 // Whole-and-fractional days since a SQLite-native UTC timestamp. Lives here (not
 // in a component) so the unavoidable `new Date()` clock read stays out of render
 // — React's purity lint forbids calling impure functions during a render pass.

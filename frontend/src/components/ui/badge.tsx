@@ -36,6 +36,28 @@ const badgeVariants = cva(
           'bg-[color-mix(in_srgb,var(--danger)_10%,var(--surface-1))] text-[var(--danger)]',
           'border-[color-mix(in_srgb,var(--danger)_45%,transparent)]',
         ],
+        // Filled — the heaviest weight, for a chip that outranks its neighbours
+        // (a ROLE like instance-admin, not a capability or a state). Use
+        // sparingly: everything filled is nothing filled.
+        solid: ['bg-[var(--accent)] text-[var(--accent-fg)]', 'border-transparent'],
+        // Positive / warning / negative on the semantic accent scale — for a
+        // value that sits somewhere on a good→bad range (a lifecycle label),
+        // where --accent would only say "interactive".
+        positive: [
+          'bg-[var(--accent-positive-soft)] text-[var(--accent-positive-fg)]',
+          'border-transparent',
+        ],
+        warning: [
+          'bg-[var(--accent-warning-soft)] text-[var(--accent-warning-fg)]',
+          'border-transparent',
+        ],
+        negative: [
+          'bg-[var(--accent-negative-soft)] text-[var(--accent-negative-fg)]',
+          'border-transparent',
+        ],
+        // Borderless muted text — for STATE that should be legible but never
+        // compete ('You', 'Deactivated').
+        ghost: ['bg-transparent text-[var(--text-muted)]', 'border-transparent px-0'],
       },
     },
     defaultVariants: {
