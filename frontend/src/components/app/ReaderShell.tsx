@@ -546,9 +546,9 @@ export function ReaderShell({
                 </div>
                 <div className="reader-prefs-group">
                   <span className="reader-prefs-label">Theme</span>
-                  {/* The shared control, not a copy: follow-system and its
-                      pairing dots have one implementation. */}
-                  <ThemeSwitcher />
+                  {/* The shared control, not a copy. Inline here: this menu is
+                      already an open panel, so there's nothing to collapse. */}
+                  <ThemeSwitcher inline />
                 </div>
               </div>
             </DropdownMenuContent>
