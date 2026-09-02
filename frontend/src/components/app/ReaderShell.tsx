@@ -17,13 +17,7 @@ import {
   stampHeadingIds,
   scrollToHashIn,
 } from '../../lib/markdown/heading-anchors'
-import {
-  getTheme,
-  setTheme,
-  subscribeToTheme,
-  THEMES,
-  type ThemeName,
-} from '../../lib/theme'
+import { ThemeSwitcher } from '../ThemeSwitcher'
 import { Button } from '../ui/button'
 import {
   DropdownMenu,
@@ -230,9 +224,6 @@ export function ReaderShell({
   const [font, setFont] = useState<ReaderFont>(() =>
     readPref<ReaderFont>(FONT_KEY, 'sans', ['sans', 'serif']),
   )
-  const [theme, setThemeState] = useState<ThemeName>(() => getTheme())
-  useEffect(() => subscribeToTheme(setThemeState), [])
-
   const minutes = useMemo(() => readingMinutes(body), [body])
 
   // `[[Name]]` resolution for MarkdownView, scoped to the reading context
@@ -555,22 +546,9 @@ export function ReaderShell({
                 </div>
                 <div className="reader-prefs-group">
                   <span className="reader-prefs-label">Theme</span>
-                  <ToggleGroup
-                    type="single"
-                    value={theme}
-                    onValueChange={(v) => {
-                      if (!v) return
-                      setTheme(v as ThemeName)
-                      setThemeState(v as ThemeName)
-                    }}
-                    aria-label="Theme"
-                  >
-                    {THEMES.map((t) => (
-                      <ToggleGroupItem key={t} value={t} className="capitalize">
-                        {t}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
+                  {/* The shared control, not a copy: follow-system and its
+                      pairing dots have one implementation. */}
+                  <ThemeSwitcher />
                 </div>
               </div>
             </DropdownMenuContent>

@@ -23,7 +23,6 @@ import {
 // Side effect: registers the 3 starter commands so the Registry story below
 // shows them populated.
 import '../../lib/commands/starters'
-import { getTheme, setTheme, type ThemeName } from '../../lib/theme'
 import type { Space } from '../../lib/types'
 import { Button } from './button'
 import {
@@ -300,17 +299,10 @@ export const ModalCommandsModeRegistry: Story = {
     const [subPicker, setSubPicker] = useState<CommandSubPicker | null>(null)
     const [searchRequest, setSearchRequest] =
       useState<{ value: string; nonce: number } | null>(null)
-    const [theme, setLocalTheme] = useState<ThemeName>(() => getTheme())
     const [log, setLog] = useState<string | null>(null)
 
     const ctx = useMemo<CommandContext>(
       () => ({
-        currentTheme: theme,
-        setTheme: (next) => {
-          setTheme(next)
-          setLocalTheme(next)
-          setLog(`Theme → ${next}`)
-        },
         spaces: SAMPLE_SPACES,
         navigateToSpace: (spaceId) => {
           setLog(
@@ -329,7 +321,7 @@ export const ModalCommandsModeRegistry: Story = {
         openSubPicker: (spec) => setSubPicker(spec),
         closePalette: () => setOpen(false),
       }),
-      [theme],
+      [],
     )
 
     const commandsItems = useMemo(() => materializeCommands(ctx), [ctx])

@@ -8,14 +8,11 @@
 
 import type { ReactNode } from 'react'
 import type { CommandItem } from '../components/ui/command'
-import type { ThemeName } from './theme'
 import type { Space } from './types'
 
 // What a command does, expressed in terms of its environment. Stays small on
 // purpose — extend deliberately as new starter commands need new affordances.
 export interface CommandContext {
-  currentTheme: ThemeName
-  setTheme: (next: ThemeName) => void
   spaces: Space[]
   navigateToSpace: (spaceId: number) => void
   // Switches the open palette into help mode without closing it.

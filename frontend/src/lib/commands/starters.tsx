@@ -2,28 +2,35 @@
 // future tasks add commands by registering them in their own module and
 // importing that module at app boot.
 
-import { Folder, FolderPlus, HelpCircle, MessageSquarePlus, Palette } from 'lucide-react'
+import {
+  Folder,
+  FolderPlus,
+  HelpCircle,
+  MessageSquarePlus,
+  MonitorCog,
+  Palette,
+} from 'lucide-react'
 import { registerCommand } from '../commands'
 import { emitOpenNewSpace } from '../newSpaceEvent'
 import { emitOpenFeedback } from '../feedbackEvent'
-import { THEMES, type ThemeName } from '../theme'
-
-// Cycle through THEMES in declaration order: light → dark → warm → light.
-function nextTheme(current: ThemeName): ThemeName {
-  const i = THEMES.indexOf(current)
-  if (i === -1) return THEMES[0]
-  return THEMES[(i + 1) % THEMES.length]
-}
+import { cycleTheme, followSystem } from '../theme'
 
 registerCommand({
   id: 'tela.toggle-theme',
   title: 'Toggle theme',
-  subtitle: 'Cycle light → dark → warm',
+  subtitle: 'Cycle light → dark → warm → system',
   icon: <Palette width={14} height={14} />,
   keywords: ['theme', 'appearance', 'dark', 'light', 'warm'],
-  run: (ctx) => {
-    ctx.setTheme(nextTheme(ctx.currentTheme))
-  },
+  run: () => cycleTheme(),
+})
+
+registerCommand({
+  id: 'tela.follow-system-theme',
+  title: 'Follow system theme',
+  subtitle: 'Track the OS light/dark preference',
+  icon: <MonitorCog width={14} height={14} />,
+  keywords: ['theme', 'system', 'auto', 'appearance', 'os', 'dark', 'light'],
+  run: () => followSystem(),
 })
 
 registerCommand({

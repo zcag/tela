@@ -13,12 +13,6 @@ import { router } from '../../routes/router'
 import { useTier3BodyHits } from '../../lib/useTier3BodyHits'
 import { bodyExcerpt } from '../../lib/search/body-excerpt'
 import {
-  getTheme,
-  setTheme,
-  subscribeToTheme,
-  type ThemeName,
-} from '../../lib/theme'
-import {
   materializeCommands,
   type CommandContext,
   type SubPickerSpec,
@@ -40,14 +34,6 @@ import { useCommandPaletteState } from '../../lib/useCommandPaletteState'
 import { pageHitToCommandItem, navigateToPage } from '../../lib/pageHitItem'
 
 const RECENTS_VISIBLE = 8
-
-// Reactive view of the active theme so commands that read currentTheme always
-// see the freshest value. Subscribes to setTheme() broadcasts.
-function useThemeName(): ThemeName {
-  const [theme, setLocal] = useState<ThemeName>(() => getTheme())
-  useEffect(() => subscribeToTheme(setLocal), [])
-  return theme
-}
 
 // Read current route context imperatively. AppCommandHost lives outside the
 // RouterProvider, so it can't use useParams; instead it reaches into the
@@ -128,7 +114,6 @@ export function AppCommandHost() {
   }>({ spaceId: null, parentId: null, title: '' })
   const [newSpaceOpen, setNewSpaceOpen] = useState(false)
 
-  const currentTheme = useThemeName()
   const spacesQuery = useSpaces()
   const spaces = spacesQuery.data ?? []
 
@@ -196,8 +181,6 @@ export function AppCommandHost() {
 
   const ctx = useMemo<CommandContext>(
     () => ({
-      currentTheme,
-      setTheme,
       spaces,
       navigateToSpace: (spaceId) => {
         void router.navigate({
@@ -220,7 +203,7 @@ export function AppCommandHost() {
       },
       closePalette: close,
     }),
-    [currentTheme, spaces, setSubPicker, pushSearchRequest, close],
+    [spaces, setSubPicker, pushSearchRequest, close],
   )
 
   // Recompute commandsItems whenever ctx changes so onSelect closures bind
