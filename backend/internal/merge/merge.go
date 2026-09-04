@@ -5,12 +5,14 @@
 // keep both sides as revisions and flag the page — it never writes <<< markers
 // into the content (those would corrupt the markdown and sync straight back).
 //
-// The algorithm is classic diff3: compute the LCS matching blocks of the base
-// against each side, turn the gaps into change regions, and walk them — a region
-// changed by only one side takes that side; a region both sides changed the same
-// way takes it once; a region both changed differently is a conflict that takes
-// the preferred side. Regions are merged only on true overlap (not adjacency),
-// so independent edits on neighbouring lines auto-merge instead of colliding.
+// The algorithm is classic diff3, anchored on SYNC REGIONS: LCS-match the base
+// against each side, intersect the two sets of matching blocks, and keep only
+// the runs both sides left untouched. Those are the splice points; each gap
+// between them is one change region with an exact span on all three sides. A
+// region changed by only one side takes that side; changed the same way by both
+// takes it once; changed differently is a conflict that takes the preferred
+// side. Anchoring on agreement (rather than on one side's hunk boundaries) is
+// what keeps independent edits on neighbouring lines from corrupting each other.
 package merge
 
 import (
@@ -60,79 +62,60 @@ func Merge3(base, current, incoming string, prefer Side) (string, []Conflict) {
 	a := splitLines(current)
 	b := splitLines(incoming)
 
-	atA := alignment(o, a)
-	atB := alignment(o, b)
-
-	hunks := append(diffRegions(o, a, 0), diffRegions(o, b, 1)...)
-	sort.Slice(hunks, func(i, j int) bool {
-		if hunks[i].baseLo != hunks[j].baseLo {
-			return hunks[i].baseLo < hunks[j].baseLo
-		}
-		if hunks[i].baseHi != hunks[j].baseHi {
-			return hunks[i].baseHi < hunks[j].baseHi // a pure insertion sorts before a change at the same point
-		}
-		return hunks[i].side < hunks[j].side
-	})
-
+	// Walk the sync regions — runs that survived unchanged into BOTH sides — and
+	// reconcile each gap between them. A gap is a change region whose extent is
+	// known exactly on all three sides, which is what makes the reconcile sound.
 	var out []string
 	var conflicts []Conflict
-	baseIdx := 0
-	for i := 0; i < len(hunks); {
-		lo, hi := hunks[i].baseLo, hunks[i].baseHi
-		j := i + 1
-		for j < len(hunks) && hunks[j].baseLo < hi { // strict: overlap, not adjacency
-			if hunks[j].baseHi > hi {
-				hi = hunks[j].baseHi
-			}
-			j++
-		}
-		out = append(out, o[baseIdx:lo]...) // stable run before the region
-
-		if j == i+1 {
-			// Exactly one hunk → only that side changed this region; the other side
-			// still matches base, so take this side's lines verbatim (using its own
-			// exact range, which is the only way to attribute an insertion to the
-			// right side when both sides insert at the same base position).
-			h := hunks[i]
-			if h.side == 0 {
-				out = append(out, a[h.sideLo:h.sideHi]...)
-			} else {
-				out = append(out, b[h.sideLo:h.sideHi]...)
-			}
-		} else {
-			// Overlapping change from both sides → reconcile the full region span.
-			// Region boundaries lo-1 and hi are stable in both sides, so the
-			// alignment maps them cleanly into each side's coordinates.
-			aLo, aHi := spanInOther(atA, lo, hi, len(a))
-			bLo, bHi := spanInOther(atB, lo, hi, len(b))
-			merged, conf := reconcile(o[lo:hi], a[aLo:aHi], b[bLo:bHi], prefer)
+	bi, ai, ii := 0, 0, 0
+	for _, sr := range syncRegions(o, a, b) {
+		if sr.base > bi || sr.cur > ai || sr.inc > ii {
+			merged, conf := reconcile(o[bi:sr.base], a[ai:sr.cur], b[ii:sr.inc], prefer)
 			out = append(out, merged...)
 			if conf != nil {
 				conflicts = append(conflicts, *conf)
 			}
 		}
-		baseIdx = hi
-		i = j
+		out = append(out, o[sr.base:sr.base+sr.size]...)
+		bi, ai, ii = sr.base+sr.size, sr.cur+sr.size, sr.inc+sr.size
 	}
-	out = append(out, o[baseIdx:]...) // trailing stable run
 
 	return strings.Join(out, "\n"), conflicts
 }
 
-// spanInOther maps a base region [lo,hi) — whose boundaries are stable in this
-// side — to the corresponding [start,end) range in other. The start sits just
-// after base[lo-1]'s aligned position (so insertions at lo are included); the
-// end is base[hi]'s aligned position (so insertions at hi, which belong to the
-// next region, are excluded).
-func spanInOther(at []int, lo, hi, otherLen int) (start, end int) {
-	if lo > 0 {
-		start = at[lo-1] + 1
+// syncRegion is a run of lines identical in base, current AND incoming — one
+// position all three agree on, and therefore the only safe place to splice.
+type syncRegion struct{ base, cur, inc, size int }
+
+// syncRegions intersects the base ranges of the (base,current) matching blocks
+// with those of (base,incoming), so only a run both sides kept becomes a
+// boundary. It closes with a zero-length sentinel at the three ends, so the
+// final change region is bounded like any other.
+//
+// ⚠️ The obvious alternative — diff each side into hunks, group the hunks that
+// overlap in base, then map the group's boundaries back into each side — is
+// what this replaced, and it silently corrupted merges: a group's boundary is
+// only stable in the side that produced it. A hunk from the other side ending
+// exactly where the group begins is adjacent, not overlapping, so it never
+// joined the group, and mapping through that side's alignment landed mid-hunk —
+// duplicating or dropping lines with NO conflict reported. Intersecting the
+// matching blocks is what makes a boundary true on both sides at once.
+func syncRegions(o, a, b []string) []syncRegion {
+	ma, mb := matchingBlocks(o, a), matchingBlocks(o, b)
+	var out []syncRegion
+	for i, j := 0, 0; i < len(ma) && j < len(mb); {
+		x, y := ma[i], mb[j]
+		lo, hi := max(x.bs, y.bs), min(x.bs+x.size, y.bs+y.size)
+		if lo < hi {
+			out = append(out, syncRegion{base: lo, cur: x.os + lo - x.bs, inc: y.os + lo - y.bs, size: hi - lo})
+		}
+		if x.bs+x.size < y.bs+y.size {
+			i++
+		} else {
+			j++
+		}
 	}
-	end = otherLen
-	if hi < len(at)-1 {
-		end = at[hi]
-	}
-	return start, end
+	return append(out, syncRegion{base: len(o), cur: len(a), inc: len(b)})
 }
 
 // reconcile decides one change region. curSeg is current's lines for the region,
@@ -145,56 +128,60 @@ func reconcile(baseSeg, curSeg, incSeg []string, prefer Side) ([]string, *Confli
 		return incSeg, nil // only incoming changed here
 	case equalLines(curSeg, incSeg):
 		return curSeg, nil // both made the same change
-	default:
-		conf := &Conflict{Current: cloneLines(curSeg), Incoming: cloneLines(incSeg)}
-		if prefer == PreferCurrent {
-			return curSeg, conf
-		}
-		return incSeg, conf
 	}
+	// Both sides changed this region — but the region only says they changed
+	// SOMEWHERE in it. Locate each side's edit exactly; when the two touch
+	// disjoint base lines they are independent and compose. That is what lets an
+	// edit on one line and an edit on the next auto-merge: they are adjacent, so
+	// no unchanged line separates them into regions of their own, yet neither
+	// overwrites the other. Two insertions at the same point compose too, in
+	// current-then-incoming order.
+	if out, ok := compose(baseSeg, curSeg, incSeg); ok {
+		return out, nil
+	}
+	conf := &Conflict{Current: cloneLines(curSeg), Incoming: cloneLines(incSeg)}
+	if prefer == PreferCurrent {
+		return curSeg, conf
+	}
+	return incSeg, conf
 }
 
-type region struct {
-	baseLo, baseHi int // range changed in base
-	sideLo, sideHi int // the corresponding range in this side (the replacement lines)
-	side           int // 0 = current, 1 = incoming
+// compose splices two edits that replace disjoint stretches of the same change
+// region, or reports that they overlap and must be conflicted instead.
+func compose(base, cur, inc []string) ([]string, bool) {
+	cLo, cHi, cRepl := locateEdit(base, cur)
+	iLo, iHi, iRepl := locateEdit(base, inc)
+	splice := func(aLo, aHi int, a []string, bLo, bHi int, b []string) []string {
+		out := make([]string, 0, len(base)+len(a)+len(b))
+		out = append(out, base[:aLo]...)
+		out = append(out, a...)
+		out = append(out, base[aHi:bLo]...)
+		out = append(out, b...)
+		return append(out, base[bHi:]...)
+	}
+	switch {
+	case cHi <= iLo:
+		return splice(cLo, cHi, cRepl, iLo, iHi, iRepl), true
+	case iHi <= cLo:
+		return splice(iLo, iHi, iRepl, cLo, cHi, cRepl), true
+	}
+	return nil, false
 }
 
-// diffRegions returns the base ranges where other differs from base (the
-// complement of the matching blocks), each tagged with its exact side range. A
-// pure insertion — other advanced while base did not — yields an empty base
-// range (baseLo == baseHi) with a non-empty side range.
-func diffRegions(base, other []string, side int) []region {
-	var regs []region
-	bi, oi := 0, 0
-	for _, blk := range matchingBlocks(base, other) {
-		if blk.bs > bi || blk.os > oi {
-			regs = append(regs, region{baseLo: bi, baseHi: blk.bs, sideLo: oi, sideHi: blk.os, side: side})
-		}
-		bi = blk.bs + blk.size
-		oi = blk.os + blk.size
+// locateEdit pins other's change against base: the half-open base range it
+// replaces and the lines it puts there. A pure insertion gives an empty range at
+// the insertion point.
+func locateEdit(base, other []string) (lo, hi int, repl []string) {
+	pre := 0
+	for pre < len(base) && pre < len(other) && base[pre] == other[pre] {
+		pre++
 	}
-	return regs
-}
-
-// alignment returns, for each base index 0..len(base), the aligned index in
-// other — so other[alignment[lo]:alignment[hi]] is the slice of other that
-// corresponds to base[lo:hi].
-func alignment(base, other []string) []int {
-	at := make([]int, len(base)+1)
-	bi, oi := 0, 0
-	for _, blk := range matchingBlocks(base, other) {
-		for ; bi < blk.bs; bi++ {
-			at[bi] = oi // unmatched base line aligns to the current other cursor
-		}
-		for k := 0; k < blk.size; k++ {
-			at[bi] = blk.os + k
-			bi++
-		}
-		oi = blk.os + blk.size
+	suf := 0
+	for suf < len(base)-pre && suf < len(other)-pre &&
+		base[len(base)-1-suf] == other[len(other)-1-suf] {
+		suf++
 	}
-	at[len(base)] = len(other)
-	return at
+	return pre, len(base) - suf, other[pre : len(other)-suf]
 }
 
 type block struct {
@@ -203,17 +190,86 @@ type block struct {
 
 // matchingBlocks groups the LCS pairs of base and other into maximal contiguous
 // runs and appends a zero-length sentinel at (len(base), len(other)).
+//
+// The common prefix and suffix are matched OUTRIGHT, before the LCS ever runs.
+// That is not only the cheap win it looks like (the O(n*m) DP then sees just the
+// middle) — it is a correctness one. LCS is ambiguous over repeated lines, and
+// tela's inputs are markdown: runs of blank lines and near-identical bullets.
+// Merge3 intersects the (base,current) and (base,incoming) block sets, so the
+// two must agree on WHERE an edit sits or a sync region is lost and the merge
+// silently drops or duplicates a line. Anchoring both ends first removes most of
+// that freedom and makes the two alignments agree far more often.
 func matchingBlocks(base, other []string) []block {
-	pairs := lcsPairs(base, other)
+	pre := 0
+	for pre < len(base) && pre < len(other) && base[pre] == other[pre] {
+		pre++
+	}
+	suf := 0
+	for suf < len(base)-pre && suf < len(other)-pre &&
+		base[len(base)-1-suf] == other[len(other)-1-suf] {
+		suf++
+	}
+
 	var blocks []block
-	for _, p := range pairs {
-		if n := len(blocks); n > 0 && blocks[n-1].bs+blocks[n-1].size == p.x && blocks[n-1].os+blocks[n-1].size == p.y {
-			blocks[n-1].size++
-		} else {
-			blocks = append(blocks, block{bs: p.x, os: p.y, size: 1})
+	add := func(bs, os, size int) {
+		if size == 0 {
+			return
+		}
+		if n := len(blocks); n > 0 && blocks[n-1].bs+blocks[n-1].size == bs && blocks[n-1].os+blocks[n-1].size == os {
+			blocks[n-1].size += size
+			return
+		}
+		blocks = append(blocks, block{bs: bs, os: os, size: size})
+	}
+	add(0, 0, pre)
+	for _, p := range lcsPairs(base[pre:len(base)-suf], other[pre:len(other)-suf]) {
+		add(pre+p.x, pre+p.y, 1)
+	}
+	add(len(base)-suf, len(other)-suf, suf)
+	// Slide with the end sentinel in place, so a gap that runs to EOF is
+	// canonicalized like any other; slideBlocks drops it again if it stayed empty.
+	blocks = append(blocks, block{bs: len(base), os: len(other), size: 0})
+	blocks = slideBlocks(base, other, blocks)
+	return append(blocks, block{bs: len(base), os: len(other), size: 0})
+}
+
+// slideBlocks canonicalizes an alignment by pushing every one-sided gap as EARLY
+// as it can go through the identical lines around it, then drops the runs that
+// emptied out. LCS leaves a deletion inside a run of identical lines free to sit
+// anywhere in that run, and Merge3 intersects two independently-computed
+// alignments — so when current and incoming each delete one line from the same
+// run of blank lines or repeated bullets and the two alignments park that
+// deletion at different ends, the intersection reads it as two unrelated
+// deletions and applies BOTH, silently losing a line neither side removed.
+// Sliding both alignments to the same canonical end makes the shared edit
+// coincide, so reconcile sees "both made the same change" and applies it once.
+// (Same reason git's xdiff compacts its hunks.)
+func slideBlocks(base, other []string, blocks []block) []block {
+	for k := 0; k+1 < len(blocks); k++ {
+		for blocks[k].size > 0 {
+			be := blocks[k].bs + blocks[k].size
+			oe := blocks[k].os + blocks[k].size
+			n := &blocks[k+1]
+			pureDelete := oe == n.os && be < n.bs && base[be-1] == base[n.bs-1]
+			pureInsert := be == n.bs && oe < n.os && other[oe-1] == other[n.os-1]
+			if !pureDelete && !pureInsert {
+				break
+			}
+			// Hand the last matched pair of this run to the next one: the gap
+			// keeps its length and its content, it just sits one line earlier.
+			blocks[k].size--
+			n.bs--
+			n.os--
+			n.size++
 		}
 	}
-	return append(blocks, block{bs: len(base), os: len(other), size: 0})
+	kept := blocks[:0]
+	for _, b := range blocks {
+		if b.size > 0 {
+			kept = append(kept, b)
+		}
+	}
+	return kept
 }
 
 type pair struct{ x, y int }
