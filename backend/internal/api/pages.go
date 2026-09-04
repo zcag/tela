@@ -987,7 +987,7 @@ func (s *Server) deletePageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 			SELECT p.id FROM pages p JOIN subtree s ON p.parent_id = s.id
 		)`
 	rows, err := tx.QueryContext(ctx, subtreeCTE+`
-		UPDATE pages SET deleted_at = tela_now()
+		UPDATE pages SET deleted_at = tela_now(), deleted_root_id = $1
 		 WHERE id IN (SELECT id FROM subtree) AND deleted_at IS NULL
 		 RETURNING id`, id)
 	if err != nil {

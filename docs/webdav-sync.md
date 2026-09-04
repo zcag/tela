@@ -94,12 +94,33 @@ flagged for review, and the overridden server version is kept as a revision
 (`source = sync-conflict`) — nothing is ever lost. Merge is line-based, so
 edits on adjacent lines may be treated as one conflicting block.
 
+The merge anchors on runs of lines that **both** sides left untouched, and slides
+both alignments to a canonical position first. That matters for markdown, which
+is full of blank lines and near-identical bullets: with only one side's diff
+boundaries to go on, an edit inside such a run can be attributed to the wrong
+place and the merge then drops or duplicates a line **without reporting a
+conflict**. That was the behaviour until 2026-09-04. A residue of genuine
+ambiguity remains — when both sides edit the same run of identical lines, where
+the surviving copies sit is not determined — but it no longer changes which
+lines survive.
+
 Merging is independent of how your client *shapes* the write: `rclone bisync
 --conflict-loser delete` resolves a both-sides edit as DELETE(loser) +
 PUT(winner), which lands on the resurrect path (the file carries the page's
 `id:`, so the trashed page comes back) — that merges too. It did not until
 2026-09-01: it applied the incoming file blind, so that flag combination turned
 the documented merge into silent last-write-wins.
+
+⚠️ **A page with sub-pages is `<page>.md` NEXT TO a `<page>/` directory, and a
+delete of the file takes the directory's pages with it** — deleting a page
+deletes its subtree, and the sync surface has no way to say "just this one". So
+that DELETE(loser) + PUT(winner) pair used to trash every sub-page and bring
+back only the parent, silently, with no trash view to notice it in. Since
+2026-09-04 a delete records which delete took each row (`pages.deleted_root_id`,
+migration 0080) and the resurrect restores that whole set, so the pair is
+lossless again. A sub-page you deleted **on its own** carries a different root
+and stays deleted. Pages trashed before 0080 have no root recorded and still
+resurrect alone.
 
 > **First-edit caveat:** the merge needs a *base* (what your client last sent).
 > A page created in the app and edited locally **before your client has ever

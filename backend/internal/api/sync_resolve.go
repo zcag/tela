@@ -141,8 +141,9 @@ func (s *Server) applySyncResurrect(
 	defer tx.Rollback()
 
 	var curSpace int64
+	var curDeletedAt string
 	err = tx.QueryRowContext(ctx,
-		`SELECT space_id FROM pages WHERE id = $1 AND deleted_at IS NOT NULL`, id).Scan(&curSpace)
+		`SELECT space_id, deleted_at FROM pages WHERE id = $1 AND deleted_at IS NOT NULL`, id).Scan(&curSpace, &curDeletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Page{}, "", false, nil // not trashed → caller creates fresh
 	}
@@ -153,9 +154,8 @@ func (s *Server) applySyncResurrect(
 		return models.Page{}, "", true, ae // auth fail → rollback leaves it trashed
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE pages SET deleted_at = NULL, updated_at = tela_now() WHERE id = $1`, id); err != nil {
-		return models.Page{}, "", true, &apiErr{http.StatusInternalServerError, "internal", "resurrect failed"}
+	if ae := resurrectCascadeTx(ctx, tx, id, curDeletedAt); ae != nil {
+		return models.Page{}, "", true, ae
 	}
 	cur, err := selectPageByIDTx(ctx, tx, id) // now live (own write)
 	if err != nil {
@@ -213,6 +213,75 @@ func (s *Server) applySyncResurrect(
 	// differs (DB-wins, like any sync write).
 	s.afterPageWrite(ctx, cur, p, true, true, u.ID, "sync")
 	return p, syncResurrected, true, nil
+}
+
+// resurrectCascadeTx un-trashes the page AND every descendant that went down
+// with it. deletePageCore stamps deleted_root_id on every row one delete takes,
+// so that column names exactly the set to bring back — a descendant trashed
+// separately, by its own delete, carries a different root and stays trashed.
+// (deleted_at cannot stand in for this: tela_now() has second resolution, so two
+// deletes in the same second are indistinguishable by timestamp.) A page trashed
+// before migration 0080 has no root recorded, so it resurrects alone, as before.
+//
+// This is what makes rclone bisync's conflict shape non-destructive. bisync
+// resolves a both-sides edit as DELETE(loser) + PUT(winner) on `<page>.md`, and
+// in tela's WebDAV projection a page with children is `<page>.md` NEXT TO a
+// `<page>/` directory — so the DELETE cascades to sub-pages that are separate
+// files the client never touched, while the PUT brought back only the page
+// itself. Every sync conflict on a page with children silently trashed the whole
+// subtree, and with no trash surface there was nothing to notice it in.
+func resurrectCascadeTx(ctx context.Context, tx *sql.Tx, id int64, deletedAt string) *apiErr {
+	const subtreeCTE = `
+		WITH RECURSIVE subtree(id) AS (
+			SELECT id FROM pages WHERE id = $1
+			UNION ALL
+			SELECT p.id FROM pages p JOIN subtree s ON p.parent_id = s.id
+		)`
+	fail := func(msg string) *apiErr { return &apiErr{http.StatusInternalServerError, "internal", msg} }
+
+	rows, err := tx.QueryContext(ctx, subtreeCTE+`
+		UPDATE pages SET deleted_at = NULL, deleted_root_id = NULL, updated_at = tela_now()
+		 WHERE id IN (SELECT id FROM subtree)
+		   AND (id = $1 OR deleted_root_id = $1)
+		 RETURNING id, body`, id)
+	if err != nil {
+		return fail("resurrect failed")
+	}
+	type restored struct {
+		id   int64
+		body string
+	}
+	var back []restored
+	for rows.Next() {
+		var r restored
+		if err := rows.Scan(&r.id, &r.body); err != nil {
+			rows.Close()
+			return fail("resurrect: scan restored id failed")
+		}
+		back = append(back, r)
+	}
+	rerr := rows.Err()
+	rows.Close() // must close before the next Exec on this tx (single-conn cursor)
+	if rerr != nil {
+		return fail("resurrect: read restored ids failed")
+	}
+
+	// The cascade HARD-deleted page_links for the whole subtree (that is the
+	// documented deal: a trashed page stops contributing backlinks, and a
+	// resurrect rebuilds them from the body). Rebuild every restored page's, not
+	// just the root's, or the sub-pages come back with their outgoing links gone.
+	for _, r := range back {
+		if err := syncPageLinks(ctx, tx, r.id, r.body); err != nil {
+			return fail("resurrect: rebuild page_links failed")
+		}
+	}
+	// Attachments were soft-deleted in the same instant; bring back that set too.
+	if _, err := tx.ExecContext(ctx, subtreeCTE+`
+		UPDATE space_files SET deleted_at = NULL
+		 WHERE parent_page_id IN (SELECT id FROM subtree) AND deleted_at = $2`, id, deletedAt); err != nil {
+		return fail("resurrect: restore attachments failed")
+	}
+	return nil
 }
 
 // applySyncBound applies an incoming file to the existing page it is bound to.
