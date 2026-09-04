@@ -3,8 +3,8 @@ import * as Y from 'yjs'
 import { Awareness, removeAwarenessStates } from 'y-protocols/awareness'
 import { computeIsLeader } from './use-leader-election'
 
-// Mirrors useCollabSession: the session seeds local awareness at construction,
-// which is what makes this peer visible to leader election at all.
+// Mirrors useCollabSession: the session seeds local awareness once its mount
+// effect claims it, which is what makes this peer visible to leader election.
 function seededAwareness(): Awareness {
   const aw = new Awareness(new Y.Doc())
   aw.setLocalState({})
@@ -49,5 +49,47 @@ describe('computeIsLeader', () => {
 
   it('is not leader with no awareness at all (non-collab path)', () => {
     expect(computeIsLeader(null)).toBe(false)
+  })
+
+  it('skips an unidentified peer even when it sorts lowest', () => {
+    // The orphan case: a provider from a discarded render sits in the room with
+    // a bare {} state and no editor behind it. Electing it (lowest clientID
+    // wins) made the real editor a permanent non-leader — every keystroke went
+    // to the Yjs overlay and pages.body was never PATCHed again, so view mode
+    // silently froze while edit mode looked right.
+    const states: Array<[number, unknown]> = [
+      [10, {}],
+      [20, { user: { id: 1, username: 'cagdassalur' } }],
+    ]
+    const us = {
+      clientID: 20,
+      getStates: () => new Map(states),
+    } as unknown as Awareness
+    expect(computeIsLeader(us)).toBe(true)
+  })
+
+  it('elects the lowest identified peer when several have editors', () => {
+    const states: Array<[number, unknown]> = [
+      [10, {}],
+      [20, { user: { id: 1 } }],
+      [30, { user: { id: 2 } }],
+    ]
+    const mk = (clientID: number) =>
+      ({ clientID, getStates: () => new Map(states) }) as unknown as Awareness
+    expect(computeIsLeader(mk(20))).toBe(true)
+    expect(computeIsLeader(mk(30))).toBe(false)
+  })
+
+  it('falls back to all peers while nobody has identified yet', () => {
+    // The beat between the awareness seed and PageView's user seed: no `user`
+    // anywhere. Erring toward a leader keeps the room from going saveless.
+    const states: Array<[number, unknown]> = [
+      [10, {}],
+      [20, {}],
+    ]
+    const mk = (clientID: number) =>
+      ({ clientID, getStates: () => new Map(states) }) as unknown as Awareness
+    expect(computeIsLeader(mk(10))).toBe(true)
+    expect(computeIsLeader(mk(20))).toBe(false)
   })
 })

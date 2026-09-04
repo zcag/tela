@@ -109,7 +109,12 @@ export class TelaProvider {
     this.pageShowHandler = () => {
       if (this.destroyed) return
       if (this.awareness.getLocalState() != null) return
-      this.awareness.setLocalState(this.localStateBeforeHide ?? {})
+      // Restore only a state we actually captured. A provider that was never
+      // seeded has no presence to bring back, and reviving it as a bare `{}`
+      // would put a peer with no editor behind it into the awareness map —
+      // exactly the orphan leader election must never pick (session-reaper.ts).
+      if (this.localStateBeforeHide == null) return
+      this.awareness.setLocalState(this.localStateBeforeHide)
       this.localStateBeforeHide = null
     }
     window.addEventListener('pagehide', this.pageHideHandler)

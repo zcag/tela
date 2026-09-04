@@ -3,6 +3,7 @@ import * as Y from 'yjs'
 import { TelaProvider, type TelaProviderStatus } from './tela-provider'
 import { useLeaderElection } from './use-leader-election'
 import { useDiagramEditors } from './use-awareness'
+import { claimSession, trackUnclaimed } from './session-reaper'
 
 // Owns the live-collab session for one editor: the Y.Doc + provider, the
 // connection status, leader election, and per-diagram presence. Extracted from
@@ -60,13 +61,33 @@ export function useCollabSession(
   const ref = useRef<CollabSession | null>(null)
   if (collabPageId != null && ref.current == null) {
     const created = createProvider(collabPageId)
-    // Seed local awareness so this peer is visible in the awareness map and
-    // leader election can claim leadership — without it getStates() is empty
-    // and no save would ever fire. (Provider-agnostic, so every factory gets it.)
-    created.provider.awareness.setLocalState({})
+    // Building a provider here opens a ws from a render React may still throw
+    // away, and only a mounted component ever runs the teardown effect below.
+    // Park it with the reaper until the claim effect proves this render
+    // committed; see session-reaper.ts for what the orphans do to saves.
+    trackUnclaimed(created)
     ref.current = created
   }
   const session = ref.current
+
+  // Claim the render-built session, and only NOW make this peer visible to the
+  // room. Seeding awareness at construction time is what let an orphan into the
+  // awareness map at all — and a bare `{}` entry with a low clientID wins
+  // leader election, so the room's designated saver becomes a provider with no
+  // editor behind it and pages.body stops being written. An unclaimed session
+  // seeds nothing and therefore can never be elected.
+  useEffect(() => {
+    if (!session) return
+    // A false claim is either StrictMode re-running this effect (provider still
+    // alive — seed again, setLocalState is idempotent) or a commit so late the
+    // reaper already fired, in which case there is nothing left to seed.
+    if (!claimSession(session) && session.provider.isDestroyed()) return
+    // Must precede the onReady effect: setLocalStateField MERGES into the
+    // existing state and is a silent no-op while it is null, so PageView's
+    // `user` seeding would be dropped without this `{}` landing first.
+    session.provider.awareness.setLocalState({})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [status, setStatus] = useState<TelaProviderStatus>(
     () => session?.provider.getStatus() ?? 'connected',
