@@ -305,7 +305,7 @@ export function useCreatePage() {
 // Dynamic-imports the body-index module so it stays out of the main chunk
 // for users who never PATCH a page or open the palette. Vite caches the
 // module after first load, so subsequent calls are O(1).
-function notifyBodyIndexUpdate(page: Page): void {
+export function notifyBodyIndexUpdate(page: Page): void {
   void import('../search/body-index').then((m) => {
     m.bodyIndexUpdateOneShim(page)
   })

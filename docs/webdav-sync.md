@@ -115,7 +115,9 @@ the documented merge into silent last-write-wins.
 delete of the file takes the directory's pages with it** — deleting a page
 deletes its subtree, and the sync surface has no way to say "just this one". So
 that DELETE(loser) + PUT(winner) pair used to trash every sub-page and bring
-back only the parent, silently, with no trash view to notice it in. Since
+back only the parent — silently, and at the time nothing listed a deleted page,
+so there was nowhere to notice it (a space's **Trash** tab now shows them, and
+restores one with its sub-pages). Since
 2026-09-04 a delete records which delete took each row (`pages.deleted_root_id`,
 migration 0080) and the resurrect restores that whole set, so the pair is
 lossless again. A sub-page you deleted **on its own** carries a different root

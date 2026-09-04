@@ -5,25 +5,32 @@ import {
   Copy,
   FileText,
   Folder,
+  RotateCcw,
   ShieldAlert,
+  Trash2,
   Unlink,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { Button } from '../ui/button'
 import { EmptyState } from '../ui/empty-state'
 import { useSpaceOverview } from '../../lib/queries/space-overview'
 import { useSpaces } from '../../lib/queries/spaces'
+import { useRestorePage, useSpaceTrash, type TrashEntry } from '../../lib/queries/space-trash'
 import { FollowButton } from './FollowButton'
 import { navigateToPage } from '../../lib/pageHitItem'
 import { relativeTimeFromSqlite } from '../../lib/relativeTime'
 import { cn } from '../../lib/utils'
 
-// The per-space landing (fills the old "select a page" placeholder). Two tabs:
-// Overview — a content-first hub (top-level pages + recent activity); and Health —
-// the per-space maintenance worklist (disputes, review-overdue, orphans, dupes).
-// Read-only: every row just navigates; nothing here authors.
+// The per-space landing (fills the old "select a page" placeholder). Three tabs:
+// Overview — a content-first hub (top-level pages + recent activity); Health —
+// the per-space maintenance worklist (disputes, review-overdue, orphans, dupes);
+// and Trash — deleted pages, with the one write on this screen: Restore. Nothing
+// here authors otherwise; every other row just navigates.
 export function SpaceView({ spaceId }: { spaceId: number }) {
   const { data, isLoading } = useSpaceOverview(spaceId)
   const spacesQuery = useSpaces()
+  const trash = useSpaceTrash(spaceId)
+  const restore = useRestorePage()
   const spaceName = useMemo(
     () => spacesQuery.data?.find((s) => s.id === spaceId)?.name ?? 'Space',
     [spacesQuery.data, spaceId],
@@ -63,6 +70,16 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
                 {problems > 0 ? (
                   <span className="inline-flex items-center justify-center min-w-[var(--space-5)] h-[var(--space-5)] px-[var(--space-1)] rounded-full text-[length:var(--text-xs)] bg-[color-mix(in_oklch,var(--danger)_18%,transparent)] text-[var(--danger)]">
                     {problems}
+                  </span>
+                ) : null}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="trash">
+              <span className="inline-flex items-center gap-[var(--space-2)]">
+                Trash
+                {trash.data && trash.data.length > 0 ? (
+                  <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+                    {trash.data.length}
                   </span>
                 ) : null}
               </span>
@@ -196,6 +213,48 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
               </>
             )}
           </TabsContent>
+
+          {/* ---- Trash ---- */}
+          <TabsContent value="trash" className="flex flex-col gap-[var(--space-4)]">
+            {trash.isLoading ? (
+              <Skeleton />
+            ) : !trash.data || trash.data.length === 0 ? (
+              <EmptyState
+                icon={Trash2}
+                title="Nothing deleted"
+                description="Deleted pages come here instead of disappearing, and can be put back."
+              />
+            ) : (
+              <Section title="Deleted pages" icon={Trash2}>
+                <List>
+                  {trash.data.map((e) => (
+                    <Row
+                      key={e.id}
+                      icon={Trash2}
+                      title={e.title || 'Untitled'}
+                      meta={trashMeta(e)}
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={restore.isPending}
+                          onClick={() => restore.mutate({ id: e.id, spaceId })}
+                        >
+                          <RotateCcw width={13} height={13} aria-hidden />
+                          {restore.isPending && restore.variables?.id === e.id
+                            ? 'Restoring…'
+                            : 'Restore'}
+                        </Button>
+                      }
+                    />
+                  ))}
+                </List>
+                {restore.isError ? (
+                  <Muted>Could not restore that page — reload and try again.</Muted>
+                ) : null}
+              </Section>
+            )}
+          </TabsContent>
         </Tabs>
       </div>
     </div>
@@ -239,50 +298,80 @@ function Row({
   meta,
   tone,
   onSelect,
+  action,
 }: {
   icon: typeof FileText
   title: string
   meta?: string
   tone?: 'danger' | 'warning'
-  onSelect: () => void
+  // Omitted when the row names something there is nothing to open — a deleted
+  // page. The row then renders inert rather than as a dead button.
+  onSelect?: () => void
+  action?: React.ReactNode
 }) {
-  return (
-    <li className="m-0 p-0 list-none">
-      <button
-        type="button"
-        onClick={onSelect}
-        className={cn(
-          'group w-full text-left flex items-center gap-[var(--space-3)]',
-          'px-[var(--space-3)] py-[var(--space-2)] rounded-[var(--radius-sm)]',
-          'bg-transparent border-0 cursor-pointer outline-none',
-          'hover:bg-[var(--surface-2)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-        )}
-      >
-        <Icon
-          width={14}
-          height={14}
-          aria-hidden
-          className="shrink-0"
-          style={{
-            color:
-              tone === 'danger'
-                ? 'var(--danger)'
-                : tone === 'warning'
-                  ? 'var(--warning)'
-                  : 'var(--text-muted)',
-          }}
-        />
-        <span className="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-[var(--text-primary)] font-medium font-[family-name:var(--font-sans)]">
-          {title}
+  const inner = (
+    <>
+      <Icon
+        width={14}
+        height={14}
+        aria-hidden
+        className="shrink-0"
+        style={{
+          color:
+            tone === 'danger'
+              ? 'var(--danger)'
+              : tone === 'warning'
+                ? 'var(--warning)'
+                : 'var(--text-muted)',
+        }}
+      />
+      <span className="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-[var(--text-primary)] font-medium font-[family-name:var(--font-sans)]">
+        {title}
+      </span>
+      {meta ? (
+        <span className="shrink-0 text-[length:var(--text-xs)] text-[var(--text-muted)] font-[family-name:var(--font-sans)]">
+          {meta}
         </span>
-        {meta ? (
-          <span className="shrink-0 text-[length:var(--text-xs)] text-[var(--text-muted)] font-[family-name:var(--font-sans)]">
-            {meta}
-          </span>
-        ) : null}
-      </button>
+      ) : null}
+    </>
+  )
+  // The hover tint lives on the <li> so it covers the action too, and so the
+  // action can be a real sibling button rather than nested inside one.
+  const body = cn(
+    'flex-1 min-w-0 text-left flex items-center gap-[var(--space-3)]',
+    'px-[var(--space-3)] py-[var(--space-2)] rounded-[var(--radius-sm)]',
+    'bg-transparent border-0 outline-none',
+  )
+  return (
+    <li
+      className={cn(
+        'group m-0 p-0 list-none flex items-center gap-[var(--space-2)]',
+        'rounded-[var(--radius-sm)] hover:bg-[var(--surface-2)]',
+      )}
+    >
+      {onSelect ? (
+        <button
+          type="button"
+          onClick={onSelect}
+          className={cn(body, 'cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--accent)]')}
+        >
+          {inner}
+        </button>
+      ) : (
+        <div className={body}>{inner}</div>
+      )}
+      {action ? <span className="shrink-0 pr-[var(--space-2)]">{action}</span> : null}
     </li>
   )
+}
+
+// "deleted 2 hours ago · 3 sub-pages · in Onboarding" — enough to tell two
+// same-named pages apart and to see what a restore will bring back with it.
+function trashMeta(e: TrashEntry): string {
+  const bits = [`deleted ${relativeTimeFromSqlite(e.deleted_at)}`]
+  if (e.sub_pages > 0) bits.push(`${e.sub_pages} sub-page${e.sub_pages === 1 ? '' : 's'}`)
+  if (e.parent_title) bits.push(`in ${e.parent_title}`)
+  return bits.join(' · ')
 }
 
 function Muted({ children }: { children: React.ReactNode }) {
