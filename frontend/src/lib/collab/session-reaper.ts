@@ -29,11 +29,14 @@ export interface ReapableSession {
   provider: { destroy(): void }
 }
 
-// Generous on purpose: an unclaimed session is now invisible to the room (it
-// seeds no awareness until claimed, see useCollabSession), so the only cost of
-// waiting is an idle socket. Reaping a session whose commit was merely slow
-// would be the worse failure — it would leave a mounted editor bound to a dead
-// provider.
+// This window is also how long an orphan can be SEEN by the room, and that is
+// not free: y-protocols' Awareness seeds its own `{}` local state in the
+// constructor and renews the clock every 15s, and TelaProvider forwards that
+// renewal, so an unclaimed provider with an open ws is in every peer's map for
+// most of the grace. What makes it harmless is leader election skipping peers
+// with no `user` (use-leader-election.ts). The grace stays long because the
+// opposite failure is worse: reaping a session whose commit was merely slow
+// leaves a mounted editor bound to a dead provider.
 const UNCLAIMED_GRACE_MS = 30_000
 
 const pending = new Map<ReapableSession, ReturnType<typeof setTimeout>>()

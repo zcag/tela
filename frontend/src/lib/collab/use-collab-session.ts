@@ -70,24 +70,20 @@ export function useCollabSession(
   }
   const session = ref.current
 
-  // Claim the render-built session, and only NOW make this peer visible to the
-  // room. Seeding awareness at construction time is what let an orphan into the
-  // awareness map at all — and a bare `{}` entry with a low clientID wins
-  // leader election, so the room's designated saver becomes a provider with no
-  // editor behind it and pages.body stops being written. An unclaimed session
-  // seeds nothing and therefore can never be elected.
+  // Claim the render-built session so the reaper spares it. Keyed on `session`
+  // and NOT on [] — the ref can be refilled after this effect has already run:
+  // StrictMode's mount → cleanup → mount destroys the first provider and nulls
+  // the ref, and the next render builds a second one (a suspend-after-mount or
+  // an Activity reveal does the same). A []-claim never sees that replacement,
+  // so the reaper would destroy the LIVE provider 30s into the session.
+  //
+  // No awareness seed here: y-protocols' Awareness constructor already calls
+  // setLocalState({}) itself, so a provider is in its own map — and, once its
+  // 15s clock renewal broadcasts, in every peer's map — from construction.
+  // Deferring a seed cannot keep an orphan out of the room; reaping it can.
   useEffect(() => {
-    if (!session) return
-    // A false claim is either StrictMode re-running this effect (provider still
-    // alive — seed again, setLocalState is idempotent) or a commit so late the
-    // reaper already fired, in which case there is nothing left to seed.
-    if (!claimSession(session) && session.provider.isDestroyed()) return
-    // Must precede the onReady effect: setLocalStateField MERGES into the
-    // existing state and is a silent no-op while it is null, so PageView's
-    // `user` seeding would be dropped without this `{}` landing first.
-    session.provider.awareness.setLocalState({})
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    if (session) claimSession(session)
+  }, [session])
 
   const [status, setStatus] = useState<TelaProviderStatus>(
     () => session?.provider.getStatus() ?? 'connected',

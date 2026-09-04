@@ -103,7 +103,14 @@ export class TelaProvider {
     // session — leaving the awareness map empty, the peer permanently
     // non-leader, and its edits never PATCHed back to pages.body.
     this.pageHideHandler = () => {
-      this.localStateBeforeHide = this.awareness.getLocalState()
+      // Capture only a state we actually have. `pagehide` can fire again with
+      // no `pageshow` between (a second background transition), and overwriting
+      // the captured state with null would leave the restore below with nothing
+      // to put back — stranding this peer outside the awareness map for the
+      // rest of the session, i.e. permanently non-leader whenever another peer
+      // is present, which is the very failure this pair exists to prevent.
+      const local = this.awareness.getLocalState()
+      if (local != null) this.localStateBeforeHide = local
       this.sendAwarenessRemoval()
     }
     this.pageShowHandler = () => {

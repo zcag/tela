@@ -16,25 +16,26 @@ import type { Awareness } from 'y-protocols/awareness'
 // Fall-back rules:
 //   - awareness is null (no collab session) → false. Callers gate the
 //     non-collab path differently (legacy single-author path is unconditional).
-//   - awareness map is empty → TRUE (claim leadership). Our own entry lands in
-//     the map when useCollabSession's mount effect seeds it, so "empty" means
-//     either that we have not mounted yet, or that our entry was REMOVED —
-//     which TelaProvider does on `pagehide`. y-protocols only re-pings a local
-//     state that still exists, so nothing ever puts it back on its own: the
-//     peer stayed a non-leader forever, silently stopped PATCHing pages.body,
-//     and every later keystroke lived only in the Yjs overlay until an agent
-//     write dropped it. Erring toward "not leader" trades a wasted duplicate
+//   - awareness map is empty → TRUE (claim leadership). Our own entry is there
+//     from construction (y-protocols' Awareness constructor calls
+//     setLocalState({}) itself), so "empty" does not mean "not ready" — it
+//     means our entry was REMOVED, which TelaProvider does on `pagehide`.
+//     y-protocols only re-pings a local state that still exists, so nothing
+//     ever puts it back on its own: the peer stayed a non-leader forever,
+//     silently stopped PATCHing pages.body, and every later keystroke lived
+//     only in the Yjs overlay until an agent write dropped it. Erring toward "not leader" trades a wasted duplicate
 //     save (harmless — last-write-wins on identical serialized markdown) for
 //     total data loss, so the fallback points the other way.
 //   - a peer with no `user` in its state is skipped, unless nobody in the room
 //     has identified yet. `user` is seeded once an editor has actually mounted
 //     (PageView / CollabGrid), so a bare `{}` entry is a socket in the room
 //     with no editor behind it — an orphan from a render React discarded
-//     (session-reaper.ts). This build no longer produces one, but a peer on
-//     another device still running the old bundle can, and electing it ends
-//     every write to pages.body with nothing to show for it. The
-//     nobody-identified fallback covers the beat between the awareness seed
-//     and the user seed, so the room is never leaderless.
+//     (session-reaper.ts). This build reaps its own orphans, but only after a
+//     grace window, and a peer on another device still running the old bundle
+//     keeps one for the life of its tab; electing either ends every write to
+//     pages.body with nothing to show for it. The nobody-identified fallback
+//     covers the beat between construction and the user seed, so the room is
+//     never leaderless.
 //
 // Multi-tab: the awareness wire-bridge (#65) means peers do see each other, so
 // two tabs on one page elect a single saver between them rather than both

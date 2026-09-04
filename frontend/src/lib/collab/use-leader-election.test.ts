@@ -3,8 +3,9 @@ import * as Y from 'yjs'
 import { Awareness, removeAwarenessStates } from 'y-protocols/awareness'
 import { computeIsLeader } from './use-leader-election'
 
-// Mirrors useCollabSession: the session seeds local awareness once its mount
-// effect claims it, which is what makes this peer visible to leader election.
+// Mirrors a live session: Awareness seeds its own `{}` local state in the
+// constructor, which is what makes this peer visible to leader election. The
+// explicit call below is that same seed, spelled out.
 function seededAwareness(): Awareness {
   const aw = new Awareness(new Y.Doc())
   aw.setLocalState({})
