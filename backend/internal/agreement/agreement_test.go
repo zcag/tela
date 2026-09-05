@@ -6,43 +6,66 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zcag/tela/backend/internal/rag"
 	"github.com/zcag/tela/backend/internal/testdb"
 )
 
-func TestParseVerdicts(t *testing.T) {
-	neighbors := []rag.Neighbor{
-		{PageID: 10, Title: "Deploy runbook"},
-		{PageID: 11, Title: "Old deploy notes"},
-		{PageID: 12, Title: "Unrelated thing"},
-		{PageID: 13, Title: "Backup policy"},
+func TestParsePairVerdict(t *testing.T) {
+	cases := []struct{ name, out, want string }{
+		{"plain", "contradict|report service port|8090|2480|two ports for one service", "contradict"},
+		{"header echoed back", "verdict|contradict|port|8090|2480|two ports", "contradict"},
+		{"preamble and a fence", "Here is my answer:\n```\nagree|auth backend|||same LDAP server\n```", "agree"},
+		{"empty value fields", "neutral|kafka setup|||different components", "neutral"},
+		{"unreadable", "I could not compare these passages.", ""},
 	}
-	// Mixed, slightly messy output: a bracketed index, varied casing, a stray
-	// preamble line, and a verdict the parser must ignore (unrelated).
-	out := "Here are my classifications:\n" +
-		"1|corroborate|both say deploy via make deploy\n" +
-		"[2] | Contradict | says the old port 8080, target says 8780\n" +
-		"3|unrelated|\n" +
-		"4|CORROBORATE|backup cadence matches\n" +
-		"7|contradict|out of range — must be ignored"
+	for _, c := range cases {
+		if got := parsePairVerdict(c.out).Verdict; got != c.want {
+			t.Errorf("%s: verdict = %q, want %q", c.name, got, c.want)
+		}
+	}
 
-	// The excerpts the model would have been shown: the filter checks named values
-	// against them, so a credible dispute needs its values to be there.
-	target := "Deploy with make deploy. The API listens on 8780."
-	nbrTexts := []string{"make deploy is the one command", "the old port was 8080", "", "backup runs nightly"}
+	v := parsePairVerdict("contradict|report service port|8090|2480|two ports for one service")
+	if v.ValueA != "8090" || v.ValueB != "2480" || v.Subject != "report service port" {
+		t.Fatalf("fields not split: %+v", v)
+	}
+	if want := "report service port: 8090 vs 2480 — two ports for one service"; v.Reason() != want {
+		t.Fatalf("Reason() = %q, want %q", v.Reason(), want)
+	}
+}
 
-	corr, disp, disputes := parseVerdicts(out, neighbors, target, nbrTexts)
-	if corr != 2 {
-		t.Fatalf("corroborate = %d, want 2", corr)
+// The model is ordered to quote two conflicting values, so it produces a pair
+// whether or not it has one. Each case here is a shape seen on the live corpus.
+func TestUnverifiedPair(t *testing.T) {
+	const a = "Report service on port 8090. FND-1671 stamped 2026-09-04T06:15:32Z. Scope: Solution."
+	const b = "Report service port 2480. Booking call on 2017-09-09. Scope: Evidence-based solution."
+
+	drop := []struct {
+		name string
+		v    pairVerdict
+	}{
+		{"no values quoted", pairVerdict{Subject: "port", ValueA: "", ValueB: "2480"}},
+		{"same value both sides", pairVerdict{Subject: "date", ValueA: "2017-09-09", ValueB: "2017-09-09"}},
+		{"a refinement, not a conflict", pairVerdict{Subject: "scope", ValueA: "Solution", ValueB: "Evidence-based solution"}},
+		{"value invented for A", pairVerdict{Subject: "port", ValueA: "9999", ValueB: "2480"}},
+		{"value invented for B", pairVerdict{Subject: "port", ValueA: "8090", ValueB: "7777"}},
+		{"a truncated value", pairVerdict{Subject: "timestamp", ValueA: "202", ValueB: "2026-09-04T06:15:32Z"}},
 	}
-	if disp != 1 {
-		t.Fatalf("dispute = %d, want 1", disp)
+	for _, c := range drop {
+		if why := unverifiedPair(c.v, a, b); why == "" {
+			t.Errorf("%s: should have been dropped, was kept: %+v", c.name, c.v)
+		}
 	}
-	if len(disputes) != 1 || disputes[0].PageID != 11 {
-		t.Fatalf("disputes = %+v, want one for page 11", disputes)
+
+	keep := []struct {
+		name string
+		v    pairVerdict
+	}{
+		{"two real values", pairVerdict{Subject: "report service port", ValueA: "8090", ValueB: "2480"}},
+		{"quoted long spans", pairVerdict{Subject: "date", ValueA: "FND-1671 stamped 2026-09-04T06:15:32Z", ValueB: "Booking call on 2017-09-09"}},
 	}
-	if disputes[0].Reason == "" {
-		t.Fatalf("dispute reason should be captured, got empty")
+	for _, c := range keep {
+		if why := unverifiedPair(c.v, a, b); why != "" {
+			t.Errorf("%s: should have been kept, dropped as %q", c.name, why)
+		}
 	}
 }
 
@@ -86,13 +109,6 @@ func TestDisputesFor(t *testing.T) {
 	}
 }
 
-func TestParseVerdictsEmpty(t *testing.T) {
-	corr, disp, disputes := parseVerdicts("", []rag.Neighbor{{PageID: 1}}, "", []string{""})
-	if corr != 0 || disp != 0 || len(disputes) != 0 {
-		t.Fatalf("empty output should yield zero verdicts, got %d/%d/%d", corr, disp, len(disputes))
-	}
-}
-
 // A clamped excerpt must never end in a bare mid-token prefix: that is what made
 // a page stating "…2026-09-04T06:15:32Z" near the budget read as stating "202",
 // which the model then named as a conflicting value against a page saying the
@@ -123,42 +139,5 @@ func TestClampMarksTruncationAtLineBoundary(t *testing.T) {
 	// Under budget: untouched, no marker.
 	if got := clamp("short body", 500); got != "short body" {
 		t.Fatalf("clamp altered an under-budget body: %q", got)
-	}
-}
-
-// Every case here is a reason the live model actually produced. The prompt orders
-// it to name two conflicting values for each contradict, so when it has no pair it
-// invents one — and an invented pair must not reach the trust strip.
-func TestIncredibleDispute(t *testing.T) {
-	const target = "Report service on port 8090. FND-1671 was stamped 2026-09-04T06:15:32Z.\nScope: Solution."
-	const nbr = "Report service port 2480. Booking call on 2017-09-09. Scope: Evidence-based solution."
-
-	drop := []struct{ name, reason string }{
-		{"identical values", `shared subject: booking-call date; target 2017-09-09 vs 2017-09-09 (but the target page says the same)`},
-		{"identical quoted values", `Scope: target "Solution" vs page 2 "Solution" (same, but page 2 has a different title)`},
-		{"same value behind a page reference", `Scope: target Algorithm vs 2 Algorithm`},
-		{"same value in prose", `Shared subject: PTN XML Adapter port; target page states port 1113, page 5 states port 1113`},
-		{"one value refines the other", `Nokia OMS port: target 8443 vs 10.180.12.41:8443`},
-		{"truncated value", `shared subject: FND-1671 timestamp; target 202 vs 2026-09-04T06:15:32Z`},
-		{"value absent from the target", `report service port: target 9999 vs 2480`},
-		{"value absent from the other page", `report service port: target 8090 vs 7777`},
-	}
-	for _, c := range drop {
-		if why := incredibleDispute(c.reason, target, nbr); why == "" {
-			t.Errorf("%s: should have been dropped, was kept: %q", c.name, c.reason)
-		}
-	}
-
-	keep := []struct{ name, reason string }{
-		{"a real numeric pair is not a page reference", `scale: target 3 vs 1`},
-		{"two real values", `report service port: target 8090 vs 2480`},
-		{"trailing commentary on both values", `Kafka broker: target 8090 (mTLS) vs 2480 (external / dev broker — not the NSP one)`},
-		{"a prose argument naming no pair", `Shared subject: cast list for Berlin Nobody. Target states Kiernan Shipka was included, while page 3 omits her entirely and names a different lead.`},
-		{"quoted spans that differ", `class pattern: target "Case → Concept → Activity → Debrief" vs "Concept → Studio → Feedback"`},
-	}
-	for _, c := range keep {
-		if why := incredibleDispute(c.reason, target, nbr); why != "" {
-			t.Errorf("%s: should have been kept, was dropped as %q: %q", c.name, why, c.reason)
-		}
 	}
 }

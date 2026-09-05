@@ -4,7 +4,6 @@ import {
   Clock,
   RefreshCw,
   ShieldAlert,
-  ShieldCheck,
   User,
 } from 'lucide-react'
 import { useAgreement, useProvenance } from '../../lib/queries/pages'
@@ -108,13 +107,12 @@ export function PageTrustStrip({
         </span>
       ) : null}
 
-      {/* Corroboration — quiet/reassuring (the page is backed by others). */}
-      {ag && ag.corroborate > 0 ? (
-        <span className="inline-flex items-center gap-[var(--space-1)]">
-          <ShieldCheck width={12} height={12} aria-hidden /> {ag.corroborate}{' '}
-          corroborating
-        </span>
-      ) : null}
+      {/* Corroboration is computed but NOT shown. The judge only ever sees each
+          page's opening excerpt, and the openings of related pages restate the
+          same summary — so the count mostly measured "these two pages start
+          alike", while reading as "this page has been verified". A contradiction
+          still earns its place: it names two specific values, each checked to
+          appear verbatim in its own page. */}
 
       {/* Contradiction — the case worth noticing; danger tone. Click opens a
           read-only popover listing each conflicting page (navigable) + the reason
