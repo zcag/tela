@@ -27,6 +27,8 @@ const (
 	evtPageView        = "page.view"
 	evtPageCreate      = "page.create"
 	evtPageEdit        = "page.edit"
+	evtPageDelete      = "page.delete"
+	evtPageRestore     = "page.restore"
 	evtAsk             = "ask"
 	evtAPIRequest      = "api.request"
 	evtClientError     = "client.error"

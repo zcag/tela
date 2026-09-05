@@ -2314,8 +2314,8 @@ function DeletePageConfirmDialog({
         <DialogHeader>
           <DialogTitle>Delete this page?</DialogTitle>
           <DialogDescription>
-            "{page.title || 'Untitled'}" and any child pages will be permanently
-            removed. This action cannot be undone.
+            "{page.title || 'Untitled'}" and any child pages move to this space's
+            Trash. You can put them back from there — the space's Trash tab.
           </DialogDescription>
         </DialogHeader>
         {error ? (

@@ -28,7 +28,7 @@ func TestDeletePage_SoftDeletesAndHides(t *testing.T) {
 		t.Fatalf("create: %+v", ae)
 	}
 
-	if ae := s.deletePageCore(ctx, u, nil, p.ID); ae != nil {
+	if ae := s.deletePageCore(ctx, u, nil, p.ID, deleteViaManual); ae != nil {
 		t.Fatalf("delete: %+v", ae)
 	}
 
@@ -60,7 +60,7 @@ func TestDeletePage_CascadesSubtreeSoftly(t *testing.T) {
 	parent, _, _ := s.ApplyFileSync(ctx, u, nil, space, nil, "Parent.md", []byte("p"))
 	child, _, _ := s.ApplyFileSync(ctx, u, nil, space, &parent.ID, "Child.md", []byte("c"))
 
-	if ae := s.deletePageCore(ctx, u, nil, parent.ID); ae != nil {
+	if ae := s.deletePageCore(ctx, u, nil, parent.ID, deleteViaManual); ae != nil {
 		t.Fatalf("delete parent: %+v", ae)
 	}
 	// Both parent and the descendant are stamped — the whole subtree is trashed.
@@ -80,7 +80,7 @@ func TestApplyFileSync_ResurrectsTrashedPage(t *testing.T) {
 	if ae != nil {
 		t.Fatalf("create: %+v", ae)
 	}
-	if ae := s.deletePageCore(ctx, u, nil, p.ID); ae != nil {
+	if ae := s.deletePageCore(ctx, u, nil, p.ID, deleteViaManual); ae != nil {
 		t.Fatalf("delete: %+v", ae)
 	}
 
@@ -115,7 +115,7 @@ func TestApplyFileSync_CreateAfterDeleteNoCollision(t *testing.T) {
 	ctx := context.Background()
 
 	p, _, _ := s.ApplyFileSync(ctx, u, nil, space, nil, "Note.md", []byte("a"))
-	if ae := s.deletePageCore(ctx, u, nil, p.ID); ae != nil {
+	if ae := s.deletePageCore(ctx, u, nil, p.ID, deleteViaManual); ae != nil {
 		t.Fatalf("delete: %+v", ae)
 	}
 	// A brand-new file (no id), same title/location.

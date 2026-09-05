@@ -8,6 +8,10 @@ import type { Page } from '../types'
 // (POST /api/pages/{id}/restore). Deleting has always been reversible — the row
 // is only stamped, never removed — but until this there was no way to see or
 // undo one, so a wrong delete looked exactly like a page that never existed.
+//
+// The list is scoped server-side: your own deletes, or all of them if you own
+// the space. So in a shared space this is your bin, not a public record of what
+// everyone has removed.
 
 export interface TrashEntry {
   id: number
@@ -18,6 +22,12 @@ export interface TrashEntry {
   sub_pages: number
   parent_id?: number
   parent_title?: string
+  // Who removed it and through what. Empty for pages deleted before tela
+  // recorded that — those show to space owners only. deleted_via is
+  // 'manual' | 'agent' | 'sync'.
+  deleted_by?: string
+  deleted_by_you: boolean
+  deleted_via?: string
 }
 
 export const trashKeys = {

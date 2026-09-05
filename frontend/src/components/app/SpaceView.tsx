@@ -222,7 +222,7 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
               <EmptyState
                 icon={Trash2}
                 title="Nothing deleted"
-                description="Deleted pages come here instead of disappearing, and can be put back."
+                description="Deleted pages come here instead of disappearing, and can be put back. You see your own; a space owner sees everyone's."
               />
             ) : (
               <Section title="Deleted pages" icon={Trash2}>
@@ -365,10 +365,17 @@ function Row({
   )
 }
 
-// "deleted 2 hours ago · 3 sub-pages · in Onboarding" — enough to tell two
-// same-named pages apart and to see what a restore will bring back with it.
+// "deleted 2 hours ago by ayşe · via sync · 3 sub-pages · in Onboarding" —
+// enough to tell two same-named pages apart, to see what a restore will bring
+// back with it, and to tell your own delete from a vault sync's.
 function trashMeta(e: TrashEntry): string {
-  const bits = [`deleted ${relativeTimeFromSqlite(e.deleted_at)}`]
+  let when = `deleted ${relativeTimeFromSqlite(e.deleted_at)}`
+  // Only name someone else: "by you" on every row of your own bin is noise.
+  if (e.deleted_by && !e.deleted_by_you) when += ` by ${e.deleted_by}`
+  const bits = [when]
+  // A click in the app is the norm and goes unsaid; an agent or a vault sync
+  // doing the deleting is exactly what you want to notice.
+  if (e.deleted_via && e.deleted_via !== 'manual') bits.push(`via ${e.deleted_via}`)
   if (e.sub_pages > 0) bits.push(`${e.sub_pages} sub-page${e.sub_pages === 1 ? '' : 's'}`)
   if (e.parent_title) bits.push(`in ${e.parent_title}`)
   return bits.join(' · ')

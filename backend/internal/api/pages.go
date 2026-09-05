@@ -926,7 +926,7 @@ func (s *Server) DeletePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	k, _ := auth.APIKeyFromContext(r.Context())
-	if ae := s.deletePageCore(r.Context(), u, k, id); ae != nil {
+	if ae := s.deletePageCore(r.Context(), u, k, id, deleteViaManual); ae != nil {
 		writeError(w, ae.Status, ae.Code, ae.Message)
 		return
 	}
@@ -936,7 +936,16 @@ func (s *Server) DeletePage(w http.ResponseWriter, r *http.Request) {
 // deletePageCore is the transport-agnostic core behind DELETE /api/pages/{id}
 // and the MCP delete_page tool: editor+ gated; caches the live title onto
 // incoming backlinks before deleting, and clears the page's outgoing links.
-func (s *Server) deletePageCore(ctx context.Context, u *auth.User, k *auth.APIKey, id int64) *apiErr {
+// deleteVia names how a delete arrived, stamped on every row it takes so the
+// Trash can say whether a page went by someone's click, an agent, or a vault
+// sync. Same vocabulary as page_revisions.source.
+const (
+	deleteViaManual = "manual"
+	deleteViaAgent  = "agent"
+	deleteViaSync   = "sync"
+)
+
+func (s *Server) deletePageCore(ctx context.Context, u *auth.User, k *auth.APIKey, id int64, via string) *apiErr {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return &apiErr{http.StatusInternalServerError, "internal", "begin tx failed"}
@@ -987,9 +996,10 @@ func (s *Server) deletePageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 			SELECT p.id FROM pages p JOIN subtree s ON p.parent_id = s.id
 		)`
 	rows, err := tx.QueryContext(ctx, subtreeCTE+`
-		UPDATE pages SET deleted_at = tela_now(), deleted_root_id = $1
+		UPDATE pages SET deleted_at = tela_now(), deleted_root_id = $1,
+		                 deleted_by = $2, deleted_via = $3
 		 WHERE id IN (SELECT id FROM subtree) AND deleted_at IS NULL
-		 RETURNING id`, id)
+		 RETURNING id`, id, u.ID, via)
 	if err != nil {
 		return &apiErr{http.StatusInternalServerError, "internal", "delete page failed"}
 	}
@@ -1053,6 +1063,14 @@ func (s *Server) deletePageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 			return &apiErr{http.StatusInternalServerError, "internal", "append change_log failed"}
 		}
 	}
+	// Record the delete in the activity feed — the other half of the audit trail
+	// page.restore writes. Post-commit-ish (recordEvent logs and swallows), and
+	// only for the root: the subtree is one act, not len(subtree) of them.
+	rootID := existing.ID
+	recordEvent(ctx, s.DB, eventInput{
+		Type: evtPageDelete, ActorUserID: &u.ID, TargetKind: "page",
+		TargetID: &rootID, TargetLabel: existing.Title, Detail: via,
+	})
 	// Subscriptions + notifications are polymorphic (no FK on subject_id), so a
 	// page delete must clear its own — else orphaned follows / dead inbox rows
 	// pointing at a gone page survive. (favorites cascades via its FK.)

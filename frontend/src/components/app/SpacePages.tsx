@@ -530,7 +530,8 @@ function DeletePageDialog({
                   childCount === 1 ? 'child page' : 'child pages'
                 }`
               : ''}{' '}
-            will be permanently removed. This action cannot be undone.
+            move to this space&apos;s Trash. You can put them back from there — the
+            space&apos;s Trash tab.
           </DialogDescription>
         </DialogHeader>
         {error ? (

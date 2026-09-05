@@ -1115,7 +1115,7 @@ func (s *Server) mcpDeletePage(ctx context.Context, req *mcp.CallToolRequest, in
 	if ae := mcpRequireWrite(k); ae != nil {
 		return mcpErr(ae), okOut{}, nil
 	}
-	if ae := s.deletePageCore(ctx, u, k, in.ID); ae != nil {
+	if ae := s.deletePageCore(ctx, u, k, in.ID, deleteViaAgent); ae != nil {
 		return mcpErr(ae), okOut{}, nil
 	}
 	return nil, okOut{OK: true}, nil

@@ -437,7 +437,7 @@ func (fs *davFS) RemoveAll(ctx context.Context, name string) error {
 			return os.ErrPermission
 		}
 	}
-	return davMapErr(fs.s.deletePageCore(ctx, pr.u, pr.k, p.ID))
+	return davMapErr(fs.s.deletePageCore(ctx, pr.u, pr.k, p.ID, deleteViaSync))
 }
 
 // countLiveSpacePages returns the number of live (non-deleted) pages in a space

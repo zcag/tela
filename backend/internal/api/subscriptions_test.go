@@ -205,7 +205,7 @@ func TestSubscriptions_DeletePageCleansUp(t *testing.T) {
 	}
 	editBody(t, srv, alice, "alice", page.ID, "v1") // gives bob a notification
 
-	if ae := srv.deletePageCore(ctx, authUser(alice, "alice", false), nil, page.ID); ae != nil {
+	if ae := srv.deletePageCore(ctx, authUser(alice, "alice", false), nil, page.ID, deleteViaManual); ae != nil {
 		t.Fatalf("delete page: %v", ae)
 	}
 
