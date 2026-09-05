@@ -26,7 +26,12 @@ func TestParseVerdicts(t *testing.T) {
 		"4|CORROBORATE|backup cadence matches\n" +
 		"7|contradict|out of range — must be ignored"
 
-	corr, disp, disputes := parseVerdicts(out, neighbors)
+	// The excerpts the model would have been shown: the filter checks named values
+	// against them, so a credible dispute needs its values to be there.
+	target := "Deploy with make deploy. The API listens on 8780."
+	nbrTexts := []string{"make deploy is the one command", "the old port was 8080", "", "backup runs nightly"}
+
+	corr, disp, disputes := parseVerdicts(out, neighbors, target, nbrTexts)
 	if corr != 2 {
 		t.Fatalf("corroborate = %d, want 2", corr)
 	}
@@ -82,7 +87,7 @@ func TestDisputesFor(t *testing.T) {
 }
 
 func TestParseVerdictsEmpty(t *testing.T) {
-	corr, disp, disputes := parseVerdicts("", []rag.Neighbor{{PageID: 1}})
+	corr, disp, disputes := parseVerdicts("", []rag.Neighbor{{PageID: 1}}, "", []string{""})
 	if corr != 0 || disp != 0 || len(disputes) != 0 {
 		t.Fatalf("empty output should yield zero verdicts, got %d/%d/%d", corr, disp, len(disputes))
 	}
@@ -118,5 +123,40 @@ func TestClampMarksTruncationAtLineBoundary(t *testing.T) {
 	// Under budget: untouched, no marker.
 	if got := clamp("short body", 500); got != "short body" {
 		t.Fatalf("clamp altered an under-budget body: %q", got)
+	}
+}
+
+// Every case here is a reason the live model actually produced. The prompt orders
+// it to name two conflicting values for each contradict, so when it has no pair it
+// invents one — and an invented pair must not reach the trust strip.
+func TestIncredibleDispute(t *testing.T) {
+	const target = "Report service on port 8090. FND-1671 was stamped 2026-09-04T06:15:32Z.\nScope: Solution."
+	const nbr = "Report service port 2480. Booking call on 2017-09-09. Scope: Evidence-based solution."
+
+	drop := []struct{ name, reason string }{
+		{"identical values", `shared subject: booking-call date; target 2017-09-09 vs 2017-09-09 (but the target page says the same)`},
+		{"identical quoted values", `Scope: target "Solution" vs page 2 "Solution" (same, but page 2 has a different title)`},
+		{"same value in prose", `Shared subject: PTN XML Adapter port; target page states port 1113, page 5 states port 1113`},
+		{"one value refines the other", `Nokia OMS port: target 8443 vs 10.180.12.41:8443`},
+		{"truncated value", `shared subject: FND-1671 timestamp; target 202 vs 2026-09-04T06:15:32Z`},
+		{"value absent from the target", `report service port: target 9999 vs 2480`},
+		{"value absent from the other page", `report service port: target 8090 vs 7777`},
+	}
+	for _, c := range drop {
+		if why := incredibleDispute(c.reason, target, nbr); why == "" {
+			t.Errorf("%s: should have been dropped, was kept: %q", c.name, c.reason)
+		}
+	}
+
+	keep := []struct{ name, reason string }{
+		{"two real values", `report service port: target 8090 vs 2480`},
+		{"trailing commentary on both values", `Kafka broker: target 8090 (mTLS) vs 2480 (external / dev broker — not the NSP one)`},
+		{"a prose argument naming no pair", `Shared subject: cast list for Berlin Nobody. Target states Kiernan Shipka was included, while page 3 omits her entirely and names a different lead.`},
+		{"quoted spans that differ", `class pattern: target "Case → Concept → Activity → Debrief" vs "Concept → Studio → Feedback"`},
+	}
+	for _, c := range keep {
+		if why := incredibleDispute(c.reason, target, nbr); why != "" {
+			t.Errorf("%s: should have been kept, was dropped as %q: %q", c.name, why, c.reason)
+		}
 	}
 }

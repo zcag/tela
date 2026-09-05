@@ -21,7 +21,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,9 +155,13 @@ A page CORROBORATES the target when it states or supports the same fact about a 
 
 Every page below may be an EXCERPT of a longer page, cut short at "…[excerpt truncated]". Anything ending at that cut is INCOMPLETE: never read a truncated value as a conflicting value, and never contradict on something the excerpt simply does not reach. Compare only values you can see in full on both sides.
 
+Both conflicting values must be VISIBLE — one in the target, the other in that page — and you must quote them as they are written. If you cannot quote a real value from each side, or the same value turns out to be on both sides, it is NOT a contradiction: answer unrelated. Never contradict on a value you inferred, or that only one of the pages states.
+
+A page that merely DESCRIBES, QUOTES or investigates a disagreement — an incident report, a review, a changelog — is not itself in conflict with the page it discusses. Judge what a page CLAIMS, not what it quotes.
+
 Output ONE line per page, exactly in the form: INDEX|VERDICT|REASON
 - VERDICT is one of: corroborate, contradict, unrelated
-- For contradict, REASON MUST name the shared subject and the two conflicting values, e.g. "report service port: target 2480 vs 8444".
+- For contradict, REASON MUST name the shared subject and the two conflicting values verbatim, e.g. "report service port: target 2480 vs 8444".
 - For corroborate, REASON is a brief phrase. For unrelated, leave REASON empty.
 No preamble, no extra lines.`
 
@@ -205,9 +211,14 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 	disputes := []Dispute{}
 	if len(neighbors) > 0 {
 		var b strings.Builder
-		fmt.Fprintf(&b, "TARGET PAGE:\nTitle: %s\n%s\n\nOTHER PAGES:\n", title, clamp(body, maxTextChars))
+		// Keep the excerpts: a dispute is only credible against the text the model
+		// was actually shown, and credibleDispute checks the values against them.
+		targetText := clamp(body, maxTextChars)
+		nbrTexts := make([]string, len(neighbors))
+		fmt.Fprintf(&b, "TARGET PAGE:\nTitle: %s\n%s\n\nOTHER PAGES:\n", title, targetText)
 		for i, n := range neighbors {
-			fmt.Fprintf(&b, "[%d] %s\n%s\n\n", i+1, n.Title, clamp(n.Body, maxTextChars))
+			nbrTexts[i] = clamp(n.Body, maxTextChars)
+			fmt.Fprintf(&b, "[%d] %s\n%s\n\n", i+1, n.Title, nbrTexts[i])
 		}
 		b.WriteString("Classify each numbered page.")
 		// Background work: bypass the foreground gate and never spill to the relief layer.
@@ -216,7 +227,7 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 			s.recordFailure(ctx, pageID, err)
 			return fmt.Errorf("agreement page %d: %w", pageID, err)
 		}
-		corroborate, dispute, disputes = parseVerdicts(out, neighbors)
+		corroborate, dispute, disputes = parseVerdicts(out, neighbors, targetText, nbrTexts)
 	}
 
 	payload, _ := json.Marshal(disputes)
@@ -237,7 +248,7 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 // parseVerdicts reads the model's "INDEX|VERDICT|REASON" lines back into tallies.
 // Lenient: it tolerates a bracketed index ([2]) and stray lines, and ignores any
 // index outside the neighbour range.
-func parseVerdicts(out string, neighbors []rag.Neighbor) (int, int, []Dispute) {
+func parseVerdicts(out string, neighbors []rag.Neighbor, targetText string, nbrTexts []string) (int, int, []Dispute) {
 	corr, disp := 0, 0
 	disputes := []Dispute{}
 	for _, ln := range strings.Split(out, "\n") {
@@ -263,12 +274,110 @@ func parseVerdicts(out string, neighbors []rag.Neighbor) (int, int, []Dispute) {
 		case strings.HasPrefix(verdict, "corrob"):
 			corr++
 		case strings.HasPrefix(verdict, "contra"):
-			disp++
 			n := neighbors[idx-1]
+			nbrText := ""
+			if idx-1 < len(nbrTexts) {
+				nbrText = nbrTexts[idx-1]
+			}
+			// A verdict the reason cannot support is not raised at all — it counts
+			// as unrelated, exactly as an unsure model was told to answer.
+			if why := incredibleDispute(reason, targetText, nbrText); why != "" {
+				slog.Debug("agreement: dropped an unsupported dispute", "page_id", n.PageID, "why", why, "reason", reason)
+				continue
+			}
+			disp++
 			disputes = append(disputes, Dispute{PageID: n.PageID, Title: n.Title, Reason: reason})
 		}
 	}
 	return corr, disp, disputes
+}
+
+// The prompt orders the model to name "the two conflicting values" for every
+// contradict — so a model that has no pair manufactures one. A sweep of the live
+// corpus found it naming the same value on both sides, naming a value that is in
+// neither excerpt, and copying a value pair straight out of a page that merely
+// *describes* a dispute (an incident report quoting an earlier bogus finding was
+// re-reported as a fresh one). Each rule below was written against those real
+// reasons: every one fired on junk, none fired on a dispute worth raising.
+//
+// incredibleDispute returns why a contradict verdict is unsupported by the text the
+// model was shown, or "" when it stands. Reasons that make a prose argument rather
+// than naming a value pair are left alone — they cannot be checked this way, and
+// they are where the genuinely interesting conflicts live.
+func incredibleDispute(reason, targetText, nbrText string) string {
+	r := strings.ReplaceAll(reason, "\n", " ")
+
+	// "target page states port 1113, page 5 states port 1113" — the pair form in
+	// prose, where both sides land on one value.
+	if ms := disputeStatesRe.FindAllStringSubmatch(r, -1); len(ms) >= 2 {
+		first, same := normValue(ms[0][1]), true
+		for _, m := range ms[1:] {
+			if normValue(m[1]) != first {
+				same = false
+				break
+			}
+		}
+		if same && first != "" {
+			return "both sides name the same value (" + first + ")"
+		}
+	}
+
+	m := disputePairRe.FindStringSubmatch(r)
+	if m == nil {
+		return ""
+	}
+	a, b := normValue(disputeAtom(m[1])), normValue(disputeAtom(m[2]))
+	if a == "" || b == "" {
+		return ""
+	}
+	switch {
+	case a == b:
+		return "both sides name the same value (" + a + ")"
+	case len(a) > 1 && len(b) > 1 && (strings.Contains(a, b) || strings.Contains(b, a)):
+		// "8443" vs "10.180.12.41:8443", "Solution" vs "Evidence-based solution":
+		// one value refines the other, which the prompt already calls coexistence.
+		return "one value only refines the other (" + a + " / " + b + ")"
+	case atomicValueRe.MatchString(a) && !strings.Contains(normValue(targetText), a):
+		return "target value " + a + " is absent from the excerpt judged"
+	case atomicValueRe.MatchString(b) && !strings.Contains(normValue(nbrText), b):
+		return "value " + b + " is absent from that page's excerpt"
+	}
+	return ""
+}
+
+var (
+	// "…: target <X> vs <Y>", the shape the prompt asks for.
+	disputePairRe = regexp.MustCompile(`(?i)\btarget\b[\s:]*(.+?)\s+vs\.?\s+(.+)$`)
+	// "states/says/reports <value>", the same claim made in prose.
+	disputeStatesRe = regexp.MustCompile(`(?i)\b(?:states?|says?|reports?|lists?|shows?)\s+(?:port\s+|version\s+)?([0-9][0-9a-z._:/-]*)`)
+	disputeQuotedRe = regexp.MustCompile("^[^\"'`]{0,24}?[\"'`]([^\"'`]+)[\"'`]")
+	// Leading noise before the value: an article, a unit word, or the model's own
+	// reference to a numbered page ("page 4 states …", "4 states …") — the latter
+	// would otherwise be read as the conflicting value itself.
+	disputeLeadRe = regexp.MustCompile(`(?i)^(?:(?:page\s+)?\d+\s+(?:states?|says?|claims?|describes?|lists?|reports?|shows?)\s+|page\s+\d+\s+|the\s+|its\s+|port\s+|excerpt\s+)`)
+	// A checkable literal: a port, ip[:port], date, timestamp, version. Prose spans
+	// are not required to appear verbatim — the model may legitimately paraphrase.
+	atomicValueRe = regexp.MustCompile(`(?i)^[0-9][0-9a-z._:/-]*$`)
+)
+
+// disputeAtom takes the value out of one side of the pair: the quoted span when
+// there is one, else the leading token — so trailing commentary ("10.180.12.41:9193
+// (mTLS)", "8444 (the report service)") never becomes part of the value.
+func disputeAtom(side string) string {
+	s := strings.TrimSpace(side)
+	if m := disputeQuotedRe.FindStringSubmatch(s); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	s = disputeLeadRe.ReplaceAllString(s, "")
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return ""
+	}
+	return strings.Trim(f[0], ".,;:|()")
+}
+
+func normValue(s string) string {
+	return strings.Trim(strings.ToLower(strings.Join(strings.Fields(s), " ")), "\"'`.,;:|()")
 }
 
 // DisputesFor returns the cached disputes for each given page (clean rows only,
