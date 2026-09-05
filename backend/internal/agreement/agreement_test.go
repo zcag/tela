@@ -136,6 +136,7 @@ func TestIncredibleDispute(t *testing.T) {
 	drop := []struct{ name, reason string }{
 		{"identical values", `shared subject: booking-call date; target 2017-09-09 vs 2017-09-09 (but the target page says the same)`},
 		{"identical quoted values", `Scope: target "Solution" vs page 2 "Solution" (same, but page 2 has a different title)`},
+		{"same value behind a page reference", `Scope: target Algorithm vs 2 Algorithm`},
 		{"same value in prose", `Shared subject: PTN XML Adapter port; target page states port 1113, page 5 states port 1113`},
 		{"one value refines the other", `Nokia OMS port: target 8443 vs 10.180.12.41:8443`},
 		{"truncated value", `shared subject: FND-1671 timestamp; target 202 vs 2026-09-04T06:15:32Z`},
@@ -149,6 +150,7 @@ func TestIncredibleDispute(t *testing.T) {
 	}
 
 	keep := []struct{ name, reason string }{
+		{"a real numeric pair is not a page reference", `scale: target 3 vs 1`},
 		{"two real values", `report service port: target 8090 vs 2480`},
 		{"trailing commentary on both values", `Kafka broker: target 8090 (mTLS) vs 2480 (external / dev broker — not the NSP one)`},
 		{"a prose argument naming no pair", `Shared subject: cast list for Berlin Nobody. Target states Kiernan Shipka was included, while page 3 omits her entirely and names a different lead.`},

@@ -327,6 +327,7 @@ func incredibleDispute(reason, targetText, nbrText string) string {
 		return ""
 	}
 	a, b := normValue(disputeAtom(m[1])), normValue(disputeAtom(m[2]))
+	a, b = dropIndexRef(a, m[1], b), dropIndexRef(b, m[2], a)
 	if a == "" || b == "" {
 		return ""
 	}
@@ -374,6 +375,20 @@ func disputeAtom(side string) string {
 		return ""
 	}
 	return strings.Trim(f[0], ".,;:|()")
+}
+
+// dropIndexRef rescues a value hiding behind the model's own page reference —
+// "target Algorithm vs 2 Algorithm" names one value twice, not two. Applied only
+// when the other side is non-numeric, so a real numeric pair ("target 3 vs 1") is
+// never rewritten.
+func dropIndexRef(atom, side, other string) string {
+	if len(atom) != 1 || atom[0] < '1' || atom[0] > '9' || atomicValueRe.MatchString(other) {
+		return atom
+	}
+	if f := strings.Fields(strings.TrimSpace(side)); len(f) > 1 {
+		return normValue(f[1])
+	}
+	return atom
 }
 
 func normValue(s string) string {
