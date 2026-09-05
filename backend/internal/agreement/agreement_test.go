@@ -3,6 +3,7 @@ package agreement
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zcag/tela/backend/internal/rag"
@@ -84,5 +85,38 @@ func TestParseVerdictsEmpty(t *testing.T) {
 	corr, disp, disputes := parseVerdicts("", []rag.Neighbor{{PageID: 1}})
 	if corr != 0 || disp != 0 || len(disputes) != 0 {
 		t.Fatalf("empty output should yield zero verdicts, got %d/%d/%d", corr, disp, len(disputes))
+	}
+}
+
+// A clamped excerpt must never end in a bare mid-token prefix: that is what made
+// a page stating "…2026-09-04T06:15:32Z" near the budget read as stating "202",
+// which the model then named as a conflicting value against a page saying the
+// same thing.
+func TestClampMarksTruncationAtLineBoundary(t *testing.T) {
+	body := "Cursor registry\n\nFND-1671 stamped 2026-09-04T06:15:32Z, concluded NO WRITE.\n"
+	got := clamp(body, 40) // lands mid-timestamp
+	if strings.Contains(got, "2026-09-04T06") || strings.HasSuffix(strings.TrimSuffix(got, truncMarker), "202") {
+		t.Fatalf("clamp kept a bisected value: %q", got)
+	}
+	if !strings.HasSuffix(got, truncMarker) {
+		t.Fatalf("clamp did not mark the cut: %q", got)
+	}
+	if !strings.HasPrefix(got, "Cursor registry") {
+		t.Fatalf("clamp dropped the head of the body: %q", got)
+	}
+
+	// A single line longer than the budget has no break to fall back to: hard cut,
+	// still marked.
+	long := clamp(strings.Repeat("x", 200), 50)
+	if !strings.HasSuffix(long, truncMarker) {
+		t.Fatalf("unbroken line lost its marker: %q", long)
+	}
+	if n := len([]rune(strings.TrimSuffix(long, truncMarker))); n != 50 {
+		t.Fatalf("unbroken line cut to %d runes, want 50", n)
+	}
+
+	// Under budget: untouched, no marker.
+	if got := clamp("short body", 500); got != "short body" {
+		t.Fatalf("clamp altered an under-budget body: %q", got)
 	}
 }

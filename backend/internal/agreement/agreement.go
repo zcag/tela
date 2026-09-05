@@ -93,6 +93,12 @@ func (s *Service) Model() string { return s.llm.Model() }
 // the whole corpus. Bump it on any judging change. (Same idea as rag folding its
 // model name into chunk hashes.) hashSeed must be byte-identical to the SQL the
 // sweep uses to recompute the expected hash (see sweepStale).
+//
+// The excerpt-truncation fix (clamp + its prompt paragraph) deliberately did NOT
+// bump this. Truncation can only invent a contradiction, never an agreement, so
+// the damage was bounded to rows with dispute > 0 — deleting those re-judges them
+// on the next sweep for minutes of model time, where a full re-judge of the corpus
+// costs hours of it. Bump for any judging change that can alter a clean verdict.
 const agreementVersion = "v2"
 
 var hashSeed = agreementVersion + ":"
@@ -102,12 +108,32 @@ func srcHash(body string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// truncMarker terminates a clamped excerpt. The prompt names it verbatim — keep
+// the two in sync.
+const truncMarker = "\n…[excerpt truncated]"
+
+// clamp trims s to the per-page prompt budget, cutting at a LINE boundary and
+// saying that it cut. Both halves are load-bearing: an unmarked mid-token cut is
+// indistinguishable from the page's real content, so a bisected value reads to the
+// model as a *different* value. That is exactly how a page stating
+// `2026-09-04T06:15:32Z` at char 698 of a 700-char budget was judged to contradict
+// a page stating the same timestamp — the model was shown "202" and, as the prompt
+// demands, dutifully named the two "conflicting values".
 func clamp(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
 	}
-	return string(r[:n])
+	r = r[:n]
+	// Prefer the last line break in the back half; a single line longer than the
+	// budget falls through to a hard cut, which the marker still flags.
+	for i := len(r) - 1; i >= n/2; i-- {
+		if r[i] == '\n' {
+			r = r[:i]
+			break
+		}
+	}
+	return strings.TrimRight(string(r), " \t\n") + truncMarker
 }
 
 // Dispute is one contradicting same-space page, recorded for the trust strip.
@@ -124,6 +150,8 @@ The test for CONTRADICT is a SHARED SUBJECT. A page contradicts the target ONLY 
 It is NOT a contradiction when the pages describe DIFFERENT things (different services, adapters, machines, network types, environments), when they differ only in scope, detail, or recency, or when one simply omits what the other states. Two distinct components having different ports, hosts, or behaviours is normal coexistence — that is unrelated, not a conflict. Similar-sounding names (e.g. "PTN Flow" vs "RTN Flow", "Nokia X" vs "Nokia Y") are usually DIFFERENT components, not the same one disagreeing.
 
 A page CORROBORATES the target when it states or supports the same fact about a shared subject. Everything else is UNRELATED. When you are unsure between contradict and unrelated, choose unrelated.
+
+Every page below may be an EXCERPT of a longer page, cut short at "…[excerpt truncated]". Anything ending at that cut is INCOMPLETE: never read a truncated value as a conflicting value, and never contradict on something the excerpt simply does not reach. Compare only values you can see in full on both sides.
 
 Output ONE line per page, exactly in the form: INDEX|VERDICT|REASON
 - VERDICT is one of: corroborate, contradict, unrelated
