@@ -169,16 +169,9 @@ func (s *Server) restorePageCore(ctx context.Context, u *auth.User, k *auth.APIK
 		return models.Page{}, ae
 	}
 	// Mirror what the bin shows you: undo your own deletes, or anything at all if
-	// you own the space. Anyone else's delete is not yours to reverse, and a page
-	// trashed before migration 0081 has no recorded actor, so only an owner can
-	// bring it back. Same 404 as a page that isn't trashed — a delete you cannot
-	// see should not be confirmable by probing ids.
-	role, err := spaceRoleTx(ctx, tx, u.ID, spaceID)
-	if err != nil {
-		return models.Page{}, &apiErr{http.StatusInternalServerError, "internal", "lookup membership failed"}
-	}
-	if role != roleOwner && (!deletedBy.Valid || deletedBy.Int64 != u.ID) {
-		return models.Page{}, &apiErr{http.StatusNotFound, "not_found", "no deleted page with that id"}
+	// you own the space. Shared with purge so the two can't gate differently.
+	if ae := s.mayActOnTrashedTx(ctx, tx, u, spaceID, deletedBy); ae != nil {
+		return models.Page{}, ae
 	}
 	// A page under a still-trashed parent would come back invisible — the tree
 	// only walks live rows — so send the caller at the parent instead. This is

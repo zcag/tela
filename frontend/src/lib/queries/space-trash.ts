@@ -43,6 +43,33 @@ export function useSpaceTrash(spaceId: number | null | undefined, enabled = true
   })
 }
 
+// Destroying a page for good — the one irreversible delete in the product, so
+// every caller must confirm first. Scoped like restore server-side: your own
+// deletes, or anything in the space if you own it.
+export function usePurgePage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: number; spaceId: number }) =>
+      api<void>(`/api/pages/${id}/purge`, { method: 'POST' }),
+    onSuccess: (_void, vars) => {
+      void qc.invalidateQueries({ queryKey: trashKeys.space(vars.spaceId) })
+    },
+  })
+}
+
+// Empties what YOU can see: your own deletes, or the whole bin if you own the
+// space. Returns how many roots went.
+export function useEmptyTrash() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ spaceId }: { spaceId: number }) =>
+      api<{ purged: number }>(`/api/spaces/${spaceId}/trash`, { method: 'DELETE' }),
+    onSuccess: (_res, vars) => {
+      void qc.invalidateQueries({ queryKey: trashKeys.space(vars.spaceId) })
+    },
+  })
+}
+
 export function useRestorePage() {
   const qc = useQueryClient()
   return useMutation({

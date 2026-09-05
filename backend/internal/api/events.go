@@ -29,6 +29,7 @@ const (
 	evtPageEdit        = "page.edit"
 	evtPageDelete      = "page.delete"
 	evtPageRestore     = "page.restore"
+	evtPagePurge       = "page.purge"
 	evtAsk             = "ask"
 	evtAPIRequest      = "api.request"
 	evtClientError     = "client.error"

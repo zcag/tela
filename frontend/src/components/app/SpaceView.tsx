@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   CalendarClock,
   Clock,
@@ -9,13 +9,29 @@ import {
   ShieldAlert,
   Trash2,
   Unlink,
+  X,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
 import { Button } from '../ui/button'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/dialog'
 import { EmptyState } from '../ui/empty-state'
 import { useSpaceOverview } from '../../lib/queries/space-overview'
 import { useSpaces } from '../../lib/queries/spaces'
-import { useRestorePage, useSpaceTrash, type TrashEntry } from '../../lib/queries/space-trash'
+import {
+  useEmptyTrash,
+  usePurgePage,
+  useRestorePage,
+  useSpaceTrash,
+  type TrashEntry,
+} from '../../lib/queries/space-trash'
 import { FollowButton } from './FollowButton'
 import { navigateToPage } from '../../lib/pageHitItem'
 import { relativeTimeFromSqlite } from '../../lib/relativeTime'
@@ -31,6 +47,10 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
   const spacesQuery = useSpaces()
   const trash = useSpaceTrash(spaceId)
   const restore = useRestorePage()
+  const purge = usePurgePage()
+  const emptyTrash = useEmptyTrash()
+  // What the confirm dialog is about to destroy: one entry, or the whole bin.
+  const [pendingPurge, setPendingPurge] = useState<TrashEntry | 'all' | null>(null)
   const spaceName = useMemo(
     () => spacesQuery.data?.find((s) => s.id === spaceId)?.name ?? 'Space',
     [spacesQuery.data, spaceId],
@@ -225,7 +245,15 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
                 description="Deleted pages come here instead of disappearing, and can be put back. You see your own; a space owner sees everyone's."
               />
             ) : (
-              <Section title="Deleted pages" icon={Trash2}>
+              <Section
+                title="Deleted pages"
+                icon={Trash2}
+                aside={
+                  <Button variant="ghost" size="sm" onClick={() => setPendingPurge('all')}>
+                    Empty trash
+                  </Button>
+                }
+              >
                 <List>
                   {trash.data.map((e) => (
                     <Row
@@ -234,17 +262,28 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
                       title={e.title || 'Untitled'}
                       meta={trashMeta(e)}
                       action={
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={restore.isPending}
-                          onClick={() => restore.mutate({ id: e.id, spaceId })}
-                        >
-                          <RotateCcw width={13} height={13} aria-hidden />
-                          {restore.isPending && restore.variables?.id === e.id
-                            ? 'Restoring…'
-                            : 'Restore'}
-                        </Button>
+                        <span className="inline-flex items-center gap-[var(--space-1)]">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={restore.isPending}
+                            onClick={() => restore.mutate({ id: e.id, spaceId })}
+                          >
+                            <RotateCcw width={13} height={13} aria-hidden />
+                            {restore.isPending && restore.variables?.id === e.id
+                              ? 'Restoring…'
+                              : 'Restore'}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Delete "${e.title || 'Untitled'}" permanently`}
+                            title="Delete permanently"
+                            onClick={() => setPendingPurge(e)}
+                          >
+                            <X width={13} height={13} aria-hidden />
+                          </Button>
+                        </span>
                       }
                     />
                   ))}
@@ -257,7 +296,64 @@ export function SpaceView({ spaceId }: { spaceId: number }) {
           </TabsContent>
         </Tabs>
       </div>
+      <PurgeConfirmDialog
+        target={pendingPurge}
+        onOpenChange={(open) => {
+          if (!open) setPendingPurge(null)
+        }}
+        onConfirm={async () => {
+          if (pendingPurge === 'all') await emptyTrash.mutateAsync({ spaceId })
+          else if (pendingPurge) await purge.mutateAsync({ id: pendingPurge.id, spaceId })
+          setPendingPurge(null)
+        }}
+        pending={purge.isPending || emptyTrash.isPending}
+      />
     </div>
+  )
+}
+
+// The one place in this product where "cannot be undone" is the honest sentence
+// — which is exactly why the soft-delete dialogs no longer say it.
+function PurgeConfirmDialog({
+  target,
+  onOpenChange,
+  onConfirm,
+  pending,
+}: {
+  target: TrashEntry | 'all' | null
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => Promise<void>
+  pending: boolean
+}) {
+  const all = target === 'all'
+  const entry = all ? null : target
+  return (
+    <Dialog open={target !== null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{all ? 'Empty the trash?' : 'Delete this page for good?'}</DialogTitle>
+          <DialogDescription>
+            {all
+              ? 'Every deleted page you can see here will be destroyed, along with its sub-pages, history and attachments. This cannot be undone.'
+              : `"${entry?.title || 'Untitled'}"${
+                  entry && entry.sub_pages > 0
+                    ? ` and its ${entry.sub_pages} sub-page${entry.sub_pages === 1 ? '' : 's'}`
+                    : ''
+                } will be destroyed, along with its history and attachments. This cannot be undone.`}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="ghost">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="button" variant="danger" onClick={() => void onConfirm()} disabled={pending}>
+            {pending ? 'Deleting…' : all ? 'Empty trash' : 'Delete for good'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -265,11 +361,14 @@ function Section({
   title,
   icon: Icon,
   tone,
+  aside,
   children,
 }: {
   title: string
   icon: typeof FileText
   tone?: 'danger' | 'warning'
+  // Optional right-aligned action on the section heading.
+  aside?: React.ReactNode
   children: React.ReactNode
 }) {
   const color =
@@ -282,6 +381,7 @@ function Section({
       >
         <Icon width={13} height={13} aria-hidden />
         {title}
+        {aside ? <span className="ml-auto normal-case tracking-normal">{aside}</span> : null}
       </h2>
       {children}
     </section>

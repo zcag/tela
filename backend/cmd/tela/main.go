@@ -170,6 +170,8 @@ func main() {
 	auth.StartAuditGC(rootCtx, d)
 	// Unified events-feed retention GC (TELA_EVENTS_RETENTION_DAYS, default 180d).
 	api.StartEventsGC(rootCtx, d)
+	// Trash retention sweep — OFF unless TELA_TRASH_RETENTION_DAYS is set.
+	api.StartTrashGC(rootCtx, d)
 	// Background AI-health prober: pings the embedder + chat model on a timer so
 	// host-context's ai_available reflects real reachability and the "AI
 	// unavailable" header appears automatically during an outage. No-op (cheap
