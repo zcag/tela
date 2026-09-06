@@ -183,3 +183,28 @@ func TestDropIdentityFields(t *testing.T) {
 		t.Fatalf("kept %d conflicts, want 4", len(got))
 	}
 }
+
+// Two values of the same KIND can still be values of two different FIELDS — a
+// cursor against a watermark, a track count against a page count. Each case here
+// is a reason the live model produced.
+func TestNamesTwoFields(t *testing.T) {
+	const a = "cursor 2026-09-04T21:54:00Z. 13-track list. published 2022-04-29."
+	const b = "watermark 2026-09-04T16:27:05Z. 19-page PDF. edited 2026-09-05T01:10:23.141Z."
+	drop := []pairVerdict{
+		{Subject: "effective cursor", ValueA: "2026-09-04T21:54:00Z", ValueB: "2026-09-04T16:27:05Z",
+			Why: "same manifest referenced with different timestamps for cursor and watermark"},
+		{Subject: "released soundtrack/distribution denominator", ValueA: "13-track list", ValueB: "19-page PDF"},
+		{Subject: "Object / publication date", ValueA: "2022-04-29", ValueB: "2026-09-05T01:10:23.141Z"},
+	}
+	for _, v := range drop {
+		if why := unverifiedPair(v, a, b); why == "" {
+			t.Errorf("two fields should have been dropped: %+v", v)
+		}
+	}
+	// One field, two values — including a why that counts "13 and 16".
+	keep := pairVerdict{Subject: "released soundtrack track count", ValueA: "13-track list", ValueB: "19-page PDF",
+		Why: "same soundtrack described as both 13 and 16 tracks"}
+	if namesTwoFields(keep.Subject) || namesTwoFields(keep.Why) {
+		t.Errorf("a single field with two values must survive: %+v", keep)
+	}
+}

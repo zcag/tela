@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -354,6 +355,14 @@ func unverifiedPair(v pairVerdict, aText, bText string) string {
 		return "the same value on both sides (" + a + ")"
 	case len(a) > 1 && len(b) > 1 && (strings.Contains(a, b) || strings.Contains(b, a)):
 		return "one value only refines the other (" + a + " / " + b + ")"
+	// The model named two different FIELDS rather than two values of one field —
+	// "different timestamps for cursor and watermark", "Object / publication date",
+	// "counts of tracks and pages". Both sides then sail through the kind check,
+	// being two dates or two numbers, while never having been about one thing. The
+	// giveaway is that it could not name a single shared subject and said so.
+	case namesTwoFields(v.Subject), namesTwoFields(v.Why):
+		return "the subject names two different fields, not one"
+
 	case !quotedIn(a, aText):
 		return "value " + a + " is not in passage A"
 	case !quotedIn(b, bText):
@@ -449,6 +458,18 @@ func dropIdentityFields(cands []candidate, pageID int64) []Dispute {
 	}
 	return out
 }
+
+// namesTwoFields spots a subject or justification joining two field names. Both
+// patterns demand words on either side, so "13 and 16" (two values of ONE field)
+// and a date like 2026-09-04 are untouched.
+func namesTwoFields(s string) bool {
+	return twoFieldsSlash.MatchString(s) || twoFieldsAnd.MatchString(s)
+}
+
+var (
+	twoFieldsSlash = regexp.MustCompile(`(?i)\b[a-z]{3,}\s*/\s*[a-z]{3,}\b`)
+	twoFieldsAnd   = regexp.MustCompile(`(?i)\b(?:different|two)\b[^.]*\b[a-z]{3,}\s+and\s+[a-z]{3,}\b`)
+)
 
 // quotedIn checks the model really took the value out of that passage. A long span
 // is allowed to have been trimmed or re-punctuated on its way back — its opening is
