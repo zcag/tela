@@ -35,8 +35,8 @@ func TestParsePairVerdict(t *testing.T) {
 // The model is ordered to quote two conflicting values, so it produces a pair
 // whether or not it has one. Each case here is a shape seen on the live corpus.
 func TestUnverifiedPair(t *testing.T) {
-	const a = "Report service on port 8090. FND-1671 stamped 2026-09-04T06:15:32Z. Scope: Solution."
-	const b = "Report service port 2480. Booking call on 2017-09-09. Scope: Evidence-based solution."
+	const a = "Report service on port 8090. FND-1671 stamped 2026-09-04T06:15:32Z. Scope: Solution. A 13 track list."
+	const b = "Report service port 2480. Booking call on 2017-09-09. Scope: Evidence-based solution. A 16 track list."
 
 	drop := []struct {
 		name string
@@ -44,6 +44,7 @@ func TestUnverifiedPair(t *testing.T) {
 	}{
 		{"no values quoted", pairVerdict{Subject: "port", ValueA: "", ValueB: "2480"}},
 		{"same value both sides", pairVerdict{Subject: "date", ValueA: "2017-09-09", ValueB: "2017-09-09"}},
+		{"same value, different wording", pairVerdict{Subject: "duration", ValueA: "three hours per day", ValueB: "three hours/day"}},
 		{"a refinement, not a conflict", pairVerdict{Subject: "scope", ValueA: "Solution", ValueB: "Evidence-based solution"}},
 		{"value invented for A", pairVerdict{Subject: "port", ValueA: "9999", ValueB: "2480"}},
 		{"value invented for B", pairVerdict{Subject: "port", ValueA: "8090", ValueB: "7777"}},
@@ -60,6 +61,7 @@ func TestUnverifiedPair(t *testing.T) {
 		v    pairVerdict
 	}{
 		{"two real values", pairVerdict{Subject: "report service port", ValueA: "8090", ValueB: "2480"}},
+		{"same words, different number", pairVerdict{Subject: "tracks", ValueA: "13 track list", ValueB: "16 track list"}},
 		{"quoted long spans", pairVerdict{Subject: "date", ValueA: "FND-1671 stamped 2026-09-04T06:15:32Z", ValueB: "Booking call on 2017-09-09"}},
 	}
 	for _, c := range keep {

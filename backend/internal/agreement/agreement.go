@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/zcag/tela/backend/internal/llm"
 	"github.com/zcag/tela/backend/internal/rag"
@@ -150,6 +152,8 @@ const pairSystem = `You are given TWO passages, each from a different page of th
 
 Answer contradict ONLY IF both passages state something about the SAME specific thing — the same component, service, endpoint, port, host, path, value, person, date, owner or behaviour — and the two statements cannot both be true. Quote the two conflicting values EXACTLY as they appear, one from each passage. If you cannot quote a real value from each side, it is not a contradiction.
 
+The two values must be the same KIND of thing measured the same way — two ports, two dates for one event, two names for one company — so that if one is right the other must be wrong. An identifier against a name, a count of one thing against a count of something else, or a value against a description of it can both be true at once: that is neutral. Each value must also be specific enough to look up; "basically the same" or "the first big one" is not a value.
+
 Answer agree when they state the same fact about a shared subject.
 
 Answer neutral for everything else: different things that merely look alike, one passage adding detail the other omits, a difference of scope or recency, boilerplate, navigation or link lists, or two copies of the same text with no conflicting claim. A passage that merely describes or quotes a disagreement is not itself in one. When you are unsure between contradict and neutral, answer neutral.
@@ -234,6 +238,11 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 			if why := unverifiedPair(v, targetText, nbrText); why != "" {
 				slog.Debug("agreement: dropped an unverifiable conflict",
 					"page_id", pageID, "against", n.PageID, "why", why, "raw", out)
+				continue
+			}
+			if s.restatesOneValue(ctx, v) {
+				slog.Debug("agreement: dropped one value restated two ways",
+					"page_id", pageID, "against", n.PageID, "a", v.ValueA, "b", v.ValueB)
 				continue
 			}
 			dispute++
@@ -333,7 +342,10 @@ func unverifiedPair(v pairVerdict, aText, bText string) string {
 	switch {
 	case a == "" || b == "":
 		return "no value quoted from each side"
-	case a == b:
+	case a == b, sameTokens(a, b):
+		// sameTokens catches the paraphrase normValue cannot: "three hours per day"
+		// against "three hours/day" is not equal and neither contains the other,
+		// because the difference sits mid-string as " per " against "/".
 		return "the same value on both sides (" + a + ")"
 	case len(a) > 1 && len(b) > 1 && (strings.Contains(a, b) || strings.Contains(b, a)):
 		return "one value only refines the other (" + a + " / " + b + ")"
@@ -343,6 +355,45 @@ func unverifiedPair(v pairVerdict, aText, bText string) string {
 		return "value " + b + " is not in passage B"
 	}
 	return ""
+}
+
+// sameTokens reports whether two values carry exactly the same content words once
+// punctuation and connectors are gone — the same value written differently. Bag
+// equality is deliberately strict: it can only fire when NOTHING differs but the
+// wording, so it cannot collapse two values that actually disagree.
+func sameTokens(a, b string) bool {
+	ta, tb := valueTokens(a), valueTokens(b)
+	if len(ta) == 0 || len(ta) != len(tb) {
+		return false
+	}
+	for i := range ta {
+		if ta[i] != tb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// valueConnectors are dropped before comparing: they carry no value of their own,
+// and they are exactly what differs between "three hours per day" and "hours/day".
+var valueConnectors = map[string]bool{
+	"per": true, "of": true, "the": true, "a": true, "an": true, "and": true,
+	"to": true, "in": true, "on": true, "at": true, "for": true, "is": true,
+	"was": true, "as": true, "by": true, "with": true, "from": true,
+}
+
+func valueTokens(v string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(v), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := fields[:0]
+	for _, f := range fields {
+		if !valueConnectors[f] {
+			out = append(out, f)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // quotedIn checks the model really took the value out of that passage. A long span
@@ -361,6 +412,38 @@ func quotedIn(value, text string) bool {
 
 func normValue(s string) string {
 	return strings.Trim(strings.ToLower(strings.Join(strings.Fields(s), " ")), "\"'`.,;:|()")
+}
+
+// distinctValuesSystem asks the narrowest question there is, and only about a
+// conflict that has already passed every deterministic check: are these two values
+// actually different? A model quoting faithfully still restates one value two ways
+// ("13-track list" against "13 soundtrack tracks"), which no string comparison can
+// see. The quotable-string rule is load-bearing — without it the model calls two
+// taglines "the same" because they mean roughly the same, and a real conflict
+// disappears.
+const distinctValuesSystem = `You are given two values, each quoted from a different wiki page, which a reviewer claims conflict.
+
+Decide whether they are THE SAME value expressed differently — different wording, formatting, units, abbreviation, spelling, or one simply rephrasing the other — or DIFFERENT values that genuinely disagree.
+
+Two values that name the same thing at different levels of detail are the SAME.
+Two values that a reader would have to choose between are DIFFERENT.
+
+If the value is a QUOTABLE STRING — a name, title, tagline, label, slogan, identifier or exact wording someone would copy — then any difference in wording makes them DIFFERENT, however close the meaning. Only call those the same when the difference is purely formatting: case, punctuation, spacing, or an abbreviation of the identical words.
+
+Answer with exactly one word: same or different.`
+
+// restatesOneValue reports whether the pair is one value written two ways. It fails
+// OPEN — any error keeps the conflict — because a wrong "same" deletes a real
+// finding silently, while a wrong "different" only leaves one noisy row a reader
+// can see and dismiss.
+func (s *Service) restatesOneValue(ctx context.Context, v pairVerdict) bool {
+	out, err := s.llm.Complete(llm.WithBackground(ctx), distinctValuesSystem,
+		fmt.Sprintf("Subject: %s\nA: %s\nB: %s", v.Subject, v.ValueA, v.ValueB))
+	if err != nil {
+		slog.Debug("agreement: value confirmation failed, keeping the conflict", "err", err)
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(out)), "same")
 }
 
 // DisputesFor returns the cached disputes for each given page (clean rows only,
