@@ -143,3 +143,43 @@ func TestClampMarksTruncationAtLineBoundary(t *testing.T) {
 		t.Fatalf("clamp altered an under-budget body: %q", got)
 	}
 }
+
+// A field that identifies the page — a project code, a media id — is not a shared
+// fact, and every page having its own is not a disagreement. The tell is one page
+// raising the same subject against several neighbours with its own value constant.
+func TestDropIdentityFields(t *testing.T) {
+	mk := func(nb int64, subject, a, b string) candidate {
+		v := pairVerdict{Subject: subject, ValueA: a, ValueB: b}
+		return candidate{Dispute{PageID: nb, Title: "n", Reason: v.Reason()}, v}
+	}
+	got := dropIdentityFields([]candidate{
+		// An identity field: one subject, my value fixed, three different theirs.
+		mk(11, "Mã CSE", "HK261-DAGD1-369", "HK261-DAGD1-365"),
+		mk(12, "Mã CSE", "HK261-DAGD1-369", "HK261-DAGD1-234"),
+		mk(13, "Mã CSE", "HK261-DAGD1-369", "HK261-DAGD1-233"),
+		// Two real conflicts from one page, under different subjects.
+		mk(14, "payroll document-holder", "Jutta A. Groß-Holler", "Bianca Kummrow"),
+		mk(15, "payroll accountant", "Jutta A. Groß-Holler", "Steffen Haja"),
+		// One subject twice, but this page states a different value each time —
+		// a real clash, not an identity.
+		mk(16, "service port", "8485", "8484"),
+		mk(17, "service port", "8484", "8480"),
+	}, 1)
+	kept := map[int64]bool{}
+	for _, d := range got {
+		kept[d.PageID] = true
+	}
+	for _, id := range []int64{11, 12, 13} {
+		if kept[id] {
+			t.Errorf("identity-field conflict against %d should have been dropped", id)
+		}
+	}
+	for _, id := range []int64{14, 15, 16, 17} {
+		if !kept[id] {
+			t.Errorf("real conflict against %d should have been kept", id)
+		}
+	}
+	if len(got) != 4 {
+		t.Fatalf("kept %d conflicts, want 4", len(got))
+	}
+}

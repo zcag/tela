@@ -211,6 +211,7 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 
 	var corroborate, dispute int
 	disputes := []Dispute{}
+	candidates := []candidate{}
 	// One call per neighbour, each a two-passage question. The old shape — one call
 	// holding the target plus all five neighbours — made the model find the shared
 	// subject across six texts itself, and a model ordered to name two conflicting
@@ -245,10 +246,14 @@ func (s *Service) AgreePage(ctx context.Context, pageID int64, force bool) error
 					"page_id", pageID, "against", n.PageID, "a", v.ValueA, "b", v.ValueB)
 				continue
 			}
-			dispute++
-			disputes = append(disputes, Dispute{PageID: n.PageID, Title: n.Title, Reason: v.Reason()})
+			candidates = append(candidates, candidate{
+				Dispute{PageID: n.PageID, Title: n.Title, Reason: v.Reason()}, v})
 		}
 	}
+	// Identity fields are decided across the page's whole candidate set, so this
+	// runs after every neighbour has been judged.
+	disputes = dropIdentityFields(candidates, pageID)
+	dispute = len(disputes)
 
 	payload, _ := json.Marshal(disputes)
 	if _, err := s.db.ExecContext(ctx, `
@@ -393,6 +398,55 @@ func valueTokens(v string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// candidate is a conflict that survived the per-pair checks and still has to
+// clear dropIdentityFields, which can only judge it against its siblings.
+type candidate struct {
+	d Dispute
+	v pairVerdict
+}
+
+// dropIdentityFields removes conflicts over a field that IDENTIFIES the page
+// rather than describing something shared — a project code, a media object id.
+// Every page carries its own, so two pages stating different ones are not
+// disagreeing, they are being themselves; the model cannot see this from one pair
+// because within that pair it looks exactly like a value clash.
+//
+// The tell is in the shape of the page's own findings: the same subject raised
+// against several neighbours, this page's value the same each time and theirs all
+// different. Measured over the live corpus it drops 10 findings — a project's "Mã
+// CSE" against four sibling projects, a media page's Vimeo id against three other
+// takes — every one of them junk, and it touches no real conflict: a page with two
+// genuine conflicts raises them under different subjects (a payroll document-holder
+// and a payroll accountant) or with different values of its own.
+//
+// Deliberately NOT widened to the whole space. The same signature there — one value
+// per page under a shared subject — is also what a REAL infrastructure conflict
+// looks like, where each service page names its own port and the disagreement is
+// over which port a shared service listens on. Two singleton findings escape this
+// narrower rule; that is the price of not killing those.
+func dropIdentityFields(cands []candidate, pageID int64) []Dispute {
+	type key struct{ subject, mine string }
+	theirs := map[key]map[string]bool{}
+	for _, c := range cands {
+		k := key{normValue(c.v.Subject), normValue(c.v.ValueA)}
+		if theirs[k] == nil {
+			theirs[k] = map[string]bool{}
+		}
+		theirs[k][normValue(c.v.ValueB)] = true
+	}
+	out := []Dispute{}
+	for _, c := range cands {
+		k := key{normValue(c.v.Subject), normValue(c.v.ValueA)}
+		if len(theirs[k]) >= 2 {
+			slog.Debug("agreement: dropped an identity field, not a shared fact",
+				"page_id", pageID, "against", c.d.PageID, "subject", c.v.Subject, "value", c.v.ValueA)
+			continue
+		}
+		out = append(out, c.d)
+	}
 	return out
 }
 
