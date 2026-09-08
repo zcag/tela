@@ -45,6 +45,23 @@ type adminUserDTO struct {
 	// Lifecycle label (admin_user_segments.go): power|regular|dabbler|churned|never.
 	// Always computed from the last 30 days, never from the selected window.
 	Segment string `json:"segment,omitempty"`
+	// First-touch signup attribution (signup_attribution.go). Absent for every
+	// account created before it shipped, and for any signup that arrived without
+	// the landing cookie — the UI shows nothing rather than guessing "unknown".
+	Signup *adminUserSignup `json:"signup,omitempty"`
+}
+
+// adminUserSignup is where one account came from. Source is the collapsed
+// one-word answer (utm_source → referrer host → "direct"); the rest are the raw
+// fields behind it, so an admin can see the actual campaign and landing page.
+type adminUserSignup struct {
+	Source      string `json:"source"`
+	Medium      string `json:"medium,omitempty"`
+	Campaign    string `json:"campaign,omitempty"`
+	Term        string `json:"term,omitempty"`
+	Content     string `json:"content,omitempty"`
+	Referrer    string `json:"referrer,omitempty"`
+	LandingPath string `json:"landing_path,omitempty"`
 }
 
 // adminUserUsage is the per-user resource snapshot the admin list shows: current
@@ -85,7 +102,8 @@ func (s *Server) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	win := parseAdminUserWindow(r.URL.Query().Get("window"), now)
 	rows, err := s.DB.QueryContext(r.Context(), `
-		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at
+		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at,
+		       signup_referrer, signup_utm_source, signup_utm_medium, signup_utm_campaign, signup_utm_term, signup_utm_content, signup_landing_path
 		  FROM users
 		 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -473,12 +491,14 @@ type adminUserScanner interface {
 
 func scanAdminUserRow(s adminUserScanner) (adminUserDTO, error) {
 	var (
-		dto             adminUserDTO
-		email, verified sql.NullString
-		mcpSeen         sql.NullString
-		isAdmin, active int
+		dto                                   adminUserDTO
+		email, verified                       sql.NullString
+		mcpSeen                               sql.NullString
+		isAdmin, active                       int
+		ref, src, med, camp, term, cont, land sql.NullString
 	)
-	if err := s.Scan(&dto.ID, &dto.Username, &dto.DisplayName, &email, &verified, &isAdmin, &active, &dto.PlanKey, &dto.CreatedAt, &dto.UpdatedAt, &mcpSeen); err != nil {
+	if err := s.Scan(&dto.ID, &dto.Username, &dto.DisplayName, &email, &verified, &isAdmin, &active, &dto.PlanKey, &dto.CreatedAt, &dto.UpdatedAt, &mcpSeen,
+		&ref, &src, &med, &camp, &term, &cont, &land); err != nil {
 		return adminUserDTO{}, err
 	}
 	dto.Email = nullableString(email)
@@ -488,6 +508,19 @@ func scanAdminUserRow(s adminUserScanner) (adminUserDTO, error) {
 	dto.McpLastSeen = nullableString(mcpSeen)
 	if mcpSeen.Valid {
 		dto.UsedMCP = true // any MCP request (PAT or OAuth) counts as connected
+	}
+	// Attribution, collapsed to the label the admin screens lead with. Left nil
+	// when the row carries none, so the UI can show nothing at all.
+	attr := signupAttribution{
+		Referrer: ref.String, Source: src.String, Medium: med.String, Campaign: camp.String,
+		Term: term.String, Content: cont.String, LandingPath: land.String,
+	}
+	if label := attributionSource(attr); label != "" {
+		dto.Signup = &adminUserSignup{
+			Source: label, Medium: attr.Medium, Campaign: attr.Campaign,
+			Term: attr.Term, Content: attr.Content,
+			Referrer: attr.Referrer, LandingPath: attr.LandingPath,
+		}
 	}
 	return dto, nil
 }
@@ -513,14 +546,16 @@ func scanInt64Map(ctx context.Context, d *sql.DB, query string, args ...any) map
 
 func selectAdminUserByID(ctx context.Context, d *sql.DB, id int64) (adminUserDTO, error) {
 	row := d.QueryRowContext(ctx, `
-		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at
+		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at,
+		       signup_referrer, signup_utm_source, signup_utm_medium, signup_utm_campaign, signup_utm_term, signup_utm_content, signup_landing_path
 		  FROM users WHERE id = $1`, id)
 	return scanAdminUserRow(row)
 }
 
 func selectAdminUserByIDTx(ctx context.Context, tx *sql.Tx, id int64) (adminUserDTO, error) {
 	row := tx.QueryRowContext(ctx, `
-		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at
+		SELECT id, username, display_name, email, email_verified_at, is_instance_admin, is_active, plan_key, created_at, updated_at, mcp_last_seen_at,
+		       signup_referrer, signup_utm_source, signup_utm_medium, signup_utm_campaign, signup_utm_term, signup_utm_content, signup_landing_path
 		  FROM users WHERE id = $1`, id)
 	return scanAdminUserRow(row)
 }

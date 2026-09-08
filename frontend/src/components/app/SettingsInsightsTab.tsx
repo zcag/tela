@@ -8,6 +8,7 @@ import {
   useAdminStats,
   type AdminStats,
   type StatsSignup,
+  type StatsSignupSource,
   type StatsTopPage,
   type StatsTopPerson,
   type StatsTopSpace,
@@ -133,26 +134,46 @@ function InsightsBody({ s }: { s: AdminStats }) {
               ))}
             </Panel>
           </div>
-          {/* Per day, not cumulative: "how many joined on the 4th" is a count,
-              and the growth curve only implies it. */}
-          <div className="mt-[var(--space-5)] flex flex-col gap-[var(--space-2)]">
-            <div className="flex items-baseline justify-between gap-[var(--space-3)]">
-              <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
-                New accounts per day · last 30 days
-              </span>
-              <span className="text-[length:var(--text-xs)] text-[var(--text-muted)] tabular-nums">
-                busiest day {nf(Math.max(0, ...s.signups))} · {nf(sum(s.signups))} total
+          {/* When they joined, beside where they came from. Per day, not
+              cumulative: "how many joined on the 4th" is a count, and the growth
+              curve only implies it. */}
+          <div className="mt-[var(--space-5)] grid gap-[var(--space-4)] lg:grid-cols-[2fr_1fr] items-start">
+            <div className="flex flex-col gap-[var(--space-2)]">
+              <div className="flex items-baseline justify-between gap-[var(--space-3)]">
+                <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+                  New accounts per day · last 30 days
+                </span>
+                <span className="text-[length:var(--text-xs)] text-[var(--text-muted)] tabular-nums">
+                  busiest day {nf(Math.max(0, ...s.signups))} · {nf(sum(s.signups))} total
+                </span>
+              </div>
+              <span className="block w-full text-[var(--accent)]">
+                <DayBars
+                  values={s.signups}
+                  labels={s.days}
+                  height={56}
+                  ariaLabel="New accounts per day over the last 30 days"
+                  format={(v, d) => `${d}: ${v} ${v === 1 ? 'signup' : 'signups'}`}
+                />
               </span>
             </div>
-            <span className="block w-full text-[var(--accent)]">
-              <DayBars
-                values={s.signups}
-                labels={s.days}
-                height={56}
-                ariaLabel="New accounts per day over the last 30 days"
-                format={(v, d) => `${d}: ${v} ${v === 1 ? 'signup' : 'signups'}`}
-              />
-            </span>
+            {/* Where those accounts came from. Attribution is first-touch, read
+                off the landing cookie at signup, so it only exists for accounts
+                created since it shipped — the caption says how many of the
+                cohort it covers rather than letting the rest read as 'direct'. */}
+            <Panel
+              title="Signup sources · 30d"
+              empty="No attributed signups yet."
+              note={
+                s.signup_sources_known > 0
+                  ? `${nf(s.signup_sources_known)} of ${nf(s.new_users_30)} new accounts attributed`
+                  : undefined
+              }
+            >
+              {s.signup_sources.map((src, i) => (
+                <SignupSourceRow key={src.source} s={src} rank={i + 1} />
+              ))}
+            </Panel>
           </div>
         </Section>
 
@@ -366,12 +387,17 @@ function Hint({ text }: { text: string }) {
   )
 }
 
-function Panel({ title, empty, children }: { title: string; empty: string; children: React.ReactNode[] }) {
+// `note` is an optional caption under the title — for a panel whose numbers
+// need a denominator to be read honestly.
+function Panel({ title, empty, note, children }: { title: string; empty: string; note?: string; children: React.ReactNode[] }) {
   return (
     <div className="flex flex-col gap-[var(--space-2)] rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-1)] p-[var(--space-3)]">
       <span className="text-[length:var(--text-xs)] font-medium uppercase tracking-wide text-[var(--text-muted)]">
         {title}
       </span>
+      {note ? (
+        <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">{note}</span>
+      ) : null}
       {children.length > 0 ? (
         <ul className="m-0 p-0 list-none flex flex-col gap-[var(--space-2)]">{children}</ul>
       ) : (
@@ -449,6 +475,16 @@ function SpaceRow({ s, rank }: { s: StatsTopSpace; rank: number }) {
     <li className="flex items-center gap-[var(--space-2)] text-[length:var(--text-sm)]">
       <Rank n={rank} />
       <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">{s.name}</span>
+      <Count>{nf(s.count)}</Count>
+    </li>
+  )
+}
+
+function SignupSourceRow({ s, rank }: { s: StatsSignupSource; rank: number }) {
+  return (
+    <li className="flex items-center gap-[var(--space-2)] text-[length:var(--text-sm)]">
+      <Rank n={rank} />
+      <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={s.source}>{s.source}</span>
       <Count>{nf(s.count)}</Count>
     </li>
   )

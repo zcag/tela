@@ -65,6 +65,15 @@ type statsUnanswered struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// statsSignupSource is one row of the signup-source breakdown: where the
+// accounts created in the window came from. Source is the collapsed label —
+// utm_source when the link carried one, else the referring host, else "direct"
+// (arrived with neither, which is an answer rather than a gap).
+type statsSignupSource struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
 type adminStats struct {
 	// Dense daily buckets (oldest→newest), len == statsWindowDays. `days` are the
 	// 'YYYY-MM-DD' labels the others align to.
@@ -91,6 +100,13 @@ type adminStats struct {
 	Users  int64 `json:"users"`
 	Spaces int64 `json:"spaces"`
 	Pages  int64 `json:"pages"`
+
+	// Where the last 30 days of signups came from, best first. Only accounts
+	// that carried first-touch attribution are counted — SignupSourcesKnown of
+	// NewUsers30 — so accounts created before the capture shipped don't silently
+	// pile up under "direct".
+	SignupSources      []statsSignupSource `json:"signup_sources"`
+	SignupSourcesKnown int64               `json:"signup_sources_known"`
 
 	// Leaderboards (30d).
 	TopPages        []statsTopPage   `json:"top_pages"`
@@ -182,6 +198,7 @@ func (s *Server) AdminStats(w http.ResponseWriter, r *http.Request) {
 		UsersCum: make([]int64, statsWindowDays),
 		PagesCum: make([]int64, statsWindowDays),
 		// Non-nil slices so the JSON is [] not null when empty.
+		SignupSources:   []statsSignupSource{},
 		TopPages:        []statsTopPage{},
 		TopContributors: []statsTopPerson{},
 		TopSpaces:       []statsTopSpace{},
@@ -405,6 +422,40 @@ func (s *Server) AdminStats(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
+
+	// --- Signup sources (30d) ---
+	// The same collapse attributionSource() does in Go, expressed as SQL so it
+	// can be a GROUP BY: utm_source, else the referrer's host (scheme-stripped
+	// up to the first path segment), else 'direct'. attributedInWindow keeps out
+	// rows with no attribution at all — every account older than the capture —
+	// so the counts describe the cohort we can actually attribute, and the
+	// breakdown and its denominator can never disagree about who's in it.
+	const attributedInWindow = `created_at >= $1
+		   AND (signup_utm_source IS NOT NULL
+		        OR signup_referrer IS NOT NULL
+		        OR signup_landing_path IS NOT NULL)`
+	if rows, err := s.DB.QueryContext(ctx, `
+		SELECT src, COUNT(*) c FROM (
+		  SELECT COALESCE(
+		           NULLIF(signup_utm_source, ''),
+		           NULLIF(split_part(split_part(COALESCE(signup_referrer, ''), '//', 2), '/', 1), ''),
+		           'direct') AS src
+		    FROM users
+		   WHERE `+attributedInWindow+`
+		) t
+		 GROUP BY src ORDER BY c DESC, src LIMIT 10`, cut30); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var ss statsSignupSource
+			if err := rows.Scan(&ss.Source, &ss.Count); err != nil {
+				break
+			}
+			out.SignupSources = append(out.SignupSources, ss)
+		}
+		rows.Close()
+	}
+	_ = s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE `+attributedInWindow, cut30).Scan(&out.SignupSourcesKnown)
 
 	// --- Unanswered Ask questions (30d) — the content-gap to-do list ---
 	if rows, err := s.DB.QueryContext(ctx, `

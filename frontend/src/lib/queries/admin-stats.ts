@@ -32,6 +32,12 @@ export interface StatsSignup {
   created_at: string
   activated: boolean
 }
+// One row of the signup-source breakdown (30d). `source` is utm_source, else
+// the referring host, else 'direct'.
+export interface StatsSignupSource {
+  source: string
+  count: number
+}
 export interface StatsUnanswered {
   question: string
   who: string
@@ -56,6 +62,10 @@ export interface AdminStats {
   users: number
   spaces: number
   pages: number
+  // Where the last 30 days of signups came from, best first. Counts only the
+  // accounts that carry attribution — signup_sources_known of new_users_30.
+  signup_sources: StatsSignupSource[]
+  signup_sources_known: number
   top_pages: StatsTopPage[]
   top_contributors: StatsTopPerson[]
   top_spaces: StatsTopSpace[]

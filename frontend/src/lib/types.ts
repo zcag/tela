@@ -338,6 +338,23 @@ export interface AdminUserRow {
   // Activity inside the requested window. Always present on list rows.
   metrics?: AdminUserMetrics
   segment?: AdminUserSegment
+  // First-touch signup attribution. Absent for every account created before the
+  // capture shipped and for any signup that arrived without the landing cookie —
+  // show nothing in that case, never "unknown".
+  signup?: AdminUserSignup
+}
+
+// Where one account came from (backend's adminUserSignup). `source` is the
+// collapsed answer — utm_source, else the referring host, else 'direct'; the
+// rest are the raw fields behind it.
+export interface AdminUserSignup {
+  source: string
+  medium?: string
+  campaign?: string
+  term?: string
+  content?: string
+  referrer?: string
+  landing_path?: string
 }
 
 // Which slice of history the admin People table is showing. '1m'/'3m' are

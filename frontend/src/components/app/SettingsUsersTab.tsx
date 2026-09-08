@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
   Boxes,
+  Compass,
   Download,
   HelpCircle,
   MoreHorizontal,
@@ -38,6 +39,7 @@ import type {
   AdminUserMetrics,
   AdminUserRow,
   AdminUserSegment,
+  AdminUserSignup,
   AdminUserUsage,
   AdminUserWindow,
 } from '../../lib/types'
@@ -1277,6 +1279,10 @@ function exportUsersCsv(rows: AdminUserRow[], range: AdminUserWindow) {
     'created_at', 'last_active_at', 'orgs', 'spaces', 'storage_bytes',
     'edits', 'human_edits', 'agent_edits', 'sync_edits', 'pages_created',
     'views', 'asks', 'logins', 'days_active', 'days30', 'trend_pct', 'llm_calls', 'mcp',
+    // First-touch signup attribution — blank for accounts created before the
+    // capture shipped, and for anyone who arrived without the landing cookie.
+    'signup_source', 'signup_medium', 'signup_campaign', 'signup_term',
+    'signup_content', 'signup_referrer', 'signup_landing_path',
   ]
   const cell = (v: unknown) => {
     const s = v == null ? '' : String(v)
@@ -1292,6 +1298,9 @@ function exportUsersCsv(rows: AdminUserRow[], range: AdminUserWindow) {
       m.edits, m.human_edits, m.agent_edits, m.sync_edits, m.pages_created,
       m.views, m.asks, m.logins, m.days_active, m.days30, trendDelta(m.weeks) ?? '',
       m.llm_calls, u.used_mcp ? 'yes' : u.has_api_key ? 'key-only' : 'no',
+      u.signup?.source ?? '', u.signup?.medium ?? '', u.signup?.campaign ?? '',
+      u.signup?.term ?? '', u.signup?.content ?? '', u.signup?.referrer ?? '',
+      u.signup?.landing_path ?? '',
     ].map(cell).join(','))
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -1426,6 +1435,19 @@ function UserActivitySheet({
               value={user.last_active_at ? relativeTimeFromSqlite(user.last_active_at) : 'Never'}
             />
             <DetailStat label="Sign-ins" value={String(m.logins)} />
+            {/* Where the account came from — first-touch attribution captured on
+                the landing. Rendered only when we have it: every account created
+                before that shipped has none, and an empty "unknown" tile would
+                just be noise in a grid of real facts. */}
+            {user.signup ? (
+              <DetailStat
+                icon={<Compass width={14} height={14} />}
+                label="Came from"
+                value={signupSourceLabel(user.signup)}
+                title={signupSourceDetail(user.signup)}
+                wide
+              />
+            ) : null}
           </div>
           <p className="m-0 mb-[var(--space-2)] text-[length:var(--text-xs)] font-medium uppercase tracking-wide text-[var(--text-muted)]">
             Recent edits
@@ -1486,23 +1508,50 @@ function isOverLimit(u: AdminUserUsage): boolean {
   )
 }
 
-// One labeled stat in the user detail sheet's grid.
+// The one-line answer to "which source produced this account": the campaign
+// source when the link carried one, else the referring host, else 'direct'
+// (they arrived with neither). Medium/campaign follow when set, so a paid click
+// reads as "google · cpc · spring" rather than just "google".
+function signupSourceLabel(s: AdminUserSignup): string {
+  return [s.source, s.medium, s.campaign].filter(Boolean).join(' · ')
+}
+
+// The raw evidence behind that label, for the hover — the referring URL is the
+// thing an admin actually wants to see when the collapsed source is ambiguous.
+function signupSourceDetail(s: AdminUserSignup): string {
+  const bits = [s.referrer, s.term, s.content].filter(Boolean)
+  if (s.landing_path) bits.push(`landed on ${s.landing_path}`)
+  return bits.join(' · ')
+}
+
+// One labeled stat in the user detail sheet's grid. `wide` spans both columns
+// (for a value that is a phrase rather than a number); `title` adds the hover.
 function DetailStat({
   icon,
   label,
   value,
+  title,
+  wide,
 }: {
   icon?: React.ReactNode
   label: string
   value: string
+  title?: string
+  wide?: boolean
 }) {
   return (
-    <div className="flex flex-col gap-[2px] rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-3)] py-[var(--space-2)]">
+    <div
+      title={title || undefined}
+      className={cn(
+        'flex flex-col gap-[2px] rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-3)] py-[var(--space-2)]',
+        wide && 'col-span-2',
+      )}
+    >
       <span className="inline-flex items-center gap-[var(--space-1)] text-[length:var(--text-xs)] text-[var(--text-muted)]">
         {icon}
         {label}
       </span>
-      <span className="text-[length:var(--text-sm)] font-medium text-[var(--text-primary)]">
+      <span className="truncate text-[length:var(--text-sm)] font-medium text-[var(--text-primary)]">
         {value}
       </span>
     </div>
