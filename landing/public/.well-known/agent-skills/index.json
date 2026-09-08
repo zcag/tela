@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "tela-wiki",
+      "type": "skill-md",
+      "description": "Use when the user asks something their team's own documentation would answer, or asks to write or update a page, spreadsheet, or slide deck in their tela wiki.",
+      "url": "/.well-known/agent-skills/tela-wiki/SKILL.md",
+      "digest": "sha256:de8ca2a2ecbe79dd6e24c88d637eb7ca454c56ef5b26755910a812e3a15b1f82"
+    }
+  ]
+}

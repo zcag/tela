@@ -83,6 +83,12 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	// Served at BOTH the root well-known and the path-scoped variant — Claude
 	// probes `/.well-known/oauth-protected-resource/<mcp-path>` then falls back
 	// to the root. Must be routed through Caddy in prod (new top-level path).
+	// Machine-readable REST description (OpenAPI 3.1), go:embed'd next to the
+	// routes it documents. On auth.IsPublicPath via the /api/public/ prefix —
+	// a static document, no DB, no caller data. Caddy exposes it at the
+	// conventional /openapi.json (see deploy/proxy/sites.caddy). api/openapi.go.
+	mux.HandleFunc("GET /api/public/openapi.json", srv.ServeOpenAPI)
+
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", srv.ServePRM)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/api/mcp", srv.ServePRM)
 

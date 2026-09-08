@@ -1,0 +1,16 @@
+# tela — vulnerability disclosure (RFC 9116)
+#
+# Contact is the address the repository README already names for private
+# security reports (https://github.com/zcag/tela#security). No security@
+# alias is published anywhere else, so this is the one that is known to be
+# monitored — do not "upgrade" it to a prettier address that nobody reads.
+#
+# Expires is a HARD requirement of RFC 9116 and a stale value invalidates the
+# file for parsers (securitytxt.org, Mozilla Observatory, most bug-bounty
+# triage tooling). Refresh it at least annually.
+
+Contact: mailto:tela@telawiki.com
+Expires: 2027-09-09T00:00:00Z
+Preferred-Languages: en
+Canonical: https://telawiki.com/.well-known/security.txt
+Policy: https://github.com/zcag/tela#security

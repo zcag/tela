@@ -76,6 +76,21 @@
 		respond `{"$schema":"https://glama.ai/mcp/schemas/connector.json","maintainers":[{"email":"cagdassalur@gmail.com"}]}` 200
 	}
 
+	# Machine-readable REST description (OpenAPI 3.1). The document is go:embed'd
+	# in the backend next to the routes it describes (api/openapi.go) and served
+	# on the already-public /api/public/ prefix; this block is only the pretty,
+	# crawler-facing name for it. Agent directories and MCP indexers probe
+	# /openapi.json by convention (agent-tools.org's reviewer does, and it was
+	# answering 200 with the SPA's HTML shell before this route existed — the
+	# @handle regex further down matches "openapi.json", so it fell through to
+	# the frontend, which serves index.html as its 404 body). Same rewrite shape
+	# as /sitemap-public.xml below. Indexable — this is a machine entry point,
+	# so deliberately NO noindex.
+	handle /openapi.json {
+		rewrite * /api/public/openapi.json
+		reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
+	}
+
 	# OAuth Protected Resource Metadata (RFC 9728) for the MCP endpoint — a new
 	# top-level path (not under /api), so it needs its own route to the backend.
 	# The backend serves the static discovery JSON (or 404s when OAuth is

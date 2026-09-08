@@ -80,6 +80,7 @@ DEPLOY_IMAGE_ENV   = TELA_BACKEND_IMAGE=$(TELA_REGISTRY)/tela-backend:$(TELA_COM
 
 .PHONY: up down logs build clean dev be-dev fe-dev storybook help test-mcp-integration \
         test dev-db dev-db-clean setup backup restore blocks-gen blocks-gate \
+        skills-gen skills-gate \
         landing-dev landing-build landing-gate landing-clean \
         deploy deploy-backend deploy-frontend deploy-landing deploy-offline registry-up _push \
         release-mcp reset-prod-db health-gate plugin-validate plugin-publish
@@ -216,8 +217,9 @@ be-dev: dev-db
 
 # Backend unit/integration tests against a real Postgres (the testdb harness
 # clones a fresh throwaway database per test). Boots dev-db first. Runs the
-# blocks-manifest gate first so a stale agent guide / uncovered block fails CI.
-test: blocks-gate dev-db
+# blocks-manifest gate first so a stale agent guide / uncovered block fails CI,
+# and skills-gate so a published skill's content digest can't go stale.
+test: blocks-gate skills-gate dev-db
 	cd backend && TELA_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" go test ./...
 
 # ── Block authoring manifest (editor slash menu + agent guide source) ───────
@@ -230,6 +232,17 @@ blocks-gen:
 
 blocks-gate:
 	node scripts/blocks-manifest.mjs --check
+
+# ── Published agent skills (/.well-known/agent-skills/) ─────────────────────
+# Source of truth: plugin/plugins/tela/skills/*/SKILL.md. skills-gen copies each
+# into the landing's public tree and rewrites the discovery index; skills-gate
+# fails when either is stale. The index carries a sha256 of the skill body and
+# clients verify it, so drift is a hard install failure, not a stale doc.
+skills-gen:
+	node scripts/agent-skills.mjs --write
+
+skills-gate:
+	node scripts/agent-skills.mjs --check
 
 # Vendor defter's agent authoring contract (AGENTS.md) into the backend so the
 # sheet_authoring_guide MCP surface can go:embed it (go:embed can't reach into

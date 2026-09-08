@@ -1,0 +1,2810 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "tela REST API",
+    "version": "2026-09-09",
+    "summary": "HTTP API of tela, a self-hostable markdown-native team wiki.",
+    "description": "Machine-readable description of the HTTP API behind [tela](https://telawiki.com), an open-source markdown-native team wiki with a built-in MCP server.\n\n## Stability\n\n**`/api/*` is an internal API.** It powers tela's own React frontend and carries no version prefix; routes and shapes may change between releases without notice. `GET /api/health` and `GET /api/version` are the only routes with a stability promise.\n\n**The stable integration surface is the MCP server** at `POST /api/mcp` (Streamable HTTP; OAuth 2.1 via the connector flow, or a personal access token as a bearer). Its tool schema is versioned and is the intended API for agents and third-party tools. Discovery metadata: `/.well-known/mcp.json` and `/.well-known/oauth-protected-resource`. The MCP transport is deliberately **not** described here — it speaks JSON-RPC over one endpoint, which OpenAPI cannot usefully model.\n\nThis document exists so an integrator, a crawler, or an agent directory can see what the HTTP surface actually is instead of guessing. Build against MCP where you can.\n\n## Coverage\n\nDescribed: meta, authentication, personal access tokens, spaces, pages (CRUD, move, revisions, backlinks, markdown export), search (lexical and semantic), comments, attachments, share links (management and the public token API), the no-login public-space read API, and feedback.\n\nDeliberately omitted (real routes, not described): instance administration (`/api/admin/*`), organizations, groups, members and invitations, billing and licensing, Atlas documentation runs (`/api/atlas/*`), generative AI (`/api/rag/ask`, `/api/rag/draft`, summaries), notifications, digests, decks and sheets, the WebDAV sync surface (`/dav/`), the Yjs collaboration websocket (`/ws/`), Prometheus metrics, and OG/social-card rendering. They are internal, operator-only, or not HTTP-shaped.\n\nAlso not here: **section-level page patching**. The heading-path patch (`patch_page`) exists only as an MCP tool; over REST you read `page.body`, edit it, and `PATCH` the whole body back.\n\n## Authentication\n\nTwo credentials, checked in that order:\n\n1. `Authorization: Bearer tela_pat_<43 chars>` — a personal access token (Settings -> API keys, or `POST /api/api_keys`). If the header is present it is used; a bad token is `401` and never falls back to the cookie.\n2. `Cookie: tela_session` — the browser session set by `POST /api/auth/login`.\n\nA token carries a **scope**: `read` permits `GET`/`HEAD` only, `write` and `admin` permit any method. A scope violation is `403 api_key_scope`, written by middleware before the handler runs. `POST /api/feedback` is the single carve-out — any scope may call it.\n\nA token may also be **pinned to one space** (`space_id`). Endpoints that resolve a target space then refuse other spaces with `403 api_key_space_scope`; endpoints that list across spaces silently narrow to the pinned one.\n\nWithin a space, roles are `owner > editor > viewer`; `editor+` is required to write. Note two asymmetries: reading **comments** and reading **revisions** both require `editor+`, not `viewer`.\n\nEndpoints marked with an empty `security` need no credential: they self-authenticate on a token in the path, a signature, or a space published to the open web.\n\n## Errors\n\nEvery JSON error is `{\"error\": \"<human message>\", \"code\": \"<machine code>\"}`. Key on `code`. `403 forbidden` doubles as \"not found\" on page and space reads — a missing object and an inaccessible one are deliberately indistinguishable, so ids cannot be enumerated.\n\n## Dates\n\nTimestamps are `\"YYYY-MM-DD HH:MM:SS\"` in UTC (no offset, no `Z`) unless a field says otherwise. This is a carry-over from tela's SQLite era and is stable.",
+    "contact": {
+      "name": "tela",
+      "url": "https://telawiki.com/support",
+      "email": "tela@telawiki.com"
+    },
+    "license": {
+      "name": "AGPL-3.0-or-later",
+      "url": "https://github.com/zcag/tela/blob/main/LICENSE"
+    }
+  },
+  "externalDocs": {
+    "description": "tela documentation and source",
+    "url": "https://github.com/zcag/tela"
+  },
+  "servers": [
+    {
+      "url": "https://telawiki.com",
+      "description": "The instance serving this document. A self-hosted instance rewrites this to its own origin."
+    }
+  ],
+  "security": [{ "bearerAuth": [] }, { "sessionCookie": [] }],
+  "tags": [
+    { "name": "meta", "description": "Liveness and build metadata. The only routes with a stability promise." },
+    { "name": "auth", "description": "Email-first sign-in, registration, and password reset. Cookie-based; a token cannot call these." },
+    { "name": "api keys", "description": "Personal access tokens — the credential for everything else, and for MCP." },
+    { "name": "spaces", "description": "A space is a wiki: a page tree, a member list, and a visibility." },
+    { "name": "pages", "description": "Pages are canonical markdown. `body` is the whole document; there is no block model." },
+    { "name": "search", "description": "Ranked Postgres full-text, plus semantic retrieval over embedded chunks." },
+    { "name": "comments", "description": "Anchored discussion threads on a page's text." },
+    { "name": "attachments", "description": "Files stored against a page, content-addressed and served publicly by hash." },
+    { "name": "shares", "description": "Unguessable share links, optionally password-gated and time-limited." },
+    { "name": "public", "description": "No-login read API for spaces published to the open web. GET-only." },
+    { "name": "feedback", "description": "Write-only channel for product feedback." }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getHealth",
+        "summary": "Liveness probe",
+        "description": "Reports process, database, and semantic-retrieval status. `rag` reflects configuration only, not a live probe of the embedder.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Healthy.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Health" }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unreachable. `status` is `degraded` and `db` carries the error.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Health" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/version": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getVersion",
+        "summary": "Build metadata",
+        "description": "Values are stamped in at build time. Describes the **backend** build only — the frontend bundle ships as a separate image and may be at a different commit.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Build metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["version", "commit", "built_at"],
+                  "properties": {
+                    "version": { "type": "string", "examples": ["dev"] },
+                    "commit": { "type": "string", "examples": ["297554d"] },
+                    "built_at": { "type": "string", "description": "RFC 3339. Falls back to process start time when unstamped." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/openapi.json": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getOpenAPI",
+        "summary": "This document",
+        "description": "Also served at `/openapi.json` on the public origin. `servers[0].url` is rewritten to the instance's own origin.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 description of this instance.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "login",
+        "summary": "Sign in and receive a session cookie",
+        "description": "Rate-limited to 5 attempts per minute per client IP. An account whose email is not yet confirmed is refused with `403 email_unverified`.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["password"],
+                "properties": {
+                  "identifier": { "type": "string", "description": "Email address or username. Preferred over `username`." },
+                  "username": { "type": "string", "description": "Legacy alias for `identifier`." },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in. Sets the `tela_session` cookie (HttpOnly, SameSite=Lax, 30 days).",
+            "headers": {
+              "Set-Cookie": {
+                "description": "`tela_session=<opaque>; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000` (plus `Secure` when the instance is served over HTTPS).",
+                "schema": { "type": "string" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["user"],
+                  "properties": { "user": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": {
+            "description": "`unauthorized` — invalid credentials. Missing fields, unknown account, and a wrong password are one indistinguishable response.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "`email_unverified` (confirm your email first) or `sso_required` (this account or domain must sign in through the identity provider).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "logout",
+        "summary": "Sign out",
+        "description": "Always succeeds, with or without a session.",
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "Signed out. Expires the `tela_session` cookie.",
+            "headers": {
+              "Set-Cookie": { "description": "`tela_session=; Max-Age=-1`.", "schema": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["auth"],
+        "operationId": "getMe",
+        "summary": "The signed-in user",
+        "description": "**Cookie only.** `/api/auth/*` bypasses the bearer middleware, so a personal access token does not authenticate this route.",
+        "security": [{ "sessionCookie": [] }],
+        "responses": {
+          "200": {
+            "description": "The current user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["user"],
+                  "properties": { "user": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "register",
+        "summary": "Create an account",
+        "description": "Open self-registration, when the instance allows it. Sends a confirmation email; the account cannot sign in until `verify-email` is called with the token from that link. Rate-limited to 6 per 15 minutes per client IP.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "username", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "username": { "type": "string", "maxLength": 64, "description": "1-64 characters. Also becomes the public handle at `/{username}`, so it may not collide with an organization slug." },
+                  "password": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; a confirmation email is on its way.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "email"],
+                  "properties": {
+                    "ok": { "type": "boolean", "const": true },
+                    "email": { "type": "string", "description": "The normalized (lower-cased) address." }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": {
+            "description": "`registration_closed` — self-registration is disabled on this instance.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "409": {
+            "description": "`conflict` (email or username taken), `handle_taken`, or `handle_reserved`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "verifyEmail",
+        "summary": "Confirm an email address",
+        "description": "Consumes the single-use token from the confirmation link and **signs the user in**. Tokens are stored hashed; the raw value exists only in the link.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": { "token": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed and signed in. Sets the `tela_session` cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["user"],
+                  "properties": { "user": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request` (token missing) or `invalid_token` (unknown, used, or expired).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/auth/resend-verification": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "resendVerification",
+        "summary": "Resend the confirmation email",
+        "description": "Always answers 202 whether or not the address exists — no account enumeration. Rate-limited to 6 per 15 minutes per client IP.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": { "email": { "type": "string", "format": "email" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/Accepted" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/auth/request-password-reset": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "requestPasswordReset",
+        "summary": "Send a password-reset link",
+        "description": "Always answers 202 whether or not the address exists — no account enumeration. Rate-limited to 6 per 15 minutes per client IP.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": { "email": { "type": "string", "format": "email" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "$ref": "#/components/responses/Accepted" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "tags": ["auth"],
+        "operationId": "resetPassword",
+        "summary": "Set a new password from a reset token",
+        "description": "Revokes **every** existing session for the account, and does not create a new one — sign in afterwards.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "password"],
+                "properties": {
+                  "token": { "type": "string" },
+                  "password": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": {
+            "description": "`bad_request` (missing token, short password) or `invalid_token`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/api_keys": {
+      "get": {
+        "tags": ["api keys"],
+        "operationId": "listAPIKeys",
+        "summary": "List your personal access tokens",
+        "description": "Caller's own tokens, newest first, revoked ones included. The raw token is never returned again.",
+        "responses": {
+          "200": {
+            "description": "Tokens.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["api_keys"],
+                  "properties": {
+                    "api_keys": { "type": "array", "items": { "$ref": "#/components/schemas/APIKey" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["api keys"],
+        "operationId": "createAPIKey",
+        "summary": "Mint a personal access token",
+        "description": "The raw token is returned **once**, in `api_key.key`, and is stored only as an HMAC — it cannot be recovered. In bearer mode this route needs `admin` scope; a session works for any user. Only instance admins may mint `admin`-scoped tokens.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "scope"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 100, "description": "Label, for your own bookkeeping." },
+                  "scope": { "$ref": "#/components/schemas/Scope" },
+                  "space_id": { "type": ["integer", "null"], "format": "int64", "description": "Pin the token to one space. Omit for instance-wide access." },
+                  "expires_at": { "type": ["string", "null"], "description": "`YYYY-MM-DD HH:MM:SS` UTC, must be in the future. Omit for a token that never expires." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created. `api_key.key` is the raw token — store it now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["api_key"],
+                  "properties": { "api_key": { "$ref": "#/components/schemas/APIKeyWithSecret" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "`api_key_scope` (bearer without `admin`) or `forbidden` (only instance admins may mint `admin` tokens).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/api_keys/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "delete": {
+        "tags": ["api keys"],
+        "operationId": "revokeAPIKey",
+        "summary": "Revoke a token",
+        "description": "Soft-revoke — the row survives for the audit trail. Idempotent.",
+        "responses": {
+          "204": { "description": "Revoked." },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/spaces": {
+      "get": {
+        "tags": ["spaces"],
+        "operationId": "listSpaces",
+        "summary": "Spaces you can access",
+        "description": "Resolved through direct membership and organization or group grants alike.",
+        "responses": {
+          "200": {
+            "description": "Accessible spaces.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["spaces"],
+                  "properties": {
+                    "spaces": { "type": "array", "items": { "$ref": "#/components/schemas/SpaceListItem" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["spaces"],
+        "operationId": "createSpace",
+        "summary": "Create a space",
+        "description": "The creator becomes owner. Passing `org_id` makes the space organization-owned and grants the whole organization `editor`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "maxLength": 200 },
+                  "slug": { "type": "string", "maxLength": 100, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "Derived from `name` when omitted." },
+                  "org_id": { "type": ["integer", "null"], "format": "int64", "description": "You must be a member of the organization." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/SpaceEnvelope" },
+          "400": {
+            "description": "`invalid_json`, `invalid_name`, or `invalid_slug`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "402": { "$ref": "#/components/responses/QuotaExceeded" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": {
+            "description": "`slug_conflict` — that slug is taken.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/spaces/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["spaces"],
+        "operationId": "getSpace",
+        "summary": "Get a space",
+        "responses": {
+          "200": { "$ref": "#/components/responses/SpaceEnvelope" },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "patch": {
+        "tags": ["spaces"],
+        "operationId": "updateSpace",
+        "summary": "Rename, re-slug, describe, or publish a space",
+        "description": "`editor+` for name, slug, and description. **Owner only** for `visibility` — flipping to `public` makes the whole space readable with no login (see the `public` tag).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "name": { "type": "string", "maxLength": 200 },
+                  "slug": { "type": "string", "maxLength": 100, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+                  "visibility": { "$ref": "#/components/schemas/Visibility" },
+                  "description": { "type": "string", "maxLength": 280, "description": "Empty string clears it." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/SpaceEnvelope" },
+          "400": {
+            "description": "`invalid_json`, `no_fields`, `invalid_name`, `invalid_slug`, `invalid_visibility`, or `invalid_description`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "402": {
+            "description": "`upgrade_required` — publishing is not included in the owner's plan on this instance.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "`slug_conflict`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "delete": {
+        "tags": ["spaces"],
+        "operationId": "deleteSpace",
+        "summary": "Delete a space",
+        "description": "Owner only.",
+        "responses": {
+          "204": { "description": "Deleted." },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/spaces/{id}/files": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["spaces", "attachments"],
+        "operationId": "listSpaceFiles",
+        "summary": "Every file in a space",
+        "description": "Wider than the per-page listing: it also reaches files parented to the space root, which no page lists — the ones a sync or import drops beside the tree. Capped at 500 rows.",
+        "parameters": [
+          {
+            "name": "parent_page_id",
+            "in": "query",
+            "required": false,
+            "description": "A page id to narrow to that page's files, or the literal `root` for files at the space root. Omit for the whole space.",
+            "schema": { "type": "string" },
+            "examples": { "one page": { "value": "1234" }, "space root": { "value": "root" } }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files. `truncated` is true when the 500-row cap was hit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["files", "truncated"],
+                  "properties": {
+                    "files": { "type": "array", "items": { "$ref": "#/components/schemas/SpaceFile" } },
+                    "truncated": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/spaces/{id}/export.zip": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["spaces"],
+        "operationId": "exportSpaceZip",
+        "summary": "Export a space as a zip of markdown files",
+        "description": "One `.md` per page with canonical frontmatter, children nested in folders, attachments under `_attachments/`. The file name matches the page's sync filename, not its URL slug.",
+        "responses": {
+          "200": {
+            "description": "Zip archive.",
+            "headers": {
+              "Content-Disposition": { "description": "`attachment; filename=\"<space-slug>.zip\"`", "schema": { "type": "string" } }
+            },
+            "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages": {
+      "get": {
+        "tags": ["pages"],
+        "operationId": "listPages",
+        "summary": "Pages in a space",
+        "description": "Flat by default (one level, filtered by `parent_id`), or the whole nested tree with `tree=1`. Bodies are **not** included — use `GET /api/pages/{id}` or `/api/pages/bodies`.",
+        "parameters": [
+          { "name": "space_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": false,
+            "description": "Direct children of this page. Omit, or pass the literal `null`, for top-level pages. Ignored when `tree=1`.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "tree",
+            "in": "query",
+            "required": false,
+            "description": "`1` returns the whole space as a nested tree; each node gains a `children` array.",
+            "schema": { "type": "string", "enum": ["1"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pages. Nodes carry `children` only in tree mode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["pages"],
+                  "properties": {
+                    "pages": { "type": "array", "items": { "$ref": "#/components/schemas/PageNode" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` — `space_id` missing or malformed, or a bad `parent_id`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "`space_not_found`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["pages"],
+        "operationId": "createPage",
+        "summary": "Create a page",
+        "description": "`editor+` on the target space. Two server-side transforms to know about: leading YAML frontmatter in `body` is lifted into `props` (except on deck and sheet pages, whose bodies are stored verbatim), and a leading `# Heading` identical to `title` is stripped.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["space_id", "title"],
+                "properties": {
+                  "space_id": { "type": "integer", "format": "int64", "minimum": 1 },
+                  "parent_id": { "type": ["integer", "null"], "format": "int64", "description": "Omit or null for a top-level page. Must live in the same space." },
+                  "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+                  "body": { "type": "string", "description": "Markdown." },
+                  "props": { "$ref": "#/components/schemas/PageProps" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/PageEnvelope" },
+          "400": {
+            "description": "`invalid_json`, `invalid_title`, `invalid_space_id`, `invalid_parent_id`, `space_not_found`, `parent_not_found`, or `parent_space_mismatch`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "402": { "$ref": "#/components/responses/QuotaExceeded" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/all": {
+      "get": {
+        "tags": ["pages"],
+        "operationId": "listAllPages",
+        "summary": "Every page you can reach, across spaces",
+        "description": "Titles and breadcrumbs only — the index behind the command palette. A space-pinned token narrows silently.",
+        "responses": {
+          "200": {
+            "description": "Pages, ordered by space then title.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["pages"],
+                  "properties": {
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "space_id", "space_name", "title", "breadcrumb"],
+                        "properties": {
+                          "id": { "type": "integer", "format": "int64" },
+                          "space_id": { "type": "integer", "format": "int64" },
+                          "space_name": { "type": "string" },
+                          "title": { "type": "string" },
+                          "breadcrumb": { "type": "array", "items": { "type": "string" }, "description": "Ancestor titles, root first, excluding the page itself." }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/bodies": {
+      "get": {
+        "tags": ["pages"],
+        "operationId": "listPageBodies",
+        "summary": "Paginated page bodies for one space",
+        "description": "The bulk-read endpoint: cursor-paginated full bodies, optionally only what changed since a timestamp. Use this to mirror a space, not a loop over `GET /api/pages/{id}`.",
+        "parameters": [
+          { "name": "space_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+          { "name": "since", "in": "query", "required": false, "description": "Only pages with `updated_at` after this. Format `YYYY-MM-DD HH:MM:SS` UTC.", "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "required": false, "description": "`next_cursor` from the previous page of results.", "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 200 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of bodies, ordered by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["pages", "next_cursor", "has_more"],
+                  "properties": {
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "space_id", "title", "body", "updated_at"],
+                        "properties": {
+                          "id": { "type": "integer", "format": "int64" },
+                          "space_id": { "type": "integer", "format": "int64" },
+                          "title": { "type": "string" },
+                          "body": { "type": "string" },
+                          "updated_at": { "type": "string" }
+                        }
+                      }
+                    },
+                    "next_cursor": { "type": ["integer", "null"], "format": "int64", "description": "Null when `has_more` is false." },
+                    "has_more": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "`space_not_found`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["pages"],
+        "operationId": "getPage",
+        "summary": "Get a page",
+        "description": "Returns the canonical markdown body plus how the page is exposed to the outside world.",
+        "responses": {
+          "200": {
+            "description": "The page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["page", "exposure"],
+                  "properties": {
+                    "page": { "$ref": "#/components/schemas/Page" },
+                    "exposure": { "$ref": "#/components/schemas/Exposure" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/ForbiddenOrMissingPage" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "patch": {
+        "tags": ["pages"],
+        "operationId": "updatePage",
+        "summary": "Update a page's title, body, or properties",
+        "description": "`editor+`. A change to `title` or `body` snapshots a revision first. **`props` replaces the whole bag** — send the properties you want to keep. There is no section-level patch over REST; the `patch_page` MCP tool is the only place heading-path targeting exists.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+                  "body": { "type": "string", "description": "The whole markdown document." },
+                  "props": { "$ref": "#/components/schemas/PageProps" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/PageEnvelope" },
+          "400": {
+            "description": "`invalid_json`, `no_fields`, or `invalid_title`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": { "$ref": "#/components/responses/ForbiddenOrMissingPage" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "delete": {
+        "tags": ["pages"],
+        "operationId": "deletePage",
+        "summary": "Delete a page and its subtree",
+        "description": "`editor+`. Soft delete — the page and **all of its descendants** move to the space trash.",
+        "responses": {
+          "204": { "description": "Deleted." },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/ForbiddenOrMissingPage" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/move": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "post": {
+        "tags": ["pages"],
+        "operationId": "movePage",
+        "summary": "Reparent, reorder, or move a page to another space",
+        "description": "`editor+` on the source space, and on the target space when `space_id` changes. Field **presence** matters: an omitted `parent_id` leaves the parent alone, while an explicit `null` detaches the page to the top level.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "space_id": { "type": "integer", "format": "int64", "minimum": 1 },
+                  "parent_id": { "type": ["integer", "null"], "format": "int64" },
+                  "position": { "type": "integer", "format": "int64", "minimum": 0, "description": "0-based index among siblings; clamped to last." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/PageEnvelope" },
+          "400": {
+            "description": "`invalid_json`, `no_fields`, `invalid_space_id`, `invalid_parent_id`, `invalid_position`, `space_not_found`, `parent_not_found`, `parent_space_mismatch`, or `cycle` (the move would make the page its own ancestor).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "402": { "$ref": "#/components/responses/QuotaExceeded" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/backlinks": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["pages"],
+        "operationId": "listBacklinks",
+        "summary": "Pages that link here",
+        "description": "Sources are filtered to spaces you can read, so the same page yields different backlinks for different callers.",
+        "responses": {
+          "200": {
+            "description": "Linking pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["backlinks"],
+                  "properties": {
+                    "backlinks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["page_id", "space_id", "space_name", "title", "breadcrumb", "snippet"],
+                        "properties": {
+                          "page_id": { "type": "integer", "format": "int64" },
+                          "space_id": { "type": "integer", "format": "int64" },
+                          "space_name": { "type": "string" },
+                          "title": { "type": "string" },
+                          "breadcrumb": { "type": "array", "items": { "type": "string" } },
+                          "snippet": { "type": "string", "description": "Text around the link." }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/ForbiddenOrMissingPage" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/md": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["pages"],
+        "operationId": "exportPageMarkdown",
+        "summary": "Download a page as markdown",
+        "description": "Canonical frontmatter plus the body — the same rendering the zip export and the WebDAV sync surface produce.",
+        "responses": {
+          "200": {
+            "description": "Markdown.",
+            "headers": {
+              "Content-Disposition": { "description": "`attachment; filename=\"<page-slug>.md\"`", "schema": { "type": "string" } }
+            },
+            "content": { "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/ForbiddenOrMissingPage" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/related": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["pages", "search"],
+        "operationId": "listRelatedPages",
+        "summary": "Semantically similar pages",
+        "description": "Reads stored embeddings, so unlike `/api/rag/search` it needs no live embedder and never returns 503 — but it yields an empty list for a page that has not been indexed.",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Related pages, most similar first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["related"],
+                  "properties": {
+                    "related": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["page_id", "space_id", "title", "similarity", "updated_at"],
+                        "properties": {
+                          "page_id": { "type": "integer", "format": "int64" },
+                          "space_id": { "type": "integer", "format": "int64" },
+                          "title": { "type": "string" },
+                          "similarity": { "type": "number", "minimum": 0, "maximum": 1, "description": "Cosine similarity." },
+                          "updated_at": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/revisions": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["pages"],
+        "operationId": "listPageRevisions",
+        "summary": "Page history",
+        "description": "**`editor+`, not viewer** — history is a stricter read than the page itself. Bodies are omitted from the list; fetch one revision to get its body.",
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "description": "Return revisions older than this id. Omit for the newest.", "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revisions, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["revisions"],
+                  "properties": {
+                    "revisions": { "type": "array", "items": { "$ref": "#/components/schemas/RevisionSummary" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": {
+            "description": "`forbidden` (not a member, or no such page) or `viewer_no_write` (editor or owner role required).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/revisions/{rev_id}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/PathId" },
+        { "name": "rev_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+      ],
+      "get": {
+        "tags": ["pages"],
+        "operationId": "getPageRevision",
+        "summary": "One revision, with its body",
+        "description": "`editor+`. A revision id belonging to another page answers `404 revision_not_found`, not someone else's content.",
+        "responses": {
+          "200": {
+            "description": "The revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["revision"],
+                  "properties": { "revision": { "$ref": "#/components/schemas/Revision" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": {
+            "description": "`forbidden` or `viewer_no_write`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "`revision_not_found`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/search": {
+      "get": {
+        "tags": ["search"],
+        "operationId": "search",
+        "summary": "Keyword search",
+        "description": "Ranked Postgres full-text over titles and bodies, with highlighted snippets. Scoped to what you can read, plus published spaces you cannot — those come back with `public: true` and are rank-demoted. Limit is fixed at 25; there is no space filter on this route (the MCP `search` tool has both).",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "description": "An empty query returns an empty result set, not an error.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Up to 25 ranked hits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["results"],
+                  "properties": {
+                    "results": { "type": "array", "items": { "$ref": "#/components/schemas/SearchHit" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/rag/search": {
+      "get": {
+        "tags": ["search"],
+        "operationId": "semanticSearch",
+        "summary": "Semantic search over indexed chunks",
+        "description": "Retrieval by meaning across page sections and extracted file text. Requires an embedder to be configured on the instance; without one every call is `503 rag_disabled`. Rate-limited per account.",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "space_id", "in": "query", "required": false, "description": "Restrict to one space. A space-pinned token overrides this.", "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } },
+          { "name": "mode", "in": "query", "required": false, "description": "`hybrid` blends vector and lexical scores. Unrecognized values behave as `hybrid`.", "schema": { "type": "string", "enum": ["hybrid", "semantic", "lexical"], "default": "hybrid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked chunks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["results"],
+                  "properties": {
+                    "results": { "type": "array", "items": { "$ref": "#/components/schemas/Chunk" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/RagDisabled" }
+        }
+      }
+    },
+    "/api/rag/chunk": {
+      "get": {
+        "tags": ["search"],
+        "operationId": "readChunk",
+        "summary": "Read one chunk in full",
+        "description": "Expands a search hit into its whole section — the cheap way to ground an answer without pulling an entire page.",
+        "parameters": [
+          { "name": "chunk_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The chunk, with `content` populated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["chunk"],
+                  "properties": { "chunk": { "$ref": "#/components/schemas/ChunkWithContent" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": {
+            "description": "`not_found` — deliberately the same answer for \"no such chunk\" and \"you cannot read it\".",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/RagDisabled" }
+        }
+      }
+    },
+    "/api/pages/{id}/comments": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["comments"],
+        "operationId": "listComments",
+        "summary": "Comment threads on a page",
+        "description": "**`editor+` even to read** — a viewer gets 403, not an empty list. Roots come back oldest first with their replies bucketed underneath.",
+        "parameters": [
+          { "name": "include_resolved", "in": "query", "required": false, "description": "Exactly the value `true` includes resolved threads; anything else returns open ones only.", "schema": { "type": "string", "enum": ["true"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Threads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["threads"],
+                  "properties": {
+                    "threads": { "type": "array", "items": { "$ref": "#/components/schemas/CommentThread" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["comments"],
+        "operationId": "createComment",
+        "summary": "Start a thread or reply to one",
+        "description": "Two shapes. A **root** comment omits `parent_id` and must carry all three anchor fields — the quoted text plus its surrounding context, which is how tela re-locates the comment after the page is edited. A **reply** sets `parent_id` to a root comment on the same page; anchors are ignored. Replies to replies are refused: threads are one level deep.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["body"],
+                "properties": {
+                  "body": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                  "parent_id": { "type": ["integer", "null"], "format": "int64", "description": "The root comment being replied to." },
+                  "anchor_prefix": { "type": ["string", "null"], "description": "Text immediately before the quoted span. Required on a root comment." },
+                  "anchor_exact": { "type": ["string", "null"], "description": "The quoted span itself. Required and non-empty on a root comment." },
+                  "anchor_suffix": { "type": ["string", "null"], "description": "Text immediately after the quoted span. Required on a root comment." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/CommentEnvelope" },
+          "400": {
+            "description": "`bad_request`, `comment_no_anchor` (a root comment without anchors), or `comment_reply_to_reply`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "`comment_not_found` — no such parent comment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/comments/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "patch": {
+        "tags": ["comments"],
+        "operationId": "updateComment",
+        "summary": "Edit a comment or resolve a thread",
+        "description": "Send exactly one field. `body` is an **author-only** edit; `resolved` is an `editor+` toggle and applies to **root comments only**. Setting `resolved` to the value it already holds is a 409.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 1,
+                "properties": {
+                  "body": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                  "resolved": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/CommentEnvelope" },
+          "400": {
+            "description": "`bad_request` — no fields, both fields, an over-long body, or `resolved` on a reply.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "`comment_not_found`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "409": {
+            "description": "`comment_already_resolved` — the thread is already in the state you asked for.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "delete": {
+        "tags": ["comments"],
+        "operationId": "deleteComment",
+        "summary": "Delete a comment",
+        "description": "Author or space owner. Soft delete.",
+        "responses": {
+          "204": { "description": "Deleted." },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "`comment_not_found`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/attachments": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["attachments"],
+        "operationId": "listPageAttachments",
+        "summary": "Files attached to a page",
+        "description": "Any space role may read. `embedded` says whether the page body actually references the file.",
+        "responses": {
+          "200": {
+            "description": "Attachments, by name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["attachments"],
+                  "properties": {
+                    "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/Attachment" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["attachments"],
+        "operationId": "uploadPageAttachment",
+        "summary": "Upload a file to a page",
+        "description": "`editor+`. `multipart/form-data` with one part named `file`. Default size limit 50 MiB, configurable per instance. Storage is content-addressed, so re-uploading identical bytes is cheap.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": { "file": { "type": "string", "format": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored. Note this is 200, not 201.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["attachment"],
+                  "properties": { "attachment": { "$ref": "#/components/schemas/Attachment" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "402": { "$ref": "#/components/responses/QuotaExceeded" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "413": { "$ref": "#/components/responses/TooLarge" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/attachments/{file_id}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/PathId" },
+        { "name": "file_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+      ],
+      "delete": {
+        "tags": ["attachments"],
+        "operationId": "deletePageAttachment",
+        "summary": "Detach a file from a page",
+        "description": "`editor+`. Soft delete.",
+        "responses": {
+          "204": { "description": "Deleted." },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/uploads/{token}": {
+      "parameters": [
+        { "name": "token", "in": "path", "required": true, "description": "The signed, single-use ticket from `request_attachment_upload`.", "schema": { "type": "string" } }
+      ],
+      "put": {
+        "tags": ["attachments"],
+        "operationId": "putUpload",
+        "summary": "Upload bytes against a signed ticket",
+        "description": "Authorized by the HMAC ticket in the path, not by a session or token — so an agent can hand a file to tela without the bytes passing through its context. Single use, five-minute TTL.\n\nThe ticket is minted by the MCP tool `request_attachment_upload` and finalized by `confirm_attachment_upload`; **neither has a REST route**, so a pure-REST client should use `POST /api/pages/{id}/attachments` instead.\n\nThe request body is the raw file bytes with any content type.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["attachment"],
+                  "properties": { "attachment": { "$ref": "#/components/schemas/AttachmentWithURLs" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "402": { "$ref": "#/components/responses/QuotaExceeded" },
+          "404": {
+            "description": "`not_found` — invalid, expired, or unknown ticket.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "409": {
+            "description": "`already_uploaded` — this ticket was already used.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": { "$ref": "#/components/responses/TooLarge" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/files/{space_id}/{file}": {
+      "parameters": [
+        { "name": "space_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+        { "name": "file", "in": "path", "required": true, "description": "The 64-character lower-case SHA-256 of the content, optionally with a cosmetic extension (`<hash>.png`). Take it from an attachment's `url`.", "schema": { "type": "string", "pattern": "^[0-9a-f]{64}(\\.[A-Za-z0-9]+)?$" } }
+      ],
+      "get": {
+        "tags": ["attachments"],
+        "operationId": "getFileBytes",
+        "summary": "Fetch stored file bytes",
+        "description": "**Public and unauthenticated** — knowing the content hash is the authorization, which is why hashes are not enumerable and error responses never distinguish \"absent\" from \"not yours\". Immutable and cacheable for a year; supports `If-None-Match`. Only common raster image types are served `inline`; everything else, SVG included, is `attachment`.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The bytes.",
+            "headers": {
+              "ETag": { "schema": { "type": "string" } },
+              "Cache-Control": { "description": "`public, max-age=31536000, immutable`", "schema": { "type": "string" } },
+              "Content-Disposition": { "schema": { "type": "string" } }
+            },
+            "content": { "*/*": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "304": { "description": "Not modified." },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/pages/{id}/shares": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["shares"],
+        "operationId": "listPageShares",
+        "summary": "Share links for a page",
+        "description": "`editor+`.",
+        "parameters": [
+          { "name": "include_revoked", "in": "query", "required": false, "description": "Exactly the value `true` includes revoked links.", "schema": { "type": "string", "enum": ["true"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share links, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["shares"],
+                  "properties": {
+                    "shares": { "type": "array", "items": { "$ref": "#/components/schemas/ShareLink" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["shares"],
+        "operationId": "createShareLink",
+        "summary": "Create a share link",
+        "description": "`editor+`. Produces an unguessable token; the returned `url` is what you hand out. Optionally covers the page's whole subtree, sets a password, and expires.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "include_descendants": { "type": "boolean", "default": false, "description": "Share the page's whole subtree, not just the page." },
+                  "password": { "type": ["string", "null"], "description": "Gate the link behind a password." },
+                  "expires_at": { "type": ["string", "null"], "description": "`YYYY-MM-DD HH:MM:SS` UTC, must be in the future." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["share"],
+                  "properties": { "share": { "$ref": "#/components/schemas/ShareLink" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": {
+            "description": "`viewer_no_write` — editor or owner role required.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/shares": {
+      "get": {
+        "tags": ["shares"],
+        "operationId": "listAllShares",
+        "summary": "Every active share link you can see",
+        "description": "The cross-space audit view: what of yours is currently reachable from the open internet, and where it points.",
+        "responses": {
+          "200": {
+            "description": "Active share links across accessible spaces.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["shares"],
+                  "properties": {
+                    "shares": { "type": "array", "items": { "$ref": "#/components/schemas/ShareAuditItem" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/shares/{share_id}": {
+      "parameters": [
+        { "name": "share_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+      ],
+      "patch": {
+        "tags": ["shares"],
+        "operationId": "updateShareLink",
+        "summary": "Change a share link's scope, password, or expiry",
+        "description": "`editor+`. Sending any read-only field (`id`, `token`, `page_id`, `created_by`, `created_at`, `revoked_at`) is a 400 rather than a silent no-op. A revoked link cannot be edited — create a new one.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "include_descendants": { "type": "boolean" },
+                  "password": { "type": ["string", "null"], "description": "`null` or `\"\"` removes the password." },
+                  "expires_at": { "type": ["string", "null"], "description": "`null` removes the expiry; a string must be a future `YYYY-MM-DD HH:MM:SS`." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["share"],
+                  "properties": { "share": { "$ref": "#/components/schemas/ShareLink" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "`conflict` — the share is revoked.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "delete": {
+        "tags": ["shares"],
+        "operationId": "revokeShareLink",
+        "summary": "Revoke a share link",
+        "description": "`editor+`. Soft-revoke, so the audit trail survives. Idempotent, and immediate — the token stops resolving.",
+        "responses": {
+          "204": { "description": "Revoked." },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/share/{token}": {
+      "parameters": [{ "$ref": "#/components/parameters/ShareToken" }],
+      "get": {
+        "tags": ["shares"],
+        "operationId": "getPublicShare",
+        "summary": "Read a shared page by token",
+        "description": "No account needed — the token is the credential. Missing, revoked, and expired shares all answer with an identical 404.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The share and its root page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["share", "page"],
+                  "properties": {
+                    "share": { "$ref": "#/components/schemas/PublicShare" },
+                    "page": { "$ref": "#/components/schemas/SharePage" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/PasswordRequired" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/share/{token}/auth": {
+      "parameters": [{ "$ref": "#/components/parameters/ShareToken" }],
+      "post": {
+        "tags": ["shares"],
+        "operationId": "authenticateShare",
+        "summary": "Unlock a password-protected share",
+        "description": "Sets a share-scoped cookie that the other `/api/share/{token}/*` reads require. Rate-limited to 5 attempts a minute per token and client IP.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["password"],
+                "properties": { "password": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Unlocked. Sets `tela_share_<token>`, scoped to this share's path.",
+            "headers": {
+              "Set-Cookie": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok"],
+                  "properties": { "ok": { "type": "boolean", "const": true } }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request` — unparseable body, or this share has no password.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "`password_required` — wrong password.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/share/{token}/page/{page_id}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/ShareToken" },
+        { "name": "page_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+      ],
+      "get": {
+        "tags": ["shares"],
+        "operationId": "getPublicSharePage",
+        "summary": "Read a descendant page of a share",
+        "description": "Only for shares created with `include_descendants`. A page outside the shared subtree answers 404 exactly like a missing one.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["page"],
+                  "properties": { "page": { "$ref": "#/components/schemas/SharePage" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "401": { "$ref": "#/components/responses/PasswordRequired" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/share/{token}/tree": {
+      "parameters": [{ "$ref": "#/components/parameters/ShareToken" }],
+      "get": {
+        "tags": ["shares"],
+        "operationId": "getPublicShareTree",
+        "summary": "The page tree inside a share",
+        "description": "One entry for a single-page share; root plus descendants otherwise. Titles and structure only, no bodies.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Shared pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["pages"],
+                  "properties": {
+                    "pages": { "type": "array", "items": { "$ref": "#/components/schemas/ShareTreeNode" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/PasswordRequired" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/discover": {
+      "get": {
+        "tags": ["public"],
+        "operationId": "discoverPublicSpaces",
+        "summary": "Directory of published spaces",
+        "description": "Every space on this instance whose visibility is `public`, across all accounts.",
+        "security": [],
+        "parameters": [
+          { "name": "sort", "in": "query", "required": false, "description": "`popular` orders by page count; anything else is most-recently-updated.", "schema": { "type": "string", "enum": ["recent", "popular"] } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published spaces.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["spaces", "limit", "offset"],
+                  "properties": {
+                    "spaces": { "type": "array", "items": { "$ref": "#/components/schemas/DiscoverSpace" } },
+                    "limit": { "type": "integer" },
+                    "offset": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/spaces/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicSpace",
+        "summary": "A published space",
+        "description": "A private or non-existent space is one indistinguishable 404.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The space.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["space"],
+                  "properties": { "space": { "$ref": "#/components/schemas/PublicSpace" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "404": { "$ref": "#/components/responses/NoSuchPublicSpace" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/spaces/{id}/tree": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicSpaceTree",
+        "summary": "The whole page tree of a published space",
+        "description": "Structure plus card metadata (excerpt, reading time, cover, tags) — enough to render an index without fetching every page.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["pages"],
+                  "properties": {
+                    "pages": { "type": "array", "items": { "$ref": "#/components/schemas/PublicTreeNode" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "404": { "$ref": "#/components/responses/NoSuchPublicSpace" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/spaces/{id}/pages/{page_id}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/PathId" },
+        { "name": "page_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+      ],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicSpacePage",
+        "summary": "Read a page in a published space",
+        "description": "No login. Publishing grants read only — there is no public write path anywhere under `/api/public/`.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["page"],
+                  "properties": { "page": { "$ref": "#/components/schemas/PublicPage" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "404": { "$ref": "#/components/responses/NoSuchPublicSpace" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/spaces/{id}/pages/{page_id}/md": {
+      "parameters": [
+        { "$ref": "#/components/parameters/PathId" },
+        { "name": "page_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }
+      ],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicSpacePageMarkdown",
+        "summary": "A published page as raw markdown",
+        "description": "The agent-friendly form of a public page: canonical frontmatter plus the body, no HTML to strip.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Markdown.",
+            "content": { "text/markdown": { "schema": { "type": "string" } } }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "404": { "$ref": "#/components/responses/NoSuchPublicSpace" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/spaces/{id}/feed.xml": {
+      "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicSpaceFeed",
+        "summary": "RSS feed of a published space",
+        "description": "The 50 most recent top-level pages, newest first.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "RSS 2.0.",
+            "content": { "application/rss+xml": { "schema": { "type": "string" } } }
+          },
+          "400": { "$ref": "#/components/responses/InvalidId" },
+          "404": { "$ref": "#/components/responses/NoSuchPublicSpace" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/sitemap.xml": {
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicSitemap",
+        "summary": "Sitemap of everything published on this instance",
+        "description": "Published space front pages, every page inside them, and account home pages. Served at `/sitemap-public.xml` on the public origin.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "A sitemap XML document.",
+            "content": { "application/xml": { "schema": { "type": "string" } } }
+          },
+          "500": {
+            "description": "Encoding failed. This route answers in **plain text**, not the JSON error envelope.",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "/api/public/by-handle/{handle}": {
+      "parameters": [{ "$ref": "#/components/parameters/Handle" }],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicByHandle",
+        "summary": "A public account home",
+        "description": "Resolves one namespace of users and organizations (a user wins a collision) and returns that account's published spaces and latest posts. An account with nothing published is a 404, same as an unknown handle.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The account home.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HandleHome" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/by-handle/{handle}/spaces/{slug}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/Handle" },
+        { "name": "slug", "in": "path", "required": true, "description": "The space slug within that account.", "schema": { "type": "string" } }
+      ],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicByHandleSpace",
+        "summary": "A published space by owner handle and slug",
+        "description": "The canonical addressing for public content: `/{handle}/{space-slug}` in the browser resolves through here.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The space.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["space"],
+                  "properties": { "space": { "$ref": "#/components/schemas/PublicSpace" } }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NoSuchPublicSpace" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/public/files/{hash}": {
+      "parameters": [
+        { "name": "hash", "in": "path", "required": true, "description": "The file's content hash, full or the 12-character short form used in `/f/` links.", "schema": { "type": "string" } }
+      ],
+      "get": {
+        "tags": ["public"],
+        "operationId": "getPublicFileMeta",
+        "summary": "Metadata for a shareable file link",
+        "description": "Backs the human-facing `/f/{hash}/{name}` page. The owning `page` is included only when its space is published.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "File metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["file"],
+                  "properties": { "file": { "$ref": "#/components/schemas/PublicFile" } }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/api/feedback": {
+      "post": {
+        "tags": ["feedback"],
+        "operationId": "createFeedback",
+        "summary": "Send product feedback",
+        "description": "The one write a `read`-scoped token may perform — so an agent that hit a rough edge can report it without holding write access. Write-only: there is no way to read feedback back through this API.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["body"],
+                "properties": {
+                  "body": { "type": "string", "minLength": 1, "maxLength": 8000 },
+                  "subject": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Derived from the first line of `body` when omitted." },
+                  "kind": { "type": "string", "enum": ["idea", "bug", "other"] },
+                  "context": { "type": "object", "additionalProperties": true, "description": "Free-form. The server merges in its own source and client fields without overwriting yours." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["feedback"],
+                  "properties": { "feedback": { "$ref": "#/components/schemas/Feedback" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A personal access token: `Authorization: Bearer tela_pat_<43 chars>`. Scope `read` allows GET and HEAD only; `write` and `admin` allow any method. A token may be pinned to a single space."
+      },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "tela_session",
+        "description": "The browser session cookie set by `POST /api/auth/login`. HttpOnly, SameSite=Lax, 30 days."
+      }
+    },
+    "parameters": {
+      "PathId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "format": "int64", "minimum": 1 }
+      },
+      "ShareToken": {
+        "name": "token",
+        "in": "path",
+        "required": true,
+        "description": "The unguessable share token from a share link's `url`.",
+        "schema": { "type": "string" }
+      },
+      "Handle": {
+        "name": "handle",
+        "in": "path",
+        "required": true,
+        "description": "A username or an organization slug — one namespace, case-insensitive.",
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "Ok": {
+        "description": "Success.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["ok"],
+              "properties": { "ok": { "type": "boolean", "const": true } }
+            }
+          }
+        }
+      },
+      "Accepted": {
+        "description": "Accepted. Answered identically whether or not the address exists, to prevent account enumeration.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["ok"],
+              "properties": { "ok": { "type": "boolean", "const": true } }
+            }
+          }
+        }
+      },
+      "SpaceEnvelope": {
+        "description": "The space.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["space"],
+              "properties": { "space": { "$ref": "#/components/schemas/Space" } }
+            }
+          }
+        }
+      },
+      "PageEnvelope": {
+        "description": "The page.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["page"],
+              "properties": { "page": { "$ref": "#/components/schemas/Page" } }
+            }
+          }
+        }
+      },
+      "CommentEnvelope": {
+        "description": "The comment.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["comment"],
+              "properties": { "comment": { "$ref": "#/components/schemas/Comment" } }
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "Malformed request. `code` is usually `bad_request` or `invalid_json`.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "InvalidId": {
+        "description": "`invalid_id` — a path parameter was not a positive integer.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unauthorized": {
+        "description": "`unauthorized` — no valid credential. A malformed bearer token never falls back to the session cookie.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "`forbidden` (no access, or the role is too low), `viewer_no_write`, `api_key_scope` (the token's scope forbids this method), or `api_key_space_scope` (the token is pinned to another space).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ForbiddenOrMissingPage": {
+        "description": "`forbidden` — **also returned when the page does not exist**, so page ids cannot be enumerated. When the page happens to live in a published space, `code` is `forbidden_public` and `public_path` points at the no-login reader. Also `api_key_scope` / `api_key_space_scope`.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NotFound": {
+        "description": "`not_found`.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NoSuchPublicSpace": {
+        "description": "`not_found` — no such published space. Private and non-existent are indistinguishable.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "PasswordRequired": {
+        "description": "`password_required` — this share is password-gated; call `POST /api/share/{token}/auth` first.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "QuotaExceeded": {
+        "description": "`quota_exceeded` — a plan limit (pages, storage) was reached.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "TooLarge": {
+        "description": "`too_large` — the upload exceeds the instance's file size limit (50 MiB by default).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RateLimited": {
+        "description": "`rate_limited` — retry after the interval in the `Retry-After` header.",
+        "headers": { "Retry-After": { "description": "Seconds to wait.", "schema": { "type": "integer" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RagDisabled": {
+        "description": "`rag_disabled` — semantic retrieval is not configured on this instance.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Internal": {
+        "description": "`internal` — server error.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "The error envelope for every JSON route. Branch on `code`, not on the message.",
+        "required": ["error", "code"],
+        "properties": {
+          "error": { "type": "string", "description": "Human-readable message. Not stable — do not parse it." },
+          "code": { "type": "string", "description": "Machine-readable code.", "examples": ["forbidden", "not_found", "api_key_scope"] },
+          "public_path": { "type": "string", "description": "Only with `code: forbidden_public` — where to read this page without an account." }
+        }
+      },
+      "Timestamp": {
+        "type": "string",
+        "description": "`YYYY-MM-DD HH:MM:SS` in UTC.",
+        "examples": ["2026-09-09 14:03:21"]
+      },
+      "Scope": {
+        "type": "string",
+        "enum": ["read", "write", "admin"],
+        "description": "`read` permits GET and HEAD; `write` and `admin` permit any method."
+      },
+      "Visibility": {
+        "type": "string",
+        "enum": ["private", "public"],
+        "description": "`public` makes the entire space readable with no account, at `/{handle}/{space-slug}`."
+      },
+      "Health": {
+        "type": "object",
+        "required": ["status", "db", "rag"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "degraded"] },
+          "db": { "type": "string", "description": "`ok`, or `error: <detail>`." },
+          "rag": { "type": "string", "enum": ["enabled", "disabled"], "description": "Whether an embedder is configured. Not a live probe." }
+        }
+      },
+      "User": {
+        "type": "object",
+        "description": "The signed-in user. `POST /api/auth/login` populates only the identity fields; `GET /api/auth/me` fills in the rest.",
+        "required": ["id", "username", "email", "email_verified", "is_instance_admin"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "username": { "type": "string", "description": "Also the public handle." },
+          "display_name": { "type": "string" },
+          "email": { "type": ["string", "null"], "description": "Null on legacy username-only accounts, which skip the email gate." },
+          "email_verified": { "type": "boolean" },
+          "is_instance_admin": { "type": "boolean" },
+          "bio": { "type": "string" },
+          "mcp_connected": { "type": "boolean", "description": "Whether this account has ever authenticated an MCP client." },
+          "trial": {
+            "type": "object",
+            "description": "Present only inside the trial-notification window.",
+            "properties": {
+              "plan_key": { "type": "string" },
+              "plan_name": { "type": "string" },
+              "ends_at": { "type": "string" },
+              "grace_ends_at": { "type": "string" },
+              "ended": { "type": "boolean" }
+            }
+          },
+          "feedback_unseen": { "type": "integer", "description": "Instance admins only." }
+        }
+      },
+      "APIKey": {
+        "type": "object",
+        "required": ["id", "name", "key_prefix", "scope", "space_id", "created_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "key_prefix": { "type": "string", "description": "The first 8 characters after `tela_pat_`, for identifying a token you still hold." },
+          "scope": { "$ref": "#/components/schemas/Scope" },
+          "space_id": { "type": ["integer", "null"], "format": "int64", "description": "Non-null when the token is pinned to one space." },
+          "last_used_at": { "type": ["string", "null"] },
+          "expires_at": { "type": ["string", "null"] },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "revoked_at": { "type": ["string", "null"] }
+        }
+      },
+      "APIKeyWithSecret": {
+        "allOf": [
+          { "$ref": "#/components/schemas/APIKey" },
+          {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+              "key": { "type": "string", "description": "The raw token, returned **once** and never recoverable — only its HMAC is stored.", "examples": ["tela_pat_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"] }
+            }
+          }
+        ]
+      },
+      "Space": {
+        "type": "object",
+        "required": ["id", "name", "slug", "visibility", "description", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "slug": { "type": "string" },
+          "visibility": { "$ref": "#/components/schemas/Visibility" },
+          "description": { "type": "string" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" },
+          "my_role": { "type": "string", "enum": ["owner", "editor", "viewer"], "description": "Your effective role. Set on single-space responses, absent from listings." },
+          "public_path": { "type": "string", "description": "Server-computed `/{handle}/{space-slug}`. Present only for a public space — never derive it client-side." }
+        }
+      },
+      "SpaceListItem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Space" },
+          {
+            "type": "object",
+            "required": ["member_count", "is_personal", "principals"],
+            "properties": {
+              "member_count": { "type": "integer" },
+              "is_personal": { "type": "boolean" },
+              "principals": {
+                "type": "array",
+                "description": "Organizations and groups the space is shared with.",
+                "items": {
+                  "type": "object",
+                  "required": ["kind", "name"],
+                  "properties": {
+                    "kind": { "type": "string", "enum": ["org", "group"] },
+                    "name": { "type": "string" }
+                  }
+                }
+              },
+              "owner_org": {
+                "type": "object",
+                "description": "Present when the space is organization-owned.",
+                "properties": {
+                  "id": { "type": "integer", "format": "int64" },
+                  "name": { "type": "string" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PageProps": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Free-form page properties. Reserved keys are dropped. Two are load-bearing: `deck: true` makes the body a Slidev presentation, `sheet: true` makes it a spreadsheet — both are then stored verbatim, frontmatter included.",
+        "examples": [{ "status": "draft", "owner": "platform-team" }]
+      },
+      "Page": {
+        "type": "object",
+        "required": ["id", "space_id", "parent_id", "title", "body", "position", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "space_id": { "type": "integer", "format": "int64" },
+          "parent_id": { "type": ["integer", "null"], "format": "int64" },
+          "title": { "type": "string" },
+          "body": { "type": "string", "description": "Canonical markdown. This is the whole document — tela has no block model." },
+          "position": { "type": "integer", "format": "int64", "description": "Sort order among siblings." },
+          "props": { "$ref": "#/components/schemas/PageProps" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "PageNode": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Page" },
+          {
+            "type": "object",
+            "required": ["exposure"],
+            "properties": {
+              "exposure": { "$ref": "#/components/schemas/Exposure" },
+              "children": { "type": "array", "items": { "$ref": "#/components/schemas/PageNode" }, "description": "Present only in tree mode (`?tree=1`)." }
+            }
+          }
+        ]
+      },
+      "Exposure": {
+        "type": "object",
+        "description": "How far outside the space this page is readable.",
+        "required": ["state", "inherited", "expires_at"],
+        "properties": {
+          "state": { "type": "string", "enum": ["private", "public", "password"], "description": "`public` = reachable with no credential; `password` = reachable with a share password." },
+          "inherited": { "type": "boolean", "description": "True when the exposure comes from an ancestor's subtree share rather than this page." },
+          "expires_at": { "type": ["string", "null"] }
+        }
+      },
+      "RevisionSummary": {
+        "type": "object",
+        "description": "A history entry without its body.",
+        "required": ["id", "page_id", "title", "author_id", "source", "byte_size", "created_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "page_id": { "type": "integer", "format": "int64" },
+          "title": { "type": "string" },
+          "author_id": { "type": ["integer", "null"], "format": "int64" },
+          "author_username": { "type": "string" },
+          "source": { "type": "string", "description": "What made the edit, e.g. the app, sync, or an agent." },
+          "byte_size": { "type": "integer", "format": "int64" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "Revision": {
+        "allOf": [
+          { "$ref": "#/components/schemas/RevisionSummary" },
+          {
+            "type": "object",
+            "required": ["body"],
+            "properties": {
+              "body": { "type": "string", "description": "The page body as of this revision." },
+              "props": { "$ref": "#/components/schemas/PageProps" }
+            }
+          }
+        ]
+      },
+      "SearchHit": {
+        "type": "object",
+        "required": ["page_id", "space_id", "title", "snippet", "breadcrumb", "public", "url", "id", "text"],
+        "properties": {
+          "page_id": { "type": "integer", "format": "int64" },
+          "space_id": { "type": "integer", "format": "int64" },
+          "title": { "type": "string" },
+          "snippet": { "type": "string", "description": "Contains `<mark>` tags around the matched terms." },
+          "breadcrumb": { "type": "array", "items": { "type": "string" } },
+          "public": { "type": "boolean", "description": "True when you can read this hit only because the space is published, not because you are a member. Such hits are rank-demoted." },
+          "url": { "type": "string" },
+          "public_path": { "type": "string", "description": "Present only on public hits." },
+          "id": { "type": "string", "description": "`page_id` as a string. An alias for connector clients that require a string id." },
+          "text": { "type": "string", "description": "Alias of `snippet`, for the same reason." }
+        }
+      },
+      "Chunk": {
+        "type": "object",
+        "description": "An indexed section of a page, or of the extracted text of a file.",
+        "required": ["chunk_id", "source_kind", "page_id", "space_id", "title", "heading_path", "snippet", "score", "updated_at"],
+        "properties": {
+          "chunk_id": { "type": "integer", "format": "int64", "description": "Pass to `/api/rag/chunk` to read the section in full." },
+          "source_kind": { "type": "string", "enum": ["page", "file"] },
+          "page_id": { "type": "integer", "format": "int64", "description": "For a file chunk, the parent page — `0` when the file sits at the space root." },
+          "space_id": { "type": "integer", "format": "int64" },
+          "title": { "type": "string", "description": "Page title, or the file name for a file chunk." },
+          "heading_path": { "type": "string", "description": "Where in the document this chunk sits, e.g. `Deployment > Rollback`." },
+          "snippet": { "type": "string" },
+          "score": { "type": "number" },
+          "updated_at": { "type": "string" },
+          "file_id": { "type": "integer", "format": "int64", "description": "File chunks only." },
+          "file_name": { "type": "string", "description": "File chunks only." },
+          "download_url": { "type": "string", "description": "File chunks only." },
+          "share_url": { "type": "string", "description": "File chunks only." }
+        }
+      },
+      "ChunkWithContent": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Chunk" },
+          {
+            "type": "object",
+            "required": ["content"],
+            "properties": { "content": { "type": "string", "description": "The chunk's full text." } }
+          }
+        ]
+      },
+      "Comment": {
+        "type": "object",
+        "required": ["id", "page_id", "parent_id", "author_id", "author_username", "body", "resolved", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "page_id": { "type": "integer", "format": "int64" },
+          "parent_id": { "type": ["integer", "null"], "format": "int64", "description": "Null on a root comment." },
+          "author_id": { "type": "integer", "format": "int64" },
+          "author_username": { "type": "string" },
+          "body": { "type": "string" },
+          "anchor_prefix": { "type": "string", "description": "Root comments only — the text before the quoted span." },
+          "anchor_exact": { "type": "string", "description": "Root comments only — the quoted span." },
+          "anchor_suffix": { "type": "string", "description": "Root comments only — the text after the quoted span." },
+          "resolved": { "type": "boolean" },
+          "resolved_at": { "type": "string" },
+          "resolved_by": { "type": "integer", "format": "int64" },
+          "resolved_by_username": { "type": "string" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "CommentThread": {
+        "type": "object",
+        "description": "A root comment and its replies. Threads are one level deep.",
+        "required": ["root", "replies"],
+        "properties": {
+          "root": { "$ref": "#/components/schemas/Comment" },
+          "replies": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } }
+        }
+      },
+      "Attachment": {
+        "type": "object",
+        "required": ["id", "name", "mime", "byte_size", "hash", "url", "share_path", "embedded"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "mime": { "type": "string" },
+          "byte_size": { "type": "integer", "format": "int64" },
+          "hash": { "type": "string", "description": "SHA-256 of the content, 64 lower-case hex characters." },
+          "url": { "type": "string", "description": "Relative path to the bytes: `/api/files/{space_id}/{hash}{ext}`." },
+          "share_path": { "type": "string", "description": "Relative path to the human-facing file page: `/f/{hash12}/{name}`." },
+          "embedded": { "type": "boolean", "description": "Whether the page body references this file." },
+          "summary": { "type": "string", "description": "Generated description, when one exists." }
+        }
+      },
+      "AttachmentWithURLs": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Attachment" },
+          {
+            "type": "object",
+            "required": ["download_url", "share_url", "markdown"],
+            "properties": {
+              "download_url": { "type": "string", "description": "Absolute URL to the bytes." },
+              "share_url": { "type": "string", "description": "Absolute URL to the file page." },
+              "markdown": { "type": "string", "description": "Ready-to-paste markdown that embeds or links the file." }
+            }
+          }
+        ]
+      },
+      "SpaceFile": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Attachment" },
+          {
+            "type": "object",
+            "properties": {
+              "parent_page_id": { "type": "integer", "format": "int64", "description": "Absent when the file sits at the space root." },
+              "parent_title": { "type": "string", "description": "Absent when the file sits at the space root." }
+            }
+          }
+        ]
+      },
+      "ShareLink": {
+        "type": "object",
+        "required": ["id", "token", "page_id", "include_descendants", "has_password", "created_by", "created_at", "url"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "token": { "type": "string" },
+          "page_id": { "type": "integer", "format": "int64" },
+          "include_descendants": { "type": "boolean" },
+          "has_password": { "type": "boolean", "description": "The password itself is never returned." },
+          "created_by": { "type": "integer", "format": "int64" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_at": { "type": ["string", "null"] },
+          "revoked_at": { "type": ["string", "null"] },
+          "url": { "type": "string", "description": "The link to hand out: `<origin>/share/{token}[/{title-slug}]`." }
+        }
+      },
+      "ShareAuditItem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ShareLink" },
+          {
+            "type": "object",
+            "required": ["space_id", "space_name", "page_title"],
+            "properties": {
+              "space_id": { "type": "integer", "format": "int64" },
+              "space_name": { "type": "string" },
+              "page_title": { "type": "string" }
+            }
+          }
+        ]
+      },
+      "PublicShare": {
+        "type": "object",
+        "description": "What a share tells an anonymous reader about itself.",
+        "required": ["token", "include_descendants", "has_password", "source_url"],
+        "properties": {
+          "token": { "type": "string" },
+          "include_descendants": { "type": "boolean" },
+          "has_password": { "type": "boolean" },
+          "expires_at": { "type": ["string", "null"] },
+          "source_url": { "type": "string" }
+        }
+      },
+      "SharePage": {
+        "type": "object",
+        "required": ["id", "title", "body", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "title": { "type": "string" },
+          "body": { "type": "string", "description": "Canonical markdown." },
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "ShareTreeNode": {
+        "type": "object",
+        "required": ["id", "title", "parent_id", "position"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "title": { "type": "string" },
+          "parent_id": { "type": ["integer", "null"], "format": "int64" },
+          "position": { "type": "integer", "format": "int64" }
+        }
+      },
+      "CardMeta": {
+        "type": "object",
+        "description": "Index-card metadata computed from a page, so a listing can be rendered without fetching bodies.",
+        "properties": {
+          "kind": { "type": "string", "enum": ["deck", "sheet"], "description": "Absent for an ordinary prose page." },
+          "excerpt": { "type": "string" },
+          "reading_minutes": { "type": "integer" },
+          "cover": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "PublicSpace": {
+        "type": "object",
+        "required": ["id", "name", "slug", "visibility", "description"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "slug": { "type": "string" },
+          "visibility": { "$ref": "#/components/schemas/Visibility" },
+          "description": { "type": "string" },
+          "owner_handle": { "type": "string", "description": "The owning organization's slug when the space is organization-owned, otherwise the owner's username." }
+        }
+      },
+      "DiscoverSpace": {
+        "type": "object",
+        "required": ["id", "name", "slug", "description", "page_count", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "slug": { "type": "string" },
+          "description": { "type": "string" },
+          "owner_handle": { "type": "string" },
+          "public_path": { "type": "string", "description": "`/{handle}/{slug}`." },
+          "page_count": { "type": "integer", "format": "int64" },
+          "updated_at": { "type": "string", "description": "Most recent page update. Empty string when the space has no pages." }
+        }
+      },
+      "PublicTreeNode": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": ["id", "title", "parent_id", "position", "created_at", "updated_at"],
+            "properties": {
+              "id": { "type": "integer", "format": "int64" },
+              "title": { "type": "string" },
+              "parent_id": { "type": ["integer", "null"], "format": "int64" },
+              "position": { "type": "integer", "format": "int64" },
+              "created_at": { "$ref": "#/components/schemas/Timestamp" },
+              "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+            }
+          },
+          { "$ref": "#/components/schemas/CardMeta" }
+        ]
+      },
+      "PublicPage": {
+        "type": "object",
+        "required": ["id", "title", "body", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "title": { "type": "string" },
+          "body": { "type": "string", "description": "Canonical markdown." },
+          "props": { "$ref": "#/components/schemas/PageProps" },
+          "deck": {
+            "type": "object",
+            "description": "Present only on a presentation page.",
+            "properties": {
+              "present_path": { "type": "string" },
+              "cover_path": { "type": "string" }
+            }
+          },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" },
+          "author": { "type": "string" },
+          "editor": { "type": "string" }
+        }
+      },
+      "HandleHome": {
+        "type": "object",
+        "required": ["kind", "handle", "name", "bio", "spaces", "posts"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["user", "org"] },
+          "handle": { "type": "string" },
+          "name": { "type": "string" },
+          "bio": { "type": "string", "description": "Empty for organizations." },
+          "spaces": {
+            "type": "array",
+            "description": "Published spaces, most recently active first.",
+            "items": {
+              "type": "object",
+              "required": ["id", "name", "slug", "description", "page_count", "updated_at"],
+              "properties": {
+                "id": { "type": "integer", "format": "int64" },
+                "name": { "type": "string" },
+                "slug": { "type": "string" },
+                "description": { "type": "string" },
+                "page_count": { "type": "integer", "format": "int64" },
+                "updated_at": { "type": "string" }
+              }
+            }
+          },
+          "posts": {
+            "type": "array",
+            "description": "Up to 6 recent top-level public pages across those spaces.",
+            "items": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "required": ["space_id", "space_name", "space_slug", "id", "title", "created_at", "updated_at"],
+                  "properties": {
+                    "space_id": { "type": "integer", "format": "int64" },
+                    "space_name": { "type": "string" },
+                    "space_slug": { "type": "string" },
+                    "id": { "type": "integer", "format": "int64" },
+                    "title": { "type": "string" },
+                    "created_at": { "$ref": "#/components/schemas/Timestamp" },
+                    "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+                  }
+                },
+                { "$ref": "#/components/schemas/CardMeta" }
+              ]
+            }
+          }
+        }
+      },
+      "PublicFile": {
+        "type": "object",
+        "required": ["hash", "short", "name", "mime", "kind", "byte_size", "url", "path"],
+        "properties": {
+          "hash": { "type": "string" },
+          "short": { "type": "string", "description": "The 12-character hash prefix used in `/f/` links." },
+          "name": { "type": "string" },
+          "mime": { "type": "string" },
+          "kind": { "type": "string", "description": "Coarse category driving how the file page previews it." },
+          "byte_size": { "type": "integer", "format": "int64" },
+          "url": { "type": "string", "description": "Where the bytes are served." },
+          "path": { "type": "string", "description": "The file page's own path." },
+          "page": {
+            "type": "object",
+            "description": "The page this file hangs off. Present only when that page's space is published.",
+            "properties": {
+              "id": { "type": "integer", "format": "int64" },
+              "title": { "type": "string" },
+              "path": { "type": "string" },
+              "space_name": { "type": "string" }
+            }
+          }
+        }
+      },
+      "Feedback": {
+        "type": "object",
+        "required": ["id", "created_at", "subject", "body", "kind", "source", "context"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "created_by_user_id": { "type": ["integer", "null"], "format": "int64" },
+          "created_by_api_key_id": { "type": ["integer", "null"], "format": "int64" },
+          "subject": { "type": "string" },
+          "body": { "type": "string" },
+          "kind": { "type": ["string", "null"], "enum": ["idea", "bug", "other", null] },
+          "source": { "type": "string", "enum": ["web", "api", "mcp"], "description": "Derived from the credential used: `web` for a session, `api` for a token, `mcp` for the MCP tool." },
+          "context": { "type": "object", "additionalProperties": true }
+        }
+      }
+    }
+  }
+}

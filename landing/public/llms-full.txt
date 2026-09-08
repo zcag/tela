@@ -35,7 +35,7 @@ The endpoint is `https://telawiki.com/api/mcp`. In Claude or ChatGPT, add it as 
 }
 ```
 
-The 39 tools cover spaces, pages, search (`search` keyword + `research` semantic, cited) and `read_chunk`, the knowledge graph (`related_pages`, `suggest_links`, `find_overlaps`, `knowledge_gaps`), Atlas runs (`atlas_list_projects`, `atlas_run`, `atlas_run_status`), decks, attachments, and sharing. Writes are gated by the token's scope; an agent can only touch what your account can. The agent stops starting from zero — it retrieves the right section by meaning, cites it, writes back what it learns, and the next session (human or agent) picks up there.
+The 39 tools cover spaces, pages, search (`search` keyword + `research` semantic, cited) and `read_chunk`, the knowledge graph (`related_pages`, `suggest_links`, `find_overlaps`, `knowledge_gaps`), Atlas runs (`atlas_list_projects`, `atlas_run`, `atlas_run_status`), decks, attachments, and sharing. Writes are gated by the token's scope; an agent can only touch what your account can. The REST API behind those tools is described at `https://telawiki.com/openapi.json` (OpenAPI 3.1); it is internal and unversioned, so build against MCP and read the spec when you need the exact HTTP shape. The agent stops starting from zero — it retrieves the right section by meaning, cites it, writes back what it learns, and the next session (human or agent) picks up there.
 
 ## How does tela compare?
 - vs **Notion**: plain markdown you own, semantic retrieval, a real MCP connector your agent drives from Claude/ChatGPT, and Atlas that turns a repo or Jira project into a coverage-checked wiki — not a closed block store with a chat sidebar. (Notion wins on databases, templates, polish.)
@@ -61,3 +61,4 @@ None of them combine all of it: a wiki that documents itself from your sources a
 - MCP server docs: https://telawiki.com/mcp
 - GitHub: https://github.com/zcag/tela
 - MCP proxy (npm): https://www.npmjs.com/package/tela-mcp
+- REST API description (OpenAPI 3.1): https://telawiki.com/openapi.json
