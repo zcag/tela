@@ -438,6 +438,22 @@ export function SettingsUsersTab() {
             <span className="text-[var(--text-muted)]">Never</span>
           ),
       },
+      {
+        key: 'joined',
+        header: 'Joined',
+        group: 'Account',
+        title:
+          'When the account was created. Sort by it to read the instance in signup order — same-day joiners land together.',
+        sortValue: (u) => u.created_at,
+        cell: (u) => (
+          <span
+            className="whitespace-nowrap tabular-nums"
+            title={relativeTimeFromSqlite(u.created_at)}
+          >
+            {localDateFromSqlite(u.created_at)}
+          </span>
+        ),
+      },
     )
     if (anyStorage) {
       cols.push({

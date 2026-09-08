@@ -45,6 +45,9 @@ export interface AdminStats {
   logins: number[]
   asks: number[]
   errors: number[]
+  // Accounts created that day, aligned to `days` — the per-day read of growth
+  // that `users_cum` only implies.
+  signups: number[]
   users_cum: number[]
   pages_cum: number[]
   dau: number

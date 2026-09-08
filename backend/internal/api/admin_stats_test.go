@@ -99,6 +99,21 @@ func TestAdminStats_Aggregates(t *testing.T) {
 	if got.UsersCum[statsWindowDays-1] != got.Users {
 		t.Fatalf("users_cum tail=%d want %d", got.UsersCum[statsWindowDays-1], got.Users)
 	}
+	// Per-day signups: everyone here was created today, and the daily series has
+	// to agree with the curve it's derived from rather than drift beside it.
+	if len(got.Signups) != statsWindowDays {
+		t.Fatalf("signups length=%d want %d", len(got.Signups), statsWindowDays)
+	}
+	if got.Signups[statsWindowDays-1] != got.Users {
+		t.Fatalf("today's signups=%d want %d", got.Signups[statsWindowDays-1], got.Users)
+	}
+	var signupSum int64
+	for _, n := range got.Signups {
+		signupSum += n
+	}
+	if signupSum != got.NewUsers30 {
+		t.Fatalf("signups sum=%d want new_users_30=%d", signupSum, got.NewUsers30)
+	}
 
 	// Operator signals: the admin signed up in-window, authored a revision, and
 	// asked one question that returned nothing.

@@ -16,6 +16,7 @@ import {
 import { Avatar, type AvatarTone } from '../ui/avatar'
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '../ui/card'
 import { CoverageGauge } from '../ui/coverage-gauge'
+import { DayBars } from '../ui/day-bars'
 import { Sparkline } from '../ui/sparkline'
 import { StatusBadge } from '../ui/status-badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -131,6 +132,27 @@ function InsightsBody({ s }: { s: AdminStats }) {
                 <SignupRow key={u.user_id} u={u} />
               ))}
             </Panel>
+          </div>
+          {/* Per day, not cumulative: "how many joined on the 4th" is a count,
+              and the growth curve only implies it. */}
+          <div className="mt-[var(--space-5)] flex flex-col gap-[var(--space-2)]">
+            <div className="flex items-baseline justify-between gap-[var(--space-3)]">
+              <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+                New accounts per day · last 30 days
+              </span>
+              <span className="text-[length:var(--text-xs)] text-[var(--text-muted)] tabular-nums">
+                busiest day {nf(Math.max(0, ...s.signups))} · {nf(sum(s.signups))} total
+              </span>
+            </div>
+            <span className="block w-full text-[var(--accent)]">
+              <DayBars
+                values={s.signups}
+                labels={s.days}
+                height={56}
+                ariaLabel="New accounts per day over the last 30 days"
+                format={(v, d) => `${d}: ${v} ${v === 1 ? 'signup' : 'signups'}`}
+              />
+            </span>
           </div>
         </Section>
 

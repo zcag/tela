@@ -74,6 +74,10 @@ type adminStats struct {
 	Logins []int64  `json:"logins"`
 	Asks   []int64  `json:"asks"`
 	Errors []int64  `json:"errors"`
+	// Accounts created that day. The cumulative series answers "how big is this
+	// instance"; this one answers "how many joined on the 4th" — a question you
+	// otherwise had to reconstruct by diffing the curve by eye.
+	Signups []int64 `json:"signups"`
 	// Cumulative growth over the same days.
 	UsersCum []int64 `json:"users_cum"`
 	PagesCum []int64 `json:"pages_cum"`
@@ -174,6 +178,7 @@ func (s *Server) AdminStats(w http.ResponseWriter, r *http.Request) {
 		Logins:   make([]int64, statsWindowDays),
 		Asks:     make([]int64, statsWindowDays),
 		Errors:   make([]int64, statsWindowDays),
+		Signups:  make([]int64, statsWindowDays),
 		UsersCum: make([]int64, statsWindowDays),
 		PagesCum: make([]int64, statsWindowDays),
 		// Non-nil slices so the JSON is [] not null when empty.
@@ -238,10 +243,10 @@ func (s *Server) AdminStats(w http.ResponseWriter, r *http.Request) {
 		Scan(&out.Users, &out.Spaces, &out.Pages)
 
 	// --- Cumulative growth (baseline before window + running daily new) ---
-	fillCumulative(ctx, s.DB, out.UsersCum, days, idx,
+	fillCumulative(ctx, s.DB, out.UsersCum, out.Signups, days, idx,
 		`SELECT COUNT(*) FROM users WHERE created_at < $1`,
 		`SELECT substr(created_at,1,10), COUNT(*) FROM users WHERE created_at >= $1 GROUP BY 1`, cut30)
-	fillCumulative(ctx, s.DB, out.PagesCum, days, idx,
+	fillCumulative(ctx, s.DB, out.PagesCum, nil, days, idx,
 		`SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL AND created_at < $1`,
 		`SELECT substr(created_at,1,10), COUNT(*) FROM pages WHERE deleted_at IS NULL AND created_at >= $1 GROUP BY 1`, cut30)
 
@@ -424,8 +429,10 @@ func (s *Server) AdminStats(w http.ResponseWriter, r *http.Request) {
 
 // fillCumulative seeds dst[i] with a running cumulative total across `days`: the
 // baseline count (rows that existed before the window) plus each day's new rows,
-// carried forward. Best-effort — a query error just leaves zeros.
-func fillCumulative(ctx context.Context, db *sql.DB, dst []int64, days []string, idx map[string]int, baselineQ, perDayQ, cut string) {
+// carried forward. When perDayDst is non-nil it also gets the raw per-day counts
+// — same query, so "new that day" costs nothing on top of the curve.
+// Best-effort — a query error just leaves zeros.
+func fillCumulative(ctx context.Context, db *sql.DB, dst, perDayDst []int64, days []string, idx map[string]int, baselineQ, perDayQ, cut string) {
 	var baseline int64
 	_ = db.QueryRowContext(ctx, baselineQ, cut).Scan(&baseline)
 
@@ -448,5 +455,8 @@ func fillCumulative(ctx context.Context, db *sql.DB, dst []int64, days []string,
 	for i := range days {
 		running += perDay[i]
 		dst[i] = running
+		if perDayDst != nil {
+			perDayDst[i] = perDay[i]
+		}
 	}
 }
