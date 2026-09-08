@@ -28,6 +28,21 @@
 	# own cert in direct-TLS mode). Applies to every response. No preload.
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
+	# ── Access log ──────────────────────────────────────────────────────────
+	# The ONLY record of where someone who lands straight on the app came from.
+	# The Umami tracker is on the marketing landing alone, so a visitor who
+	# arrives at /login or a shared page from an MCP directory, the docs, or
+	# another instance is invisible to analytics — and that cohort is roughly a
+	# third of signups, with double the agent-adoption rate of the rest. Caddy's
+	# JSON log carries client_ip, uri and Referer (Cookie/Authorization are
+	# redacted), which answers it. It also timestamps every /analytics/api/send
+	# beacon, so an Umami session can be tied back to the request that made it.
+	# Rolls at 100 MB, 10 files. Point TELA_ACCESS_LOG elsewhere to relocate it.
+	log {
+		output file {$TELA_ACCESS_LOG:/var/log/caddy/tela-access.jsonl}
+		format json
+	}
+
 	# The on-demand-TLS ask endpoint is for Caddy only (container-to-container).
 	# 404 it from the WAN so the public internet can't probe which hostnames are
 	# active. Caddy's own `ask` call hits the backend directly, not this block.
