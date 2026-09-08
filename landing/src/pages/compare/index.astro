@@ -2,7 +2,7 @@
 // /compare/ — hub linking every comparison page. Internal-linking + crawl entry
 // for the /compare/<slug> set. Prose layout, token-only.
 import Prose from '../../layouts/Prose.astro';
-import { competitors } from '../../data/compare';
+import { competitors, COMPARE_UPDATED } from '../../data/compare';
 ---
 
 <Prose
@@ -10,7 +10,7 @@ import { competitors } from '../../data/compare';
   description="How tela compares to Notion, Confluence, Outline, GitBook, Docmost, Docusaurus, MkDocs, Backstage TechDocs, Mintlify and more — honestly, including what each still does better."
   kicker="Compare"
   heading="Compare tela with the alternatives"
-  updated="June 30, 2026"
+  updated={COMPARE_UPDATED}
 >
   <script type="application/ld+json" is:inline slot="head" set:html={JSON.stringify({
     '@context': 'https://schema.org',
@@ -36,10 +36,12 @@ import { competitors } from '../../data/compare';
 
   <p class="lead">
     tela is an open-source (AGPL), self-hostable, markdown-native team wiki: your
-    docs stay as canonical markdown you own, agents read and write them through a
-    built-in MCP server, and Atlas generates a cited, coverage-checked wiki from
-    your git repos and Jira. Here is how it stacks up against the tools you would
-    otherwise reach for — including what each of them still does better.
+    docs stay as canonical markdown you own — mountable as a folder of
+    <code>.md</code> files that syncs both ways — agents read and write them
+    through a built-in MCP server, Atlas generates a cited, coverage-checked wiki
+    from your git repos and Jira, and any space can be published to the open web.
+    Here is how it stacks up against the tools you would otherwise reach for —
+    including what each of them still does better.
   </p>
 
   <ul class="tool-grid">
@@ -53,12 +55,15 @@ import { competitors } from '../../data/compare';
 
   <h2>The short version</h2>
   <p>
-    Most of these are good tools. tela's distinct angle is two things: it is
-    fully open-source and self-hostable with canonical markdown you own, and
-    <strong>Atlas</strong> generates documentation from your code and keeps it
-    honest about drift — which most wikis leave entirely to human discipline. A
-    built-in MCP server is a strength tela shares with several of them, not a
-    monopoly.
+    Most of these are good tools. tela's distinct angle is three things. It is
+    open-source and self-hostable with canonical markdown you own — the same
+    pages are <code>.md</code> files in a folder on your disk whenever you want
+    them to be. <strong>Atlas</strong> generates documentation from your code and
+    then audits itself against the code's real surface, so "undocumented" is a
+    number rather than a hunch — which most wikis leave entirely to human
+    discipline. And a document, a presentation and a spreadsheet are all just
+    pages, still markdown underneath. A built-in MCP server is a strength tela
+    shares with several of them, not a monopoly.
   </p>
   <p>
     Try it: self-host under AGPL, or start on the free cloud tier at

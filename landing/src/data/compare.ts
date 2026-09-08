@@ -3,16 +3,52 @@
 //
 // Voice: plain, capability-first, honest — matches Compare.astro. Each page
 // concedes what the competitor still does better (the "when X is better" line).
-// FACTS (verified mid-2026): tela is open-source (AGPL), self-hostable,
-// markdown-native (canonical markdown, no block table), with a built-in MCP
-// server (39 tools) and Atlas (a cited, coverage-checked wiki generated from
-// git + Jira). The real differentiator is ATLAS + open-source/self-host/markdown
-// ownership — NOT "they have no MCP": Notion, Confluence, GitBook, Docmost,
-// Slite, Nuclino, Coda, Mintlify, AFFiNE and Backstage all ship one. Only ever
-// say a competitor has no OFFICIAL MCP server, only when it was actually
-// checked, and say what does exist (community projects, or an official server
-// that covers something other than the docs — Backstage's exposes the catalog,
-// GitHub's ships no wiki tools).
+//
+// FACTS about tela, all verified against the code + the user-facing docs in
+// tela space 16 (do not add a claim you have not checked there):
+//   - Canonical markdown. `pages.body` is markdown forever, no block table, so
+//     export is a copy rather than a conversion (backend/internal/api/md_export.go).
+//   - Ask/search: ranked Postgres FTS always, plus semantic retrieval over
+//     pgvector with cited, streaming answers. The semantic half needs an
+//     embedder (+ an LLM for Ask) — provided on cloud, BYO when self-hosting —
+//     so never phrase it as unconditional. Full-text is unaffected either way.
+//   - MCP: built into the backend, ~48 scoped tools, read AND write, hosted at
+//     telawiki.com/api/mcp, plus an npm proxy and a Claude Code plugin. Do NOT
+//     restate a tool count here — it stales; docs/mcp-rewrite.md is canonical.
+//   - Atlas: git repos + Jira → a cited wiki, audited against a deterministic
+//     spine (routes, flags, env vars, models) for coverage; free core, uncapped
+//     on self-host, source/refresh caps on cloud plans.
+//   - Two-way sync: /dav/ WebDAV tree, PAT-as-password, any WebDAV client; and
+//     rclone bisync with server-side merge, generated for you by Settings → Sync.
+//   - Public spaces: whole-space publish, no-login reader, /{handle}/{space}
+//     URLs, RSS, sitemap/OG/JSON-LD, /discover. Custom domains are a DIFFERENT
+//     feature — a white-label front door for the logged-in app, deliberately
+//     noindex — never sell them as a publishing surface.
+//   - Page types: decks (Slidev; present live, export PDF/PPTX/PNG), sheets
+//     (formulas, conditional formatting, CSV/XLSX in and out, multiplayer),
+//     mermaid, Excalidraw drawings — all still plain markdown underneath.
+//   - Trust: per-page freshness/provenance/dispute strip + a space Health tab;
+//     the same `epistemic` block reaches agents on get_page. Needs an LLM.
+//   - DO NOT CLAIM (checked, and not true today): SAML; SCIM; a Confluence or
+//     Notion importer; zip *import* (import takes a markdown folder — the zip
+//     is the EXPORT side); Atlas connectors beyond git and Jira; a link-
+//     suggestion or overlap UI (both are agent/API-only); a listing in the
+//     Claude connector directory (ChatGPT's is live, Claude's is submitted).
+//   - Open core, and say so where the argument is about licensing: the whole
+//     product is AGPL; an Enterprise add-on covers SSO/SCIM/audit/advanced RBAC
+//     (docs/licensing.md). Claiming "AGPL end to end" while dinging Docmost or
+//     AFFiNE for open-core is the hypocrisy to avoid — TELA_LICENSE_CORE exists
+//     for exactly those pages.
+//
+// The real differentiator is ATLAS + open-source/self-host/markdown ownership —
+// NOT "they have no MCP": Notion, Confluence, GitBook, Docmost, Slite, Nuclino,
+// Coda, Mintlify, AFFiNE and Backstage all ship one. Only ever say a competitor
+// has no OFFICIAL MCP server, only when it was actually checked, and say what
+// does exist (community projects, or an official server that covers something
+// other than the docs — Backstage's exposes the catalog, GitHub's ships no wiki
+// tools).
+// Pick 5-7 rows that fit THIS opponent; pasting every constant onto every page
+// reads as a template and buries the axis that actually decides it.
 // Keep compare pages price-agnostic on purpose (durability): say "self-host free
 // · free cloud tier", not concrete numbers — so a pricing change never stales
 // these. Canonical prices live in docs/editions-and-pricing.md + the landing.
@@ -51,15 +87,41 @@ export interface Competitor {
   updated?: string;
 }
 
-/** Fallback "last updated" for entries with no `updated` of their own. */
-export const COMPARE_UPDATED = 'June 30, 2026';
+/**
+ * Fallback "last updated" for entries with no `updated` of their own. It renders
+ * as "tela facts current as of …", so bump it when the TELA side is re-checked
+ * against the code + space 16 — a competitor's own last-verified date lives in
+ * its `source` line, and re-dating that needs the competitor re-checked too.
+ */
+export const COMPARE_UPDATED = 'September 9, 2026';
 
 const TELA_LICENSE = 'Open source (AGPL-3.0)';
+/**
+ * For pages whose argument IS the licence shape (Docmost, AppFlowy, AFFiNE).
+ * tela is open core too — saying "AGPL end to end" there would be dishonest.
+ * The real distinction is WHAT each side gates, so the row says it out loud.
+ */
+const TELA_LICENSE_CORE =
+  'AGPL-3.0 — the whole product is the free core; a paid Enterprise add-on covers per-org SSO and audit logs';
 const TELA_SELFHOST = 'Yes — self-host free, plus a free cloud tier';
-const TELA_STORAGE = 'Canonical markdown you own';
-const TELA_ASK = 'Built in — semantic + full-text, answers with citations';
-const TELA_MCP = 'Built in — agents read & write (39 scoped tools)';
-const TELA_ATLAS = 'Yes — Atlas builds a cited, coverage-checked wiki from git + Jira';
+const TELA_STORAGE = 'Canonical markdown you own — export is a copy, not a conversion';
+const TELA_ASK =
+  'Built in — ranked full-text always, plus semantic Ask that cites its sources (self-host brings its own model)';
+const TELA_MCP = 'Built in — agents read and write, scoped per token, over a hosted endpoint';
+const TELA_ATLAS = 'Yes — Atlas builds a cited, coverage-checked wiki from git repos and Jira';
+/** The row Obsidian/Logseq/repo-docs pages turn on. Mount it, or bisync it. */
+const TELA_SYNC =
+  'Two-way — mount /dav/ as a folder of .md files with any WebDAV client, or bisync it with rclone';
+const TELA_PUBLIC =
+  'Publish a whole space to the open web — no-login reader, clean /handle/space URLs, RSS and a sitemap';
+const TELA_PAGETYPES =
+  'Docs, presentations and spreadsheets are all page types — plus mermaid, drawings and charts';
+const TELA_COLLAB = 'Yes — real-time multiplayer on documents and spreadsheets';
+const TELA_TEAM =
+  'Organizations, groups, per-space roles, invite by email, Google/Microsoft/GitHub sign-in; per-org SSO on Enterprise';
+/** The asymmetry that makes tela cheap to drive from an agent. */
+const TELA_UNMETERED =
+  'Unmetered on every tier — an agent driving tela over MCP runs on your model and your tokens';
 
 export const competitors: Competitor[] = [
   {
@@ -69,17 +131,18 @@ export const competitors: Competitor[] = [
     metaDescription:
       'An open-source, self-hostable Notion alternative. tela keeps canonical markdown you own, answers questions over your docs with citations, and generates a cited wiki from your code with Atlas.',
     heading: 'The open-source, self-hostable Notion alternative',
-    lead: 'Notion is a strong all-round workspace, but your pages live in a proprietary block database, it is cloud-only, and nothing in it writes your docs from your code. tela is markdown-native, self-hostable, and agent-native — and Atlas generates a cited wiki straight from your git repos and Jira.',
+    lead: 'Notion is a strong all-round workspace, but your pages live in a proprietary block database, it is cloud-only, and nothing in it writes your docs from your code. tela is markdown-native, self-hostable, and agent-native: the same pages are files on your disk if you want them to be, Atlas generates a cited wiki straight from your git repos and Jira, and presentations and spreadsheets are page types rather than a second product.',
     rows: [
-      { feature: 'Storage', tela: TELA_STORAGE, them: 'Proprietary block database' },
+      { feature: 'Storage', tela: TELA_STORAGE, them: 'Proprietary block database; markdown is an export format' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'No — cloud only' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: '"Ask Notion" — on the Business tier' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Official MCP server (behind paid AI)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'Keep a copy on your own disk', tela: TELA_SYNC, them: 'Your pages live in Notion; the way out is an export' },
     ],
     whySwitch: [
-      'Your docs write themselves — point Atlas at a repo or Jira project and it generates a cited, coverage-checked wiki.',
-      'Own your content as portable markdown — export is a no-op, not a lossy converter out of a block store.',
+      'Your docs write themselves — point Atlas at a repo or Jira project and it generates a cited, coverage-checked wiki, audited against the code’s real surface for what it still does not cover.',
+      'Own your content as portable markdown — export is a copy, not a lossy converter out of a block store, and a two-way sync keeps the same pages as .md files in a folder you control.',
       'Self-host on your own infrastructure, or use the free cloud tier.',
     ],
     whenBetter:
@@ -93,16 +156,23 @@ export const competitors: Competitor[] = [
     metaDescription:
       'A lightweight, self-hostable, AI-native Confluence alternative. tela is markdown-native, generates a cited wiki from your code with Atlas, and meters nothing to ask your own docs.',
     heading: 'A Confluence alternative your engineers will actually trust',
-    lead: 'Confluence is heavy and its AI (Rovo) is metered in credits, with the better AI on higher tiers. And like every incumbent, it cannot write your docs from your source. tela is the lightweight, markdown-native, AI-native opposite — and Atlas keeps the wiki generated and current from your git repos and Jira.',
+    lead: 'Confluence is heavy and its AI (Rovo) is metered in credits, with the better AI on higher tiers. And like every incumbent, it cannot write your docs from your source. tela is the lightweight, markdown-native, AI-native opposite — Atlas keeps the wiki generated and current from your git repos and Jira, and every page carries a freshness and provenance line so you can see which pages have quietly rotted.',
     rows: [
       { feature: 'Feel', tela: 'Fast, markdown-native, clean editor', them: 'Heavy; proprietary editor' },
+      { feature: 'Storage', tela: TELA_STORAGE, them: 'Its own storage format, not markdown' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'Data Center (enterprise) or cloud' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'Rovo — metered in credits' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Rovo MCP (behind a paid plan)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      {
+        feature: 'Knowing what has gone stale',
+        tela: 'Every page shows its age, who or what last wrote it, and any same-space page that contradicts it',
+        them: 'Page history; staying current is a matter of team discipline',
+      },
     ],
     whySwitch: [
       'It stays current by itself — Atlas regenerates from the code and flags drift; the usual reason Confluence spaces rot is that nobody updates them.',
+      'Rot becomes visible instead of invisible: a trust strip on every page flags stale ones, marks what an agent wrote, and links pages that contradict each other, with a Health tab per space listing them.',
       'No credit accounting just to ask your own wiki a question.',
       'Lightweight and ownable — a self-hostable wiki with plain-markdown portability, not a sprawling enterprise install.',
     ],
@@ -117,17 +187,20 @@ export const competitors: Competitor[] = [
     metaDescription:
       'tela vs Outline: both self-hostable markdown wikis. tela is AGPL (Outline is BSL-1.1 source-available), has a free cloud tier, a built-in MCP server, and Atlas — a cited wiki generated from your code.',
     heading: 'tela vs Outline — the AI-native, fully open-source option',
-    lead: 'Outline is genuinely good and the closest comparison — a polished, self-hostable markdown wiki. The differences are three: license, pricing model, and the entire AI layer. Outline is BSL-1.1 (source-available, not OSI open source) with no free cloud and no first-class agent/auto-doc layer; tela is AGPL with a free cloud tier, a built-in MCP server, and Atlas.',
+    lead: 'Outline is genuinely good and the closest comparison — a polished, self-hostable markdown wiki. The differences are three: license, pricing model, and the entire AI layer. Outline is BSL-1.1 (source-available, not OSI open source) with no free cloud and no first-class agent/auto-doc layer; tela is AGPL with a free cloud tier, a built-in MCP server, Atlas, a two-way file sync, and presentations and spreadsheets as page types.',
     rows: [
-      { feature: 'License', tela: TELA_LICENSE, them: 'BSL 1.1 — source-available, not OSI open source' },
+      { feature: 'License', tela: TELA_LICENSE_CORE, them: 'BSL 1.1 — source-available, not OSI open source' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'Yes (no free cloud)' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'Self-host + your own OpenAI key' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (third-party only)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'What a page can be', tela: TELA_PAGETYPES, them: 'Documents' },
+      { feature: 'Sync to a folder on your disk', tela: TELA_SYNC, them: 'API and export' },
     ],
     whySwitch: [
       'The axis Outline never built — Atlas generates a cited wiki from your code, and a built-in MCP server makes agents first-class authors.',
-      'A cleaner open-source story — AGPL (real OSI open source) versus BSL\'s source-available restrictions.',
+      'One tool for more of the work: a presentation and a spreadsheet are page types in tela, and both are still plain markdown you can diff.',
+      'A cleaner open-source story — AGPL (real OSI open source) versus BSL\'s source-available restrictions. tela is open core too, but what it licenses is company governance (SSO, audit), not the product.',
       'A free cloud tier to evaluate, plus self-host whenever you want.',
     ],
     whenBetter:
@@ -148,11 +221,14 @@ export const competitors: Competitor[] = [
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'AI on its top tier' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'MCP, but read-only (published docs)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No — Git Sync mirrors existing markdown' },
+      { feature: 'Publishing to the web', tela: TELA_PUBLIC, them: 'Its whole purpose — and better at it: branded, versioned, multi-version docs sites' },
+      { feature: 'What a page can be', tela: TELA_PAGETYPES, them: 'Documentation pages' },
     ],
     whySwitch: [
       'Atlas writes the first draft from your code; GitBook\'s Git Sync only mirrors markdown you authored by hand.',
       'Agents are full citizens — GitBook\'s MCP is read-only and exposes only published docs; tela\'s agents search and write your live wiki.',
       'Self-host under AGPL and keep portable markdown, instead of renting per published site.',
+      'One place for the whole team, not just the docs team: the same space holds runbooks, meeting notes, a budget spreadsheet and a deck, and you can still flip any of it public with a no-login reader, RSS and a sitemap.',
     ],
     whenBetter:
       'If your job is beautiful public-facing developer documentation — versioned API references, multi-version docs for an open-source library, a branded docs site — GitBook is excellent and hard to beat. tela is a team wiki, not a public docs-publishing platform.',
@@ -165,19 +241,21 @@ export const competitors: Competitor[] = [
     metaDescription:
       'A self-hosted BookStack alternative with built-in AI and a native MCP server. tela keeps canonical markdown, answers questions over your docs, and generates a wiki from your repo with Atlas.',
     heading: 'The AI-native, open-source BookStack alternative',
-    lead: 'BookStack is a rock-solid, MIT-licensed self-hosted wiki — and if you just need shelves, books, and pages, it is a great free choice. But it has no built-in AI, no official MCP server, stores content as HTML rather than markdown, and will not generate docs from your code. tela adds all four.',
+    lead: 'BookStack is a rock-solid, MIT-licensed self-hosted wiki — and if you just need shelves, books, and pages, it is a great free choice. But it has no built-in AI, no official MCP server, stores content as HTML rather than markdown, and will not generate docs from your code. tela adds all four, plus real-time co-editing and a two-way sync that puts the same pages on your disk as .md files.',
     rows: [
       { feature: 'License', tela: TELA_LICENSE, them: 'Open source (MIT)' },
       { feature: 'Storage', tela: TELA_STORAGE, them: 'HTML-primary' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'None built in' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (community only)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
-      { feature: 'Live collaboration', tela: 'Yes — real-time multiplayer', them: 'No real-time co-editing' },
+      { feature: 'Live collaboration', tela: TELA_COLLAB, them: 'No real-time co-editing' },
+      { feature: 'Sync to a folder on your disk', tela: TELA_SYNC, them: 'API and export' },
     ],
     whySwitch: [
-      'Ask your docs, do not just keyword-search them — semantic answers with citations, out of the box.',
+      'Ask your docs, do not just keyword-search them — semantic answers that cite the page they came from, over your pages and your attached PDFs alike.',
       'Agents are first-class via a built-in MCP server; BookStack has only community API wrappers.',
       'Atlas turns a repo into a cited wiki; BookStack content is entirely hand-authored.',
+      'Your content is markdown you can keep locally — mount the wiki as a folder of .md files and edit it in whatever editor you already use.',
     ],
     whenBetter:
       'BookStack is more mature, dead-simple to run, genuinely zero-cost, and MIT-licensed with no copyleft to reason about. For a no-frills, permissively-licensed documentation wiki with no AI ambitions, it is a fantastic, lighter choice.',
@@ -190,18 +268,20 @@ export const competitors: Competitor[] = [
     metaDescription:
       'A markdown-native Docmost alternative. tela keeps canonical markdown (not ProseMirror JSON), ships AI and agent access without an Enterprise gate, and generates a cited wiki from your code with Atlas.',
     heading: 'The markdown-native, self-hosted Docmost alternative',
-    lead: 'Docmost is the closest tool to tela here — both are AGPL, both self-host, both do live collaboration, and both ship an MCP server. The real differences are three: Docmost stores ProseMirror JSON rather than markdown, its AI and MCP server sit behind a paid Enterprise license, and it has no way to generate docs from your code.',
+    lead: 'Docmost is the closest tool to tela here — both are AGPL, both self-host, both do live collaboration, both ship an MCP server, and both are open core with a paid Enterprise tier. So the question is not which one has a licence wall; it is where each one puts it. Docmost gates the AI and the MCP server behind Enterprise; tela gates SSO and audit logs and leaves the AI, the agents and Atlas in the free core. And Docmost stores ProseMirror JSON where tela stores markdown.',
     rows: [
-      { feature: 'License', tela: TELA_LICENSE, them: 'AGPL core + commercial Enterprise license' },
+      { feature: 'License', tela: TELA_LICENSE_CORE, them: 'AGPL core + commercial Enterprise license' },
+      { feature: 'What sits behind the licence wall', tela: 'Per-org SSO and audit logs — the company layer', them: 'The AI and the MCP server — the product layer' },
       { feature: 'Storage', tela: TELA_STORAGE, them: 'ProseMirror JSON (markdown = import/export)' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'Built in — Enterprise license only' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'First-party MCP — Enterprise license only' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'What a page can be', tela: TELA_PAGETYPES, them: 'Documents' },
     ],
     whySwitch: [
-      'Markdown is the source of truth — grep it, diff it, own it forever; Docmost stores ProseMirror JSON with markdown only as import/export.',
-      'AI and agent access are in the box, not behind an Enterprise license wall.',
-      'Atlas closes the loop Docmost does not — a cited wiki generated from your repo and Jira.',
+      'Markdown is the source of truth — grep it, diff it, sync it to a folder, own it forever; Docmost stores ProseMirror JSON with markdown only as import/export.',
+      'Both projects are open core; the difference is what each one sells. tela\'s free core keeps Ask, semantic search, the MCP server and Atlas, and licenses the company layer — per-org SSO and audit logs.',
+      'Atlas closes the loop Docmost does not — a cited wiki generated from your repo and Jira, scored against the code\'s real surface for what is still undocumented.',
     ],
     whenBetter:
       'Docmost is mature and well-rounded with a clear paid-support path — a polished block editor, a Confluence importer, SSO/SCIM, and audit logs. If you want a Notion-style block editor, a turnkey Confluence migration, or a vendor to buy a support contract from today, it is a strong pick.',
@@ -222,10 +302,11 @@ export const competitors: Competitor[] = [
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'AI "Ask" — on a higher plan' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (community only)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'Sync to a folder on your disk', tela: TELA_SYNC, them: 'Your posts live in Slab; the way out is an export' },
     ],
     whySwitch: [
       'Own your knowledge base and your data — self-host under AGPL; Slab is cloud-only.',
-      'Markdown you can export and version, not a proprietary post format.',
+      'Markdown you can export, version and sync: mount the wiki as a folder of .md files and it stays reconciled in both directions.',
       'Atlas generates a cited wiki from your sources; Slab\'s repo integration only mirrors existing markdown.',
     ],
     whenBetter:
@@ -239,18 +320,21 @@ export const competitors: Competitor[] = [
     metaDescription:
       'An open-source Wiki.js alternative (AGPL, self-hosted). tela adds semantic ask-your-docs, a built-in MCP server, and Atlas — which generates a cited wiki from your code repos.',
     heading: 'The open-source Wiki.js alternative that writes its own docs',
-    lead: 'Wiki.js is a deservedly popular self-hosted wiki — AGPL, markdown-native, free to run. But its shipping line has no built-in AI, no first-class agent integration, and its Git module only syncs your wiki to a repo; it never generates docs from your code. tela keeps the same ownership and adds the parts Wiki.js leaves to you.',
+    lead: 'Wiki.js is a deservedly popular self-hosted wiki — AGPL, markdown-native, free to run, and its Git module already keeps your content in a repo. But its shipping line has no built-in AI, no first-class agent integration, no real-time co-editing, and the Git module only mirrors what you wrote; it never generates docs from your code. tela keeps the same ownership and adds the parts Wiki.js leaves to you.',
     rows: [
       { feature: 'License', tela: TELA_LICENSE, them: 'Open source (AGPL-3.0)' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'None built in (keyword search)' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (community bridges)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No — Git module syncs content' },
-      { feature: 'Live collaboration', tela: 'Yes — real-time multiplayer', them: 'No real-time co-editing' },
+      { feature: 'Live collaboration', tela: TELA_COLLAB, them: 'No real-time co-editing' },
+      { feature: 'What a page can be', tela: TELA_PAGETYPES, them: 'Pages, written in markdown or its visual/HTML editors' },
+      { feature: 'Publishing to the web', tela: TELA_PUBLIC, them: 'Group permissions; a wiki you can leave readable by guests' },
     ],
     whySwitch: [
-      'Your docs write themselves — Atlas generates a cited wiki from a repo or Jira project and flags coverage gaps.',
+      'Your docs write themselves — Atlas generates a cited wiki from a repo or Jira project and scores it against the code\'s real surface, naming what it still does not cover.',
       'Agents are first-class via a built-in MCP server, not community wrappers over its API.',
       'Ask your docs by meaning, with citations — not just keyword search.',
+      'A presentation and a spreadsheet are page types, not another tool, and they are still markdown in the same Git-syncable folder.',
     ],
     whenBetter:
       'Wiki.js v2 is mature, has a large module and theme ecosystem, and broad database-backend flexibility. If you want a proven, lightweight wiki and do not need AI, agents, or repo-to-doc generation, it is an excellent no-cost option. (Its v3 rewrite is still pre-release, so the stable choice is v2.)',
@@ -271,10 +355,12 @@ export const competitors: Competitor[] = [
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'AI "Ask" with citations (metered)' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Yes — official remote MCP server' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No (AI detects drift across SaaS tools)' },
+      { feature: 'Sync to a folder on your disk', tela: TELA_SYNC, them: 'Your docs live in Slite; the way out is an export' },
     ],
     whySwitch: [
       'No per-seat cloud bill and no lock-in — self-host under AGPL or use the free cloud tier.',
-      'Own the markdown; Slite\'s content lives in its proprietary format and its cloud.',
+      'Own the markdown; Slite\'s content lives in its proprietary format and its cloud, while tela\'s pages mount as a folder of .md files that syncs both ways.',
+      'Driving tela from your own agent costs nothing extra — the tokens are yours, so MCP use is unmetered on every tier including the free one.',
       'Atlas turns repos and Jira into a cited wiki; Slite surfaces drift but does not author from your source.',
     ],
     whenBetter:
@@ -292,13 +378,15 @@ export const competitors: Competitor[] = [
     rows: [
       { feature: 'License', tela: TELA_LICENSE, them: 'Proprietary SaaS' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'No — cloud only' },
+      { feature: 'Storage', tela: TELA_STORAGE, them: 'Its own editor format; markdown is import/export' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: '"Sidekick" — full version on the top tier' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Yes — official MCP server' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'Sync to a folder on your disk', tela: TELA_SYNC, them: 'Your items live in Nuclino; the way out is an export' },
     ],
     whySwitch: [
-      'Self-host and own your data — Nuclino is cloud-only with no on-prem option.',
-      'AI is not paywalled to the top tier — semantic retrieval is built in.',
+      'Self-host and own your data — Nuclino is cloud-only with no on-prem option, and a tela space also mounts on your own disk as ordinary .md files you can open in any editor.',
+      'AI is not paywalled to the top tier — semantic retrieval and Ask are in the free core, and on self-host they run on your own model.',
       'Atlas generates a cited wiki from repos and Jira; Nuclino is a manual wiki.',
     ],
     whenBetter:
@@ -320,10 +408,12 @@ export const competitors: Competitor[] = [
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'Coda AI — credit-metered' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Yes — official MCP server' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'Sync to a folder on your disk', tela: TELA_SYNC, them: 'Your docs live in Coda; the way out is an export' },
     ],
     whySwitch: [
-      'Own your content as markdown — Coda locks docs into a proprietary format and its cloud.',
+      'Own your content as markdown — Coda locks docs into a proprietary format and its cloud, where a tela page is a text file you can grep, diff and keep a local copy of.',
       'Open-source and self-hostable under AGPL, no per-Doc-Maker bill.',
+      'Working the wiki from your own agent is unmetered on every tier, because it runs on your model and your tokens — no credit balance to watch.',
       'Atlas generates docs from code; Coda has no repo ingestion.',
     ],
     whenBetter:
@@ -344,11 +434,13 @@ export const competitors: Competitor[] = [
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'None in core (extensions only)' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No core server (community wrappers)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'Live collaboration', tela: TELA_COLLAB, them: 'Edit-and-save with conflict resolution, not co-editing' },
       { feature: 'Ops', tela: 'Lightweight modern stack', them: 'Heavyweight (Wikipedia-scale)' },
     ],
     whySwitch: [
-      'Markdown, not wikitext — no template or parser-function learning curve.',
+      'Markdown, not wikitext — no template or parser-function learning curve, and the same pages mount as .md files on your disk.',
       'AI- and agent-native out of the box; MediaWiki needs bolt-on extensions and has no MCP in core.',
+      'Two people can write the same page at the same time, and a presentation or a spreadsheet is just another page.',
       'Atlas generates docs from code, and the stack is far lighter to run.',
     ],
     whenBetter:
@@ -360,24 +452,27 @@ export const competitors: Competitor[] = [
     name: 'Obsidian',
     seoTitle: 'Obsidian alternative for teams — open-source, self-hosted, live collaboration | tela',
     metaDescription:
-      'A team-ready, self-hosted Obsidian alternative. tela keeps your markdown but adds real-time multiplayer, SSO, ask-your-docs, a built-in MCP server, and Atlas — a cited wiki generated from your code.',
+      'A team-ready, self-hosted Obsidian alternative — and you keep the folder. tela syncs your vault two ways over WebDAV, then adds real-time multiplayer, roles, ask-your-docs, a built-in MCP server, and Atlas.',
     heading: 'The open-source, self-hosted Obsidian alternative built for teams',
-    lead: 'Obsidian is a beloved local-first markdown app — your notes are plain files you own, with an unrivaled plugin ecosystem and graph view. But it is built for one person: closed-source, no real-time multiplayer, no built-in AI or MCP, and Obsidian Publish is a hosted service you cannot self-host. tela keeps Obsidian\'s best idea — knowledge as portable markdown you own — and makes it a real team platform.',
+    lead: 'Obsidian is a beloved local-first markdown app — your notes are plain files you own, with an unrivaled plugin ecosystem and graph view. But it is built for one person: closed-source, no real-time multiplayer, no built-in AI or MCP, and Obsidian Publish is a hosted service you cannot self-host. tela does not ask you to give up the folder. It exposes every space as a WebDAV tree, so you can mount it — or bisync it with rclone — and keep working in Obsidian against the very same .md files your team edits in the browser.',
     rows: [
+      { feature: 'Your files stay yours', tela: TELA_SYNC, them: 'Plain .md files in a folder on your disk — the original of this idea' },
       { feature: 'License', tela: TELA_LICENSE, them: 'Proprietary / closed-source' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'Local app; Publish is hosted, not self-hostable' },
-      { feature: 'Real-time collaboration', tela: 'Yes — multiplayer editing', them: 'No — single-user; async vault sync' },
-      { feature: 'Team controls (SSO, roles)', tela: 'Yes', them: 'No — single-user product' },
+      { feature: 'Real-time collaboration', tela: TELA_COLLAB, them: 'No — single-user; async vault sync' },
+      { feature: 'Team controls', tela: TELA_TEAM, them: 'No — single-user product' },
       { feature: 'Ask your docs (AI) & MCP', tela: TELA_ASK, them: 'None official (community plugins)' },
+      { feature: 'Publishing to the web', tela: TELA_PUBLIC, them: 'Obsidian Publish — a paid hosted service' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
     ],
     whySwitch: [
-      'Real-time multiplayer with SSO and roles; Obsidian is single-player with async vault sync.',
-      'Open-source and self-hostable — including the published surface; Obsidian Publish is a paid hosted service you cannot run yourself.',
-      'AI and agents are built in, not assembled from community plugins of varying license and maintenance — and Atlas generates docs from code.',
+      'You do not have to leave the folder behind. Mount your tela spaces as a vault of .md files — any WebDAV client will do, and rclone bisync merges both directions server-side — so your local editor and your team\'s browser are working on the same files, not on a copy.',
+      'Real-time multiplayer with organizations, groups and per-space roles; Obsidian is single-player with async vault sync.',
+      'Open-source and self-hostable — including the published surface: flipping a space public gives you a no-login reader with RSS and a sitemap, where Obsidian Publish is a paid hosted service you cannot run yourself.',
+      'AI and agents are built in, not assembled from community plugins of varying license and maintenance — and Atlas generates a cited wiki from your repos and Jira.',
     ],
     whenBetter:
-      'For a single user\'s personal knowledge base, Obsidian is hard to beat: local-first and offline by default, an enormous plugin library, the graph view, and total control over a folder of files on your disk. For solo PKM or a personal digital garden, stay with Obsidian.',
+      'For a single user\'s personal knowledge base, Obsidian is hard to beat: local-first and offline by default, an enormous plugin library, the graph view, canvas, and total control over a folder of files on your disk with no server in the loop at all. tela\'s sync is a network mount, not an offline-first local app — lose the connection and you are working on a cache. For solo PKM or a personal digital garden, stay with Obsidian.',
     source: 'obsidian.md — pricing + license (verified 2026).',
   },
   {
@@ -394,11 +489,14 @@ export const competitors: Competitor[] = [
       { feature: 'Search & AI answers', tela: TELA_ASK, them: 'Algolia DocSearch (and its Ask AI) — a third-party index; nothing built in' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (community plugins only)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No — it renders the markdown you already wrote' },
+      { feature: 'Keeping the files on disk', tela: TELA_SYNC, them: 'They already are — a docs/ folder in your repo' },
+      { feature: 'Publishing to the web', tela: TELA_PUBLIC, them: 'Its whole purpose — and better at it: versioning, i18n, MDX and React components' },
     ],
     whySwitch: [
       'Nothing stands between writing and published — tela saves the page live; in Docusaurus every edit is a rebuild and a redeploy.',
       'The people who know the answer can write it down, in a browser, without a pull request against a repo.',
-      'Atlas drafts pages from your repos and Jira, and a built-in MCP server lets agents keep writing them.',
+      'You do not have to give up the files to get the browser: mount a tela space as a folder of .md files and keep editing it from your editor, in the same two-way sync your teammates are writing through.',
+      'Atlas drafts pages from your repos and Jira, and a built-in MCP server lets agents keep writing them — where a static site generator will render whatever an agent commits but can neither tell it what already exists nor let it fix a page in place.',
     ],
     whenBetter:
       'For a public, versioned documentation site, Docusaurus is the better tool: docs versioning and i18n out of the box, MDX with React components, free hosting on GitHub Pages, and a large plugin ecosystem. Keeping docs in the repo also means they are reviewed in the same pull request as the code they describe — a discipline a wiki does not give you. tela is for internal team knowledge, not for shipping a branded docs site.',
@@ -419,11 +517,13 @@ export const competitors: Competitor[] = [
       { feature: 'Search & AI answers', tela: TELA_ASK, them: 'Client-side keyword search (lunr); no AI answers documented' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (community plugins only)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No — renders markdown you wrote (mkdocstrings pulls API reference from docstrings)' },
+      { feature: 'Keeping the files on disk', tela: TELA_SYNC, them: 'They already are — a docs/ folder in your repo' },
       { feature: 'Roadmap', tela: 'Actively developed', them: 'Material for MkDocs is in maintenance mode since Nov 2025 — fixes only, features moved to its successor' },
     ],
     whySwitch: [
       'No build, no deploy, no CI job — a page is live the moment you save it.',
-      'Ask your docs a question and get an answer with citations, instead of client-side keyword search.',
+      'Ask your docs a question and get an answer with citations, instead of client-side keyword search — and it searches attached PDFs too, not only the pages.',
+      'You keep the folder either way: mount a tela space over WebDAV and your docs are still .md files you can edit in the editor you already use.',
       'Agents are first-class through a built-in MCP server, and Atlas drafts pages straight from your repos.',
     ],
     whenBetter:
@@ -444,13 +544,15 @@ export const competitors: Competitor[] = [
       { feature: 'Who can edit', tela: 'Anyone — a WYSIWYG markdown editor in the browser', them: 'Markdown in each repo; "Edit this page" links back out to the repo' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'None in core — Lunr, Postgres or Elasticsearch search' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Official MCP for catalog/scaffolder actions; no TechDocs actions' },
-      { feature: 'Ownership & discovery', tela: 'Spaces, backlinks, semantic search', them: 'Stronger — docs hang off a catalog entity and inherit its owner' },
+      { feature: 'Ownership & discovery', tela: 'Spaces, backlinks, related pages, semantic search', them: 'Stronger — docs hang off a catalog entity and inherit its owner' },
+      { feature: 'Coverage', tela: 'Atlas scores generated pages against the code\'s real surface — routes, flags, env vars, models — and names what is still undocumented', them: 'No coverage measure; a page exists or it does not' },
       { feature: 'To run it', tela: 'A docker-compose stack, or the free cloud tier', them: 'A Backstage monorepo you own, a CI job per repo, plus S3/GCS for output' },
     ],
     whySwitch: [
       'Atlas writes the first draft from the repo and flags what is not covered; TechDocs only builds pages somebody already wrote.',
+      'Undocumented surface becomes a number instead of a hunch — Atlas audits generated pages against an inventory of the code\'s routes, flags, env vars and models, and lists the gaps.',
       'Answers with citations over the whole wiki, instead of Lunr or an Elasticsearch cluster you operate yourself.',
-      'Non-engineers can contribute — editing is a browser, not a pull request into each service repo.',
+      'Non-engineers can contribute — editing is a browser, not a pull request into each service repo — while engineers who want the files can still mount the space as a folder of .md.',
     ],
     whenBetter:
       'If you already run Backstage, TechDocs is the right home for service documentation, and tela does not try to replace the software catalog. Docs living in the repo means they are versioned with the code, reviewed in the same pull request, and inherit an owner — so a stale or unowned doc shows up as a catalog problem rather than going quietly unnoticed. That coupling is precisely what a standalone wiki gives up.',
@@ -470,13 +572,15 @@ export const competitors: Competitor[] = [
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'Enterprise only — a scoped deployment with their account team' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'Assistant with citations — Pro and above, billed in credits' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Admin MCP writes; the docs MCP your readers get is read-only' },
+      { feature: 'What agent use costs', tela: TELA_UNMETERED, them: 'The assistant and the agent draw on a shared credit balance' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'Agent drafts pull requests from repos and PRs (Pro and above)' },
       { feature: 'Built for', tela: 'An internal team wiki', them: 'Public, branded product documentation' },
     ],
     whySwitch: [
       'Self-host for free under AGPL — Mintlify self-hosting begins at Enterprise and runs through their account team.',
-      'Asking your own docs a question is not metered; Mintlify draws the assistant and the agent from a shared credit balance.',
-      'It is a wiki for the whole team’s knowledge, not a publishing pipeline for a customer-facing docs site.',
+      'Asking your own docs a question is not metered; Mintlify draws the assistant and the agent from a shared credit balance. Driving tela from your own agent over MCP costs nothing at all, because it runs on your tokens.',
+      'Atlas does not stop at a draft: it audits what it wrote against an inventory of the code\'s real surface — routes, flags, env vars, models — and reports the fraction still undocumented.',
+      'It is a wiki for the whole team’s knowledge, not a publishing pipeline for a customer-facing docs site — runbooks, meeting notes, a budget spreadsheet and a deck live in the same space, and any space can still be published to the open web.',
     ],
     whenBetter:
       'For public product and API documentation, Mintlify is excellent and ahead of tela: a polished branded docs site, OpenAPI-driven API playgrounds, preview deployments on every pull request, real-time collaborative editing with live cursors, and an AI agent that opens documentation PRs off your commits. If your job is shipping developer docs to customers rather than running an internal wiki, Mintlify is the better tool.',
@@ -492,16 +596,18 @@ export const competitors: Competitor[] = [
     heading: 'The open-source Logseq alternative built for a team',
     lead: 'Logseq is a superb personal outliner — local-first, AGPL, block references, daily journals. It is not a team wiki, and the ground beneath it has shifted: the markdown-files-on-disk version is now "Logseq OG" on maintenance-only support, while the actively developed 2.0 keeps your graph in SQLite and is still labelled beta. tela is the other shape — a shared, permissioned team wiki whose canonical format stays markdown.',
     rows: [
-      { feature: 'Built for', tela: 'A team — shared spaces, roles, permissions', them: 'One person’s graph' },
+      { feature: 'Built for', tela: TELA_TEAM, them: 'One person’s graph' },
       { feature: 'Storage', tela: TELA_STORAGE, them: 'Markdown/Org files in "Logseq OG"; SQLite in the 2.0 DB version' },
-      { feature: 'Real-time collaboration', tela: 'Yes — multiplayer editing', them: 'RTC in the 2.0 beta — alpha, invite-only, paid' },
+      { feature: 'Files on your disk', tela: TELA_SYNC, them: 'Yes in "Logseq OG" (maintenance-only); the 2.0 DB version keeps the graph in SQLite' },
+      { feature: 'Real-time collaboration', tela: TELA_COLLAB, them: 'RTC in the 2.0 beta — alpha, invite-only, paid' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'None official' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server (community, via the desktop app’s local API)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
     ],
     whySwitch: [
-      'A real team surface — shared spaces, roles and permissions, rather than one person’s graph with sync added on.',
-      'Markdown stays canonical and server-side; Logseq’s file-based line is now maintenance-only, and 2.0’s markdown export is documented as lossy.',
+      'A real team surface — organizations, groups, shared spaces and per-space roles, rather than one person’s graph with sync added on.',
+      'You keep files on disk without staying on the maintenance-only line: markdown is canonical server-side, and every space mounts as a folder of .md files that syncs both ways — so a local editor and a browser edit the same file.',
+      'Markdown stays canonical; Logseq’s file-based line is now maintenance-only, and 2.0’s markdown export is documented as lossy.',
       'Ask your docs with citations, and let agents write pages through a built-in MCP server.',
     ],
     whenBetter:
@@ -518,16 +624,18 @@ export const competitors: Competitor[] = [
     heading: 'The GitHub Wiki alternative for when the repo wiki runs out',
     lead: 'A repository wiki is the right first move — free, already there, and a real git repo you can clone. Teams outgrow it in predictable ways, and GitHub’s own documentation names most of them: no page hierarchy beyond a hand-written sidebar, no pull requests or review on an edit, permissions welded to the repository, a soft limit of 5,000 files, and search engines that only index a wiki if the repo has 500 or more stars and public editing is turned off. tela is where that knowledge goes next.',
     rows: [
-      { feature: 'Structure', tela: 'Nested spaces and pages, backlinks', them: 'A flat page list plus a hand-maintained _Sidebar' },
-      { feature: 'Permissions', tela: 'Per-space roles and sharing', them: 'Tied to the repo — public, or collaborators only' },
+      { feature: 'Structure', tela: 'Nested spaces and pages, backlinks, related pages', them: 'A flat page list plus a hand-maintained _Sidebar' },
+      { feature: 'Permissions', tela: TELA_TEAM, them: 'Tied to the repo — public, or collaborators only' },
       { feature: 'Search', tela: TELA_ASK, them: 'Its own siloed wiki search; wikis are not in code search' },
-      { feature: 'Found by search engines', tela: 'Yes — public spaces are indexable, with a sitemap', them: 'Only for repos with 500+ stars and public editing disabled' },
+      { feature: 'Found by search engines', tela: TELA_PUBLIC, them: 'Only for repos with 500+ stars and public editing disabled' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'GitHub’s official MCP server ships no wiki tools' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
+      { feature: 'Still a folder you can clone', tela: TELA_SYNC, them: 'Yes — the wiki is a git repository' },
     ],
     whySwitch: [
-      'Real structure and real permissions — nested spaces and per-space roles, instead of a flat page list whose access is whatever the repo’s happens to be.',
-      'Findable: ask a question and get an answer with citations, and publish a space search engines will actually index.',
+      'Real structure and real permissions — nested spaces, organizations and per-space roles, instead of a flat page list whose access is whatever the repo’s happens to be.',
+      'Findable: ask a question and get an answer with citations, and publish a space search engines will actually index — a no-login reader with RSS and a sitemap, on any repo, at any star count.',
+      'You do not lose the clone-it-locally habit: every space mounts over WebDAV as a folder of .md files and bisyncs both ways, so the local copy stays a first-class way to work.',
       'Agents write it — GitHub’s own MCP server exposes issues, pull requests and code, but no wiki tools at all.',
     ],
     whenBetter:
@@ -542,19 +650,20 @@ export const competitors: Competitor[] = [
     metaDescription:
       'An AppFlowy alternative that is open source all the way down. tela self-hosts with no seat cap, keeps canonical markdown, answers with citations, and ships a built-in MCP server so agents read and write.',
     heading: 'The AppFlowy alternative that is open source all the way down',
-    lead: 'AppFlowy is a well-built open-source Notion alternative with a genuinely good native app. If you are self-hosting it, though, two details matter: the server that AppFlowy actually maintains for self-host is a closed-source commercial fork of its AGPL core, and its free self-host tier is one user seat per instance. tela is AGPL end to end, self-hosts for a team without a seat ceiling, and keeps markdown as the canonical format.',
+    lead: 'AppFlowy is a well-built open-source Notion alternative with a genuinely good native app. If you are self-hosting it, though, two details matter: the server that AppFlowy actually maintains for self-host is a closed-source commercial fork of its AGPL core, and its free self-host tier is one user seat per instance. tela is open core too — but the licensed part is company governance, not the product: the whole wiki, Atlas, Ask and the MCP server are AGPL and free, for as many people as you like.',
     rows: [
-      { feature: 'License', tela: TELA_LICENSE, them: 'AGPL clients; the maintained self-host server is a closed-source commercial fork' },
+      { feature: 'License', tela: TELA_LICENSE_CORE, them: 'AGPL clients; the maintained self-host server is a closed-source commercial fork' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'Yes — but the free tier is one user seat per instance' },
+      { feature: 'What is behind the paid tier', tela: 'Per-org SSO and audit logs; everyone else on the instance, and every feature, is free', them: 'The seats — the free self-host tier is one' },
       { feature: 'Storage', tela: TELA_STORAGE, them: 'CRDT documents (Yrs); markdown is import/export' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'AI search — metered on cloud; self-host is bring-your-own model' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'No official server we could find (community projects only)' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
     ],
     whySwitch: [
-      'The stack you self-host is the open-source one — AppFlowy’s maintained self-host server is a closed-source fork of its AGPL core.',
-      'Self-host for an actual team: AppFlowy’s free self-hosted tier is a single user seat per instance.',
-      'Markdown stays canonical, Atlas drafts pages from your repos, and a built-in MCP server lets agents keep writing them.',
+      'The server you self-host is the open-source one — AppFlowy’s maintained self-host server is a closed-source fork of its AGPL core, where tela’s AGPL core is the whole product and the Enterprise add-on only covers per-org SSO and audit logs.',
+      'Self-host for an actual team: AppFlowy’s free self-hosted tier is a single user seat per instance; tela does not count seats in its free core.',
+      'Markdown stays canonical — and mounts as a folder of .md files that syncs both ways — while Atlas drafts pages from your repos and a built-in MCP server lets agents keep writing them.',
     ],
     whenBetter:
       'AppFlowy is the better tool if you want Notion’s structure rather than a wiki: grids, boards and calendars with relations and rollups, all deepening release over release. It also has something tela does not — a real native Flutter app on desktop and mobile with true offline editing, and a free local-AI path that runs models on your own hardware through Ollama.',
@@ -568,19 +677,21 @@ export const competitors: Competitor[] = [
     metaDescription:
       'An AFFiNE alternative for team knowledge. tela is AGPL end to end with no self-hosted seat cap, canonical markdown you own, ask-your-docs with citations, and a built-in read/write MCP server.',
     heading: 'The AFFiNE alternative for a team wiki you fully own',
-    lead: 'AFFiNE is an ambitious open-source workspace, and its bet is the edgeless canvas — the same document as a page or an infinite whiteboard. It also ships a first-party MCP server, so this is not a comparison about who has agents. It is about licensing and shape: AFFiNE’s client is MIT but its self-host backend sits under a separate Enterprise Edition license, and a self-hosted workspace is capped at 10 seats without a Team license. tela is AGPL end to end, uncapped, and markdown-canonical.',
+    lead: 'AFFiNE is an ambitious open-source workspace, and its bet is the edgeless canvas — the same document as a page or an infinite whiteboard. It also ships a first-party MCP server, so this is not a comparison about who has agents. It is about licensing and shape: AFFiNE’s client is MIT but its self-host backend sits under a separate Enterprise Edition license, and a self-hosted workspace is capped at 10 seats without a Team license. tela is open core as well — the honest question is what each side puts behind the wall. AFFiNE gates the seats; tela gates per-org SSO and audit logs and leaves the product itself AGPL, uncapped and markdown-canonical.',
     rows: [
-      { feature: 'License', tela: TELA_LICENSE, them: 'MIT client; the self-host backend is under its source-available Enterprise Edition license' },
+      { feature: 'License', tela: TELA_LICENSE_CORE, them: 'MIT client; the self-host backend is under its source-available Enterprise Edition license' },
       { feature: 'Self-hostable', tela: TELA_SELFHOST, them: 'Yes — a workspace is capped at 10 seats without a Team license' },
+      { feature: 'What is behind the paid tier', tela: 'Per-org SSO and audit logs — the company layer', them: 'The seats — 10 per self-hosted workspace' },
       { feature: 'Storage', tela: TELA_STORAGE, them: 'BlockSuite/Yjs documents; markdown is import/export' },
       { feature: 'Ask your docs (AI)', tela: TELA_ASK, them: 'Yes — self-host requires bring-your-own API keys' },
       { feature: 'Agents read & write (MCP)', tela: TELA_MCP, them: 'Built-in MCP — read tools by default, write tools rolling out' },
       { feature: 'Generate docs from your code', tela: TELA_ATLAS, them: 'No' },
     ],
     whySwitch: [
-      'One license for the whole product — AGPL end to end, including the server you run.',
-      'No seat ceiling on a self-hosted install; AFFiNE caps a self-hosted workspace at 10 seats without a Team license.',
-      'Atlas generates a cited wiki from your repos and Jira — AFFiNE gives you a surface to write on, not one that drafts from your code.',
+      'No seat ceiling on a self-hosted install; AFFiNE caps a self-hosted workspace at 10 seats without a Team license, while tela does not count seats in its free core at all.',
+      'Both are open core — the difference is where the wall sits. tela licenses per-org SSO and audit logs; everything a team actually writes with, including Atlas, Ask and the MCP server, is AGPL and free.',
+      'Markdown is the document, not an export target: the same page is a .md file you can grep, diff, and mount as a folder that syncs both ways.',
+      'Atlas generates a cited wiki from your repos and Jira — AFFiNE gives you a surface to write on, not one that drafts from your code and then scores its own coverage.',
     ],
     whenBetter:
       'AFFiNE’s edgeless canvas is a real differentiator and tela has nothing like it: one document you can flip between a page and an infinite whiteboard, plus mind maps, presentation mode, and search that indexes text on the canvas. It is also local-first — unlimited local workspaces, free forever, no account — ships native mobile apps, and its docs actively support free self-hosting with prebuilt images. If your team thinks visually and wants diagramming and writing in one surface, AFFiNE is the more interesting tool.',
