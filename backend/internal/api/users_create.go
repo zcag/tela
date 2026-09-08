@@ -63,6 +63,10 @@ type newUser struct {
 	PasswordHash string
 	IsAdmin      bool
 	Trial        bool // grant the signup trial — see the rule above
+	// First-touch signup attribution (signup_attribution.go) — where this
+	// account came from. Only the self-serve web signup has it; every other
+	// path leaves it nil and the columns stay NULL.
+	Attribution *signupAttribution
 }
 
 // insertUser creates the row and returns its id. q is a *sql.DB or a *sql.Tx,
@@ -94,13 +98,26 @@ func insertUser(ctx context.Context, q queryer, u newUser) (int64, error) {
 	}
 	email := sql.NullString{String: u.Email, Valid: u.Email != ""}
 
+	// Attribution columns, when the caller captured any. The names come from a
+	// fixed list in signup_attribution.go (never from input); only the values
+	// are bound, appended after the five fixed parameters below.
+	args := []any{u.Username, u.DisplayName, email, u.PasswordHash, isAdmin}
+	attrCols, attrVals := "", ""
+	if u.Attribution != nil {
+		for _, c := range u.Attribution.columns() {
+			args = append(args, c[1])
+			attrCols += ", " + c[0]
+			attrVals += fmt.Sprintf(", $%d", len(args))
+		}
+	}
+
 	var id int64
 	err := q.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO users (username, display_name, email, email_verified_at, password_hash,
-			is_instance_admin, is_active%s)
-		VALUES ($1, $2, $3, %s, $4, $5, 1%s)
-		RETURNING id`, trialCols, verifiedAt, trialVals),
-		u.Username, u.DisplayName, email, u.PasswordHash, isAdmin).Scan(&id)
+			is_instance_admin, is_active%s%s)
+		VALUES ($1, $2, $3, %s, $4, $5, 1%s%s)
+		RETURNING id`, trialCols, attrCols, verifiedAt, trialVals, attrVals),
+		args...).Scan(&id)
 	return id, err
 }
 

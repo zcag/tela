@@ -133,6 +133,53 @@ const ogImage = new URL(ogImagePath, Astro.site).href;
       data-host-url="https://telawiki.com/analytics"
       is:inline
     ></script>
+    <!-- First-touch signup attribution. Umami answers "how many landed"; this
+         answers "which source produced an ACCOUNT" — the app carries no tracker,
+         so this cookie is the only thing that crosses from the landing into
+         signup. Written on the apex domain so the app (same domain, different
+         path) can read it back at POST /api/auth/register, where the backend
+         sanitizes it onto the users row (backend/internal/api/signup_attribution.go).
+         FIRST touch wins: never overwritten, so the ad that brought someone in
+         survives the internal link they click five minutes later. No IDs, no IP,
+         nothing personal — referrer, utm_* and the landing path. -->
+    <script is:inline>
+      (function () {
+        var NAME = 'tela_ft';
+        try {
+          if (document.cookie.indexOf(NAME + '=') !== -1) return; // first touch already recorded
+          var q = new URLSearchParams(location.search);
+          var ref = '';
+          if (document.referrer) {
+            var u = new URL(document.referrer);
+            // Same-site is not a source — it's us linking to ourselves.
+            if (u.host !== location.host) ref = (u.origin + u.pathname).slice(0, 512);
+          }
+          var parts = [];
+          var add = function (k, v) {
+            v = (v || '').trim().slice(0, 128);
+            if (v) parts.push(k + '=' + encodeURIComponent(v));
+          };
+          if (ref) parts.push('r=' + encodeURIComponent(ref));
+          add('s', q.get('utm_source'));
+          add('m', q.get('utm_medium'));
+          add('c', q.get('utm_campaign'));
+          add('t', q.get('utm_term'));
+          add('n', q.get('utm_content'));
+          add('p', location.pathname);
+          if (!parts.length) return;
+          // Apex domain so /login and /register see it; Lax so it rides the
+          // top-level navigation into the app. Not HttpOnly — it is written here,
+          // in the page, and the server only ever reads it.
+          // A bare host (localhost, an IP) can't take a domain attribute; a real
+          // one gets the apex so www. and the app share the cookie.
+          var host = location.hostname;
+          var domain = host.indexOf('.') === -1 ? '' : '; domain=' + host.replace(/^www\./, '');
+          document.cookie = NAME + '=' + parts.join('&') + '; path=/; max-age=7776000; samesite=lax' + domain +
+            (location.protocol === 'https:' ? '; secure' : '');
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- Scroll-depth tracking — fires once per threshold (25/50/75/100%). -->
     <script is:inline>
       (function () {

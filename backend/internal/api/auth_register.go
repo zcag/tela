@@ -99,6 +99,10 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	// Where this signup came from, read once off the landing's first-touch
+	// cookie (signup_attribution.go). Best-effort by construction: no cookie
+	// means the row simply carries no attribution.
+	attr := readSignupAttribution(r)
 	// Trial: this account created itself, so it gets the signup trial (see
 	// users_create.go for the rule and why it lives in one place). The email is
 	// unverified until the link below is followed.
@@ -107,6 +111,7 @@ func (s *Server) Register(w http.ResponseWriter, r *http.Request) {
 		Email:        email,
 		PasswordHash: hash,
 		Trial:        true,
+		Attribution:  &attr,
 	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {
