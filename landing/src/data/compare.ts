@@ -673,9 +673,9 @@ export const competitors: Competitor[] = [
   {
     slug: 'affine',
     name: 'AFFiNE',
-    seoTitle: 'AFFiNE alternative — AGPL end to end, no self-host seat cap | tela',
+    seoTitle: 'AFFiNE alternative — no self-host seat cap, markdown you own | tela',
     metaDescription:
-      'An AFFiNE alternative for team knowledge. tela is AGPL end to end with no self-hosted seat cap, canonical markdown you own, ask-your-docs with citations, and a built-in read/write MCP server.',
+      'An AFFiNE alternative for team knowledge. tela self-hosts with no seat cap, keeps canonical markdown you own, answers over your docs with citations, and ships a built-in read/write MCP server.',
     heading: 'The AFFiNE alternative for a team wiki you fully own',
     lead: 'AFFiNE is an ambitious open-source workspace, and its bet is the edgeless canvas — the same document as a page or an infinite whiteboard. It also ships a first-party MCP server, so this is not a comparison about who has agents. It is about licensing and shape: AFFiNE’s client is MIT but its self-host backend sits under a separate Enterprise Edition license, and a self-hosted workspace is capped at 10 seats without a Team license. tela is open core as well — the honest question is what each side puts behind the wall. AFFiNE gates the seats; tela gates per-org SSO and audit logs and leaves the product itself AGPL, uncapped and markdown-canonical.',
     rows: [
