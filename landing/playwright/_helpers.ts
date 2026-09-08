@@ -32,9 +32,16 @@ export const BASE_URL = process.env.BASE_URL ?? 'http://localhost:4321';
 
 /**
  * Routes to gate. Override with a comma-separated CILA_ROUTES env var, e.g.
- * `CILA_ROUTES="/,/about,/pricing"`. Defaults to the home page only.
+ * `CILA_ROUTES="/,/about,/pricing"`.
+ *
+ * Default covers the home page plus ONE /compare/<slug> leaf. The compare leaf
+ * is not decoration: it is the only template with a horizontally scrollable
+ * region, and gating `/` alone let a serious WCAG 2.2 AA failure
+ * (scrollable-region-focusable, at 360px) sit on all 21 comparison pages
+ * unnoticed. One leaf exercises the shared template for the whole set, and adds
+ * only a few seconds to the run.
  */
-export const ROUTES = (process.env.CILA_ROUTES ?? '/')
+export const ROUTES = (process.env.CILA_ROUTES ?? '/,/compare/,/compare/notion/')
   .split(',')
   .map((r) => r.trim())
   .filter(Boolean);

@@ -3,7 +3,7 @@
 // src/data/compare.ts. Mirrors the /mcp page: Prose layout + per-page TechArticle
 // + BreadcrumbList JSON-LD. Token-only styles (the landing-gate enforces it).
 import Prose from '../../layouts/Prose.astro';
-import { competitors } from '../../data/compare';
+import { competitors, COMPARE_UPDATED } from '../../data/compare';
 import type { Competitor } from '../../data/compare';
 
 export function getStaticPaths() {
@@ -12,6 +12,11 @@ export function getStaticPaths() {
 
 const { c } = Astro.props as { c: Competitor };
 const url = `https://telawiki.com/compare/${c.slug}/`;
+
+// Per-entry last-verified date, falling back to the set-wide default. Parsed as
+// UTC so the ISO form used by JSON-LD can't slip a day in a positive offset.
+const updated = c.updated ?? COMPARE_UPDATED;
+const updatedIso = new Date(`${updated} UTC`).toISOString().slice(0, 10);
 
 // FAQ derived from the same vetted copy shown on the page (no invented facts) —
 // drives both an on-page FAQ section and FAQPage JSON-LD for rich results.
@@ -36,7 +41,7 @@ const faqs = [
   description={c.metaDescription}
   kicker="Compare"
   heading={c.heading}
-  updated="June 30, 2026"
+  updated={updated}
 >
   <script type="application/ld+json" is:inline slot="head" set:html={JSON.stringify({
     '@context': 'https://schema.org',
@@ -48,7 +53,7 @@ const faqs = [
         description: c.metaDescription,
         url,
         inLanguage: 'en',
-        dateModified: '2026-06-30',
+        dateModified: updatedIso,
         author: { '@id': 'https://telawiki.com/#org' },
         publisher: { '@id': 'https://telawiki.com/#org' },
         about: { '@id': 'https://telawiki.com/#software' },
@@ -77,7 +82,11 @@ const faqs = [
   <p class="lead">{c.lead}</p>
 
   <h2>tela vs {c.name}, at a glance</h2>
-  <div class="cmp-scroll">
+  {/* Horizontally scrollable at narrow widths, so it must be reachable by
+      keyboard and have an accessible name (axe scrollable-region-focusable —
+      a WCAG 2.2 AA failure at 360px before this). The focus ring comes from
+      the global token-driven :focus-visible rule. */}
+  <div class="cmp-scroll" tabindex="0" role="region" aria-label={`tela compared with ${c.name}`}>
     <table class="cmp">
       <caption class="sr-only">A feature comparison of tela and {c.name}.</caption>
       <thead>
@@ -123,7 +132,7 @@ const faqs = [
     <a href="/compare/">compare tela with other tools</a>.
   </p>
 
-  <p class="source">{c.source} tela facts current as of June 2026.</p>
+  <p class="source">{c.source} tela facts current as of {updated}.</p>
 </Prose>
 
 <style>
