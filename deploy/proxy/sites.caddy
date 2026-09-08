@@ -254,9 +254,10 @@
 
 	# ── Umami analytics tracking endpoints ───────────────────────────────────
 	# Only the two paths the browser needs: the tracking snippet and the collection
-	# endpoint. The Umami dashboard is NOT exposed publicly (Umami's Next.js uses
-	# root-relative paths and breaks behind a subpath proxy). Access the dashboard
-	# via SSH tunnel to loopback:3001 on the host.
+	# endpoint. The dashboard is NOT served from this subpath — Umami's Next.js
+	# uses root-relative paths and breaks behind one — but it IS reachable, at
+	# https://analytics.telawiki.com, which is its own vhost on the external edge
+	# (outside this repo) proxying the same loopback:3001. No SSH tunnel needed.
 	# The bare /analytics and /analytics/ paths get a clean Caddy 404 (which
 	# handle_errors serves as the branded landing 404 page).
 	handle /analytics/script.js {
