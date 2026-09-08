@@ -36,7 +36,7 @@ export function useAdminUserActivity(userId: number, enabled: boolean) {
 // column costs no request — only switching the window does. 403 to non-admins
 // surfaces as the query erroring; the UI only mounts this from an admin-gated
 // tab so that path should not fire in practice.
-export function useAdminUsers(window: AdminUserWindow = '1m') {
+export function useAdminUsers(window: AdminUserWindow = 'all') {
   return useQuery({
     queryKey: adminUserKeys.list(window),
     queryFn: () => api<AdminUsersPage>(`/api/admin/users?window=${window}`),

@@ -174,6 +174,17 @@ const SEGMENTS: {
   },
 ]
 const SEGMENT_BY_KEY = new Map(SEGMENTS.map((s) => [s.key, s]))
+// Who counts as an active person: someone with activity in the last 30 days.
+// Churned and never-started are explicitly NOT active — that's the whole point
+// of the label. Derived from the segment rather than from days_active in the
+// selected window, which under "All time" called everyone who ever showed up
+// once an active person.
+const ACTIVE_SEGMENTS: ReadonlySet<AdminUserSegment> = new Set<AdminUserSegment>([
+  'power',
+  'regular',
+  'dabbler',
+])
+
 // Sort order for the segment column: healthiest first, so a descending sort
 // surfaces your champions and an ascending one surfaces the problems.
 const SEGMENT_RANK: Record<AdminUserSegment, number> = {
@@ -190,7 +201,7 @@ export function SettingsUsersTab() {
   // The whole view lives in the URL: a filtered, sorted table is a finding, and
   // a finding you can't send to anyone is half a tool.
   const search = useSearch({ from: '/_app/settings' })
-  const range = (search.window ?? '1m') as AdminUserWindow
+  const range = (search.window ?? 'all') as AdminUserWindow
   const segment = (search.seg ?? 'all') as SegmentFilter
   const q = search.q ?? ''
   const sortKey = search.sort ?? 'edits'
@@ -584,7 +595,7 @@ export function SettingsUsersTab() {
         <div className="pb-[var(--space-2)]">
           <FilterPills<AdminUserWindow>
             value={range}
-            onChange={(next) => setView({ window: next === '1m' ? undefined : next })}
+            onChange={(next) => setView({ window: next === 'all' ? undefined : next })}
             options={[
               ['1m', '30 days'],
               ['3m', '3 months'],
@@ -623,9 +634,9 @@ export function SettingsUsersTab() {
             value={status}
             onChange={setStatus}
             options={[
-              ['all', 'Any status'],
-              ['active', 'Active'],
-              ['inactive', 'Inactive'],
+              ['all', 'Any account'],
+              ['active', 'Enabled'],
+              ['inactive', 'Deactivated'],
             ]}
           />
           <FilterPills<McpFilter>
@@ -1098,7 +1109,9 @@ function SummaryStrip({ rows }: { rows: AdminUserRow[] }) {
         acc.pages += m.pages_created
         acc.asks += m.asks
         acc.ai += m.llm_calls
-        if (m.days_active > 0) acc.active += 1
+        // Lifecycle, not window activity: a churned account did things inside
+        // an all-time window and is still not an active person.
+        if (u.segment && ACTIVE_SEGMENTS.has(u.segment)) acc.active += 1
         return acc
       },
       { edits: 0, human: 0, agent: 0, sync: 0, pages: 0, asks: 0, ai: 0, active: 0 },
@@ -1110,7 +1123,10 @@ function SummaryStrip({ rows }: { rows: AdminUserRow[] }) {
   return (
     <div className="flex flex-wrap items-stretch gap-[var(--space-3)]">
       <div className="flex min-w-[13rem] flex-col justify-center gap-[2px] rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-[var(--space-4)] py-[var(--space-3)]">
-        <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+        <span
+          className="text-[length:var(--text-xs)] text-[var(--text-muted)]"
+          title="People with any activity in the last 30 days — power, regular or dabbler. Churned and never-started accounts don't count, whatever window is selected."
+        >
           Active people
         </span>
         <span className="text-[length:var(--text-2xl)] font-semibold leading-[var(--leading-tight)] tabular-nums text-[var(--text-primary)]">
@@ -1128,6 +1144,11 @@ function SummaryStrip({ rows }: { rows: AdminUserRow[] }) {
             className="block h-full rounded-[var(--radius-full)] bg-[var(--accent)] transition-[width] duration-300"
             style={{ width: `${pct}%` }}
           />
+        </span>
+        {/* The one figure here that ignores the window — say so, or it reads as
+            "active in the selected window" and quietly contradicts Lifecycle. */}
+        <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+          last 30 days
         </span>
       </div>
       <dl className="m-0 grid flex-1 grid-cols-2 sm:grid-cols-4 gap-[var(--space-2)]">
