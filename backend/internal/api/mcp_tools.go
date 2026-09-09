@@ -91,7 +91,8 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 		Name:  "research",
 		Title: "Research the wiki",
 		Description: "Answer a question — or gather everything relevant on a topic — from the wiki by MEANING. One call assembles answer-ready grounding: the full bodies of the pages that matter (not isolated fragments), pulled from pages AND attached files (PDFs, docs), plus any flagged disagreements among the sources and a low_confidence signal. " +
-			"Returns `context` (a numbered [n] excerpt block to ground your answer), `sources` (the cited hits aligned to [n], each with page_id/chunk_id for drill-in and, for file sources, a download_url for the bytes plus a share_url to show the person), `disagreements` (conflicts to surface, [n]-keyed), and `low_confidence`. " +
+			"Returns `context` (a numbered [n] excerpt block to ground your answer), `sources` (the cited hits aligned to [n], each with page_id/chunk_id for drill-in and, for file sources, a download_url for the bytes plus a share_url to show the person), `disagreements` (conflicts to surface, [n]-keyed), `low_confidence`, and `considered`/`truncated`. " +
+			"`truncated: true` means retrieval found MORE relevant sources than it returned (`considered` says how many) — the corpus did not run out, the per-call cap did; re-ask with a bigger `limit` before concluding anything is missing. " +
 			"YOU write the answer from `context` and cite sources by their [n]. To read one section deeper use `read_chunk` (chunk_id from a source) or `get_page` (full page). For exact-name/term lookup use `search`. Requires a configured embedder (503 otherwise).",
 		Annotations: readOnly,
 	}, s.mcpResearch)
@@ -741,7 +742,7 @@ func (s *Server) mcpSearch(ctx context.Context, req *mcp.CallToolRequest, in sea
 type researchIn struct {
 	Question string `json:"question" jsonschema:"the question to answer, or topic to gather context on"`
 	SpaceID  *int64 `json:"space_id,omitempty" jsonschema:"optional space id to restrict retrieval to"`
-	Limit    int    `json:"limit,omitempty" jsonschema:"optional retrieval depth override (default service-defined)"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"max sources to return (default 12, max 40) — raise it when a result comes back truncated"`
 }
 
 type researchOut struct {
@@ -749,6 +750,8 @@ type researchOut struct {
 	Sources       []rag.Hit `json:"sources"`                 // cited sources aligned to the [n] numbering; chunk_id/page_id for drill-in, download_url on file sources
 	Disagreements string    `json:"disagreements,omitempty"` // known conflicts among the sources, [n]-keyed (empty when none)
 	LowConfidence bool      `json:"low_confidence"`          // retrieval found nothing strongly relevant — answer is best-effort, verify it
+	Considered    int       `json:"considered"`              // distinct sources retrieval found, before the per-call source cap
+	Truncated     bool      `json:"truncated"`               // considered > len(sources): there is more — re-ask with a bigger limit
 }
 
 func (s *Server) mcpResearch(ctx context.Context, req *mcp.CallToolRequest, in researchIn) (*mcp.CallToolResult, researchOut, error) {
@@ -770,22 +773,25 @@ func (s *Server) mcpResearch(ctx context.Context, req *mcp.CallToolRequest, in r
 	if k != nil && k.SpaceID != nil {
 		spaceID = k.SpaceID
 	}
-	excerpts, hits, top, err := s.askContext(ctx, u.ID, in.Question, spaceID, in.Limit)
+	res, err := s.askContext(ctx, u.ID, in.Question, spaceID, in.Limit)
 	if err != nil {
 		return mcpErr(&apiErr{500, "internal", "retrieval failed"}), researchOut{}, nil
 	}
+	hits := res.Hits
 	// Log every research call with its retrieval confidence — feeds the
 	// knowledge-gaps roadmap, including the zero-hit case (a clear gap). Best-effort.
-	_ = s.rag.LogAsk(ctx, u.ID, spaceID, in.Question, len(hits), top)
+	_ = s.rag.LogAsk(ctx, u.ID, spaceID, in.Question, len(hits), res.Top)
 	if len(hits) == 0 {
 		return nil, researchOut{Sources: []rag.Hit{}}, nil
 	}
 	enrichFileCitations(hits)
 	out := researchOut{
-		Context:       excerpts,
+		Context:       res.Context,
 		Sources:       hits,
 		Disagreements: s.askConflictNote(ctx, hits),
-		LowConfidence: lowConfidence(s.rag.RerankEnabled(), top),
+		LowConfidence: lowConfidence(s.rag.RerankEnabled(), res.Top),
+		Considered:    res.Considered,
+		Truncated:     res.Truncated(),
 	}
 	return nil, out, nil
 }

@@ -62,10 +62,11 @@ func (s *Server) EvalAskCompleteness(ctx context.Context, userID int64, cases []
 		if c.Question == "" || (len(c.ExpectAll) == 0 && len(c.ExpectNone) == 0) {
 			return nil, fmt.Errorf("ask-eval: case %q needs a question and expect_all or expect_none", c.Question)
 		}
-		excerpts, hits, _, err := s.askContext(ctx, userID, c.Question, c.SpaceID, 0)
+		res, err := s.askContext(ctx, userID, c.Question, c.SpaceID, 0)
 		if err != nil {
 			return nil, fmt.Errorf("ask-eval: retrieval %q: %w", c.Question, err)
 		}
+		excerpts, hits := res.Context, res.Hits
 		var answer string
 		if len(hits) > 0 {
 			conflicts := s.askConflictNote(ctx, hits)

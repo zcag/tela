@@ -175,6 +175,10 @@ export interface AskAnswer {
   // already carries a CAUTION callout in its prose — the flag lets the view add a
   // quiet chip too. Absent (older payloads) reads as confident.
   low_confidence?: boolean
+  // How many distinct sources retrieval found, and whether the per-call cap
+  // clipped them — "12 sources" otherwise reads as "all your wiki had".
+  considered?: number
+  truncated?: boolean
   // Up to 3 model-suggested next questions — the ask-first navigation thread.
   // Best-effort server-side, so may be absent or empty.
   followups?: string[]
@@ -199,11 +203,21 @@ export function askDocs(
 // (followups) → done, or a single error frame on a mid-stream failure. Clean HTTP
 // errors (503/429/…) are thrown as ApiError before the stream starts, so the
 // caller's existing ASK_UNAVAILABLE_CODES / model-unreachable handling still works.
+// AskRetrieval is what the `sources` event carries — the citations plus the two
+// signals about the retrieval behind them. One object because this set grows;
+// positional args here have already been through low_confidence.
+export interface AskRetrieval {
+  sources: SemanticHit[]
+  lowConfidence: boolean
+  considered: number
+  truncated: boolean
+}
+
 export interface AskStreamHandlers {
   // onMeta carries the server's resume id (a `meta` event, sent first). The hook
   // stashes it so a dropped connection can reconnect via attachAskStream.
   onMeta?: (id: string) => void
-  onSources?: (sources: SemanticHit[], lowConfidence: boolean) => void
+  onSources?: (r: AskRetrieval) => void
   onToken?: (text: string) => void
   onFollowups?: (followups: string[]) => void
   onDone?: () => void
@@ -322,7 +336,12 @@ function dispatchSSE(frame: string, h: AskStreamHandlers): void {
       if (typeof parsed.id === 'string') h.onMeta?.(parsed.id)
       break
     case 'sources':
-      h.onSources?.((parsed.sources as SemanticHit[]) ?? [], !!parsed.low_confidence)
+      h.onSources?.({
+        sources: (parsed.sources as SemanticHit[]) ?? [],
+        lowConfidence: !!parsed.low_confidence,
+        considered: Number(parsed.considered) || 0,
+        truncated: !!parsed.truncated,
+      })
       break
     case 'token':
       if (typeof parsed.t === 'string') h.onToken?.(parsed.t)

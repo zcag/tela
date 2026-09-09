@@ -32,6 +32,10 @@ interface AskStreamState {
   answer: string
   sources: SemanticHit[]
   lowConfidence: boolean
+  // Retrieval found `considered` distinct sources; truncated says the per-call
+  // cap clipped them, so the citation list is a window, not the whole match set.
+  considered: number
+  truncated: boolean
   followups: string[]
   error: unknown
 }
@@ -41,6 +45,8 @@ const IDLE: AskStreamState = {
   answer: '',
   sources: [],
   lowConfidence: false,
+  considered: 0,
+  truncated: false,
   followups: [],
   error: null,
 }
@@ -87,9 +93,9 @@ export function useAskDocsStream() {
       onMeta: (id) => {
         askIdRef.current = id
       },
-      onSources: (sources, lowConfidence) => {
+      onSources: ({ sources, lowConfidence, considered, truncated }) => {
         reconnectsRef.current = 0
-        setState((s) => ({ ...s, sources, lowConfidence }))
+        setState((s) => ({ ...s, sources, lowConfidence, considered, truncated }))
       },
       onToken: (t) => {
         reconnectsRef.current = 0

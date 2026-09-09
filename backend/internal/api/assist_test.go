@@ -118,7 +118,7 @@ func TestBuildAskContext_ExpandsHubAndFallsBack(t *testing.T) {
 	}
 	count["p6"] = askDenseChunks // page 6 is the dense hub despite ranking last
 
-	block, pageHits := buildAskContext(order, best, count, bodies, contents, nil)
+	block, pageHits := buildAskContext(order, best, count, bodies, contents, nil, askMaxPages)
 
 	// Top-ranked pages expanded to full body.
 	if !strings.Contains(block, "FULLBODY1") {
@@ -177,7 +177,7 @@ func TestBuildAskContext_LocationPrefix(t *testing.T) {
 	contents := map[int64]string{10: "chunk text", 20: "file chunk text"}
 	locations := map[string]string{"p1": "Eng › Runbooks", "f2": "Eng"}
 
-	block, _ := buildAskContext(order, best, count, map[int64]string{}, contents, locations)
+	block, _ := buildAskContext(order, best, count, map[int64]string{}, contents, locations, askMaxPages)
 
 	if !strings.Contains(block, "[1] Eng › Runbooks › Deploy") {
 		t.Errorf("page label missing location prefix: %q", block)
@@ -186,7 +186,7 @@ func TestBuildAskContext_LocationPrefix(t *testing.T) {
 		t.Errorf("file label missing location prefix or (file) marker: %q", block)
 	}
 	// A missing location degrades to the bare title (nil-safe).
-	plain, _ := buildAskContext([]string{"p1"}, best, count, map[int64]string{}, contents, nil)
+	plain, _ := buildAskContext([]string{"p1"}, best, count, map[int64]string{}, contents, nil, askMaxPages)
 	if !strings.Contains(plain, "[1] Deploy") || strings.Contains(plain, "›") {
 		t.Errorf("nil locations should yield a bare title: %q", plain)
 	}
@@ -302,5 +302,64 @@ func TestFrontHubs(t *testing.T) {
 	plain := frontHubs([]string{"p1", "p2"}, map[string]int{"p1": 1, "p2": 1}, nil, 3)
 	if strings.Join(plain, ",") != "p1,p2" {
 		t.Errorf("frontHubs (no hubs) = %v, want [p1 p2]", plain)
+	}
+}
+
+// The render cap is a per-call number, not a hard 12. Before this, a caller's
+// `limit` only deepened chunk retrieval and the cap silently clipped the render
+// back to askMaxPages — which is why 79% of logged asks returned exactly 12.
+func TestBuildAskContext_SourceCapIsPerCall(t *testing.T) {
+	const sources = 20
+	order := make([]string, 0, sources)
+	best := map[string]rag.Hit{}
+	contents := map[int64]string{}
+	count := map[string]int{}
+	for i := 1; i <= sources; i++ {
+		k := "p" + strconv.Itoa(i)
+		order = append(order, k)
+		best[k] = rag.Hit{SourceKind: "page", PageID: int64(i), ChunkID: int64(i) * 10, Title: "Page" + strconv.Itoa(i)}
+		contents[int64(i)*10] = "CHUNK" + strconv.Itoa(i)
+		count[k] = 1
+	}
+
+	_, atDefault := buildAskContext(order, best, count, nil, contents, nil, askMaxPages)
+	if len(atDefault) != askMaxPages {
+		t.Fatalf("default render = %d sources, want %d", len(atDefault), askMaxPages)
+	}
+	if len(order) <= len(atDefault) {
+		t.Fatal("test needs more retrieved sources than the cap renders")
+	}
+
+	block, raised := buildAskContext(order, best, count, nil, contents, nil, sources)
+	if len(raised) != sources {
+		t.Errorf("raised cap rendered %d sources, want %d", len(raised), sources)
+	}
+	// The [n] numbering must run to the raised count, not stop at the default.
+	if !strings.Contains(block, "[20] Page20") {
+		t.Errorf("20th source missing from the excerpt block: %q", block)
+	}
+}
+
+// askResult.Truncated is the signal itself: it must fire exactly when retrieval
+// found more than was rendered, and stay off when the corpus really did run out.
+func TestAskResult_Truncated(t *testing.T) {
+	hits := make([]rag.Hit, 12)
+	for _, tc := range []struct {
+		name       string
+		considered int
+		want       bool
+	}{
+		{"clipped by the cap", 24, true},
+		{"corpus ran out", 12, false},
+		{"nothing retrieved", 0, false},
+	} {
+		h := hits
+		if tc.considered == 0 {
+			h = nil
+		}
+		got := askResult{Hits: h, Considered: tc.considered}.Truncated()
+		if got != tc.want {
+			t.Errorf("%s: Truncated() = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

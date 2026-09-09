@@ -241,11 +241,12 @@ func (s *Server) RAGAsk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Retrieve grounding via the shared seam (also used by draft/answer-to-page).
-	excerpts, hits, top, err := s.askContext(r.Context(), u.ID, req.Question, spaceID, req.Limit)
+	res, err := s.askContext(r.Context(), u.ID, req.Question, spaceID, req.Limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "retrieval failed")
 		return
 	}
+	excerpts, hits, top := res.Context, res.Hits, res.Top
 	// Log every ask with its retrieval confidence (best-effort) — feeds the
 	// knowledge-gaps view, including the zero-hit case (a clear gap).
 	_ = s.rag.LogAsk(r.Context(), u.ID, spaceID, req.Question, len(hits), top)
@@ -275,7 +276,12 @@ func (s *Server) RAGAsk(w http.ResponseWriter, r *http.Request) {
 	if low {
 		answer = lowConfidenceNote + answer
 	}
-	resp := map[string]any{"answer": answer, "sources": hits, "low_confidence": low}
+	resp := map[string]any{
+		"answer": answer, "sources": hits, "low_confidence": low,
+		// How many distinct sources retrieval actually found, and whether the cap
+		// clipped them — so "12 sources" is never mistaken for "the whole corpus".
+		"considered": res.Considered, "truncated": res.Truncated(),
+	}
 	// Suggest follow-up questions so an answer becomes a thread to pull on
 	// (ask-first navigation). Best-effort.
 	if f := s.genFollowups(r.Context(), u, req.Question, answer); len(f) > 0 {
@@ -362,11 +368,12 @@ func (s *Server) RAGAskStream(w http.ResponseWriter, r *http.Request) {
 	// Retrieval + the compute guards run synchronously on the request, BEFORE any
 	// SSE byte, so a retrieval 500 / 429 / cap stays a clean HTTP status. Retrieval
 	// is sub-second; only the long, silent generation gets detached below.
-	excerpts, hits, top, err := s.askContext(r.Context(), u.ID, req.Question, spaceID, req.Limit)
+	res, err := s.askContext(r.Context(), u.ID, req.Question, spaceID, req.Limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "retrieval failed")
 		return
 	}
+	excerpts, hits, top := res.Context, res.Hits, res.Top
 	_ = s.rag.LogAsk(r.Context(), u.ID, spaceID, req.Question, len(hits), top)
 	s.recordRequestEvent(r, eventInput{
 		Type: evtAsk, ActorUserID: &u.ID, ActorLabel: u.Username,
@@ -382,7 +389,10 @@ func (s *Server) RAGAskStream(w http.ResponseWriter, r *http.Request) {
 	// too, not just the answer tokens.
 	low := lowConfidence(s.rag.RerankEnabled(), top)
 	job := newAskJob(newAskID(), u.ID)
-	job.emit("sources", map[string]any{"sources": hits, "low_confidence": low})
+	job.emit("sources", map[string]any{
+		"sources": hits, "low_confidence": low,
+		"considered": res.Considered, "truncated": res.Truncated(),
+	})
 	if len(hits) == 0 {
 		job.emit("token", map[string]string{"t": "I couldn't find anything in your documents to answer that."})
 		job.emit("done", map[string]any{})

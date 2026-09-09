@@ -367,6 +367,14 @@ export function AskRoute() {
               <div className="flex flex-col gap-[var(--space-1)]">
                 <h2 className="m-0 px-[var(--space-4)] text-[length:var(--text-xs)] uppercase tracking-[0.04em] text-[var(--text-muted)] font-[family-name:var(--font-sans)]">
                   Sources
+                  {/* Retrieval cited a window, not everything it matched. Saying
+                      so is the difference between "your wiki holds 12 answers"
+                      and "we showed you 12" — silence reads as the former. */}
+                  {ask.truncated ? (
+                    <span className="ml-[var(--space-2)] normal-case tracking-normal text-[var(--text-muted)] opacity-70">
+                      showing {ask.sources.length} of {ask.considered} matches
+                    </span>
+                  ) : null}
                 </h2>
                 {sources.map((h) => (
                   <SearchResult
