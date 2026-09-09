@@ -85,7 +85,7 @@ Concrete agent workflows, each grounded in the actual tools:
 | `related_pages` | Related pages | Semantic nearest-neighbor lookup from a page's chunks. |
 | `suggest_links` | Suggest links | Pages whose content strongly overlaps a given page — link opportunities. |
 | `find_overlaps` | Find overlaps | Near-duplicate page detection across a space. |
-| `knowledge_gaps` | Knowledge gaps | Topic areas mentioned but not covered in depth (admin-scoped). |
+| `knowledge_gaps` | Knowledge gaps | Questions your wiki failed to answer — a content roadmap (scoped to your own asks + spaces you belong to). |
 | `list_attachments` | List attachments | Uploaded files on a page (id, name, mime, size, url). |
 | `list_comments` | List comments | A page's comment threads, or an inbox of open threads across a space; filter by status and poll with a cursor. |
 | `deck_authoring_guide` | Deck guide | Returns the full slide-authoring guide (layouts, fields, variants). Read before authoring a deck. |

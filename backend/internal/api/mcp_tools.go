@@ -127,7 +127,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "knowledge_gaps",
 		Title:       "Knowledge gaps",
-		Description: "The most-asked \"ask your docs\" questions the corpus could NOT answer — a content roadmap. Instance-admin only (exposes users' questions). Optional since_days window.",
+		Description: "The most-asked \"ask your docs\" questions the corpus could NOT answer — a content roadmap: write these pages next. Covers your own asks plus asks in spaces you're a member of. Optional space_id and since_days window.",
 		Annotations: readOnly,
 	}, s.mcpKnowledgeGaps)
 
@@ -916,11 +916,12 @@ func (s *Server) mcpFindOverlaps(ctx context.Context, req *mcp.CallToolRequest, 
 	return nil, findOverlapsOut{Overlaps: pairs}, nil
 }
 
-// ---- knowledge_gaps (admin) ----------------------------------------------
+// ---- knowledge_gaps -------------------------------------------------------
 
 type knowledgeGapsIn struct {
-	SinceDays int `json:"since_days,omitempty" jsonschema:"only count asks in the last N days (0 = all time)"`
-	Limit     int `json:"limit,omitempty" jsonschema:"max gaps (default 50)"`
+	SpaceID   *int64 `json:"space_id,omitempty" jsonschema:"optional space id to restrict the gaps to"`
+	SinceDays int    `json:"since_days,omitempty" jsonschema:"only count asks in the last N days (0 = all time)"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"max gaps (default 50)"`
 }
 
 type knowledgeGapsOut struct {
@@ -928,14 +929,18 @@ type knowledgeGapsOut struct {
 }
 
 func (s *Server) mcpKnowledgeGaps(ctx context.Context, req *mcp.CallToolRequest, in knowledgeGapsIn) (*mcp.CallToolResult, knowledgeGapsOut, error) {
-	u, _ := mcpIdentity(req)
+	u, k := mcpIdentity(req)
 	if u == nil {
 		return mcpUnauthErr(), knowledgeGapsOut{}, nil
 	}
-	if !u.IsInstanceAdmin {
-		return mcpErr(&apiErr{403, "forbidden", "knowledge_gaps is instance-admin only"}), knowledgeGapsOut{}, nil
+	// A space-pinned bearer key may only ever see its one space.
+	spaceID := in.SpaceID
+	if k != nil && k.SpaceID != nil {
+		spaceID = k.SpaceID
 	}
-	gaps, err := s.rag.KnowledgeGaps(ctx, in.SinceDays, in.Limit)
+	// No admin gate: rag.GapScope narrows the log to the caller's own asks plus
+	// the spaces they're a member of, which is what makes this safe for everyone.
+	gaps, err := s.rag.KnowledgeGaps(ctx, rag.GapScope{UserID: u.ID, SpaceID: spaceID, Instance: u.IsInstanceAdmin}, in.SinceDays, in.Limit)
 	if err != nil {
 		return mcpErr(&apiErr{500, "internal", "gaps query failed"}), knowledgeGapsOut{}, nil
 	}

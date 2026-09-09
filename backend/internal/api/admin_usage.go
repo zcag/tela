@@ -116,7 +116,7 @@ func (s *Server) AdminUsage(w http.ResponseWriter, r *http.Request) {
 	// (queries ask_log directly, so it works even when the embedder is off).
 	out.Gaps = []rag.KnowledgeGap{}
 	if s.rag != nil {
-		if gaps, err := s.rag.KnowledgeGaps(ctx, 30, 10); err == nil {
+		if gaps, err := s.rag.KnowledgeGaps(ctx, rag.GapScope{Instance: true}, 30, 10); err == nil {
 			out.Gaps = gaps
 		}
 	}

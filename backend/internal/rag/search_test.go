@@ -69,6 +69,17 @@ func newSpace(t *testing.T, d *sql.DB, slug string, owner int64) int64 {
 	return id
 }
 
+// addAccess grants an existing user membership of an existing space (editor), so
+// a test can build the "shared space" shape without a second owner.
+func addAccess(t *testing.T, d *sql.DB, spaceID, userID int64) {
+	t.Helper()
+	if _, err := d.Exec(
+		`INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'editor')`, spaceID, userID,
+	); err != nil {
+		t.Fatalf("add access: %v", err)
+	}
+}
+
 func newPage(t *testing.T, d *sql.DB, spaceID int64, title, body string) int64 {
 	t.Helper()
 	var id int64

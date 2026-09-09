@@ -48,17 +48,45 @@ type KnowledgeGap struct {
 	LastAsked string  `json:"last_asked"` // most recent ask timestamp
 }
 
+// GapScope bounds which logged asks a caller may aggregate. It is the whole
+// privacy story of this view: ask_log holds users' questions, so a caller sees
+// only their OWN asks plus asks made inside a space they are a MEMBER of —
+// membership, not readability, so publishing a space doesn't hand strangers its
+// members' questions. An ask with a NULL space_id (asked across everything) is
+// therefore visible to its asker alone. Instance is the admin view: every ask.
+//
+// SpaceID narrows further to one space; it needs no permission check of its own,
+// because the visibility predicate still applies — pinning a space you aren't in
+// just leaves you your own asks in it.
+type GapScope struct {
+	UserID   int64  // the caller
+	SpaceID  *int64 // optional: only asks scoped to this space
+	Instance bool   // instance admin: aggregate every ask on the instance
+}
+
+// visibilitySQL is the WHERE fragment restricting ask_log to what scope may see.
+func (sc GapScope) visibilitySQL(qb *queryBuilder) string {
+	if sc.Instance {
+		return "TRUE"
+	}
+	uid := qb.arg(sc.UserID)
+	return `(user_id = ` + uid + ` OR space_id IN (SELECT space_id FROM space_access WHERE user_id = ` + uid + `))`
+}
+
 // KnowledgeGaps returns the most-asked questions that retrieval kept failing to
 // answer — grouped by normalized question, filtered to those answered less than
 // half the time, ranked by frequency then recency. sinceDays bounds the window
-// (≤0 ⇒ all time). This is admin-facing analytics (it exposes users' questions);
-// the API layer gates it.
-func (s *Service) KnowledgeGaps(ctx context.Context, sinceDays, limit int) ([]KnowledgeGap, error) {
+// (≤0 ⇒ all time). scope decides whose asks are counted (see GapScope) — this is
+// what lets every user see the gaps in their own wiki instead of only the admin.
+func (s *Service) KnowledgeGaps(ctx context.Context, scope GapScope, sinceDays, limit int) ([]KnowledgeGap, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	qb := &queryBuilder{}
-	where := `question <> ''`
+	where := `question <> '' AND ` + scope.visibilitySQL(qb)
+	if scope.SpaceID != nil {
+		where += ` AND space_id = ` + qb.arg(*scope.SpaceID)
+	}
 	if sinceDays > 0 {
 		// created_at is TEXT 'YYYY-MM-DD HH:MM:SS' UTC; compare against a computed bound.
 		where += ` AND created_at >= to_char((now() AT TIME ZONE 'UTC') - ` + qb.arg(sinceDays) + ` * interval '1 day', 'YYYY-MM-DD HH24:MI:SS')`

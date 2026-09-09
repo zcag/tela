@@ -54,7 +54,7 @@ tree, never replacing them.
 | **Related pages** | semantic "see also" for any page (centroid → nearest pages) | `GET /api/pages/{id}/related`, MCP `related_pages` |
 | **Link suggestions** | existing pages a *draft* should link to (assisted authoring) | `POST /api/rag/suggest-links`, MCP `suggest_links` |
 | **Overlap detection** | near-duplicate page pairs to merge/redirect (hygiene) | `GET /api/rag/overlaps`, MCP `find_overlaps` |
-| **Knowledge gaps** | most-asked questions the corpus *couldn't* answer → content roadmap | `GET /api/rag/gaps` (admin), MCP `knowledge_gaps` |
+| **Knowledge gaps** | most-asked questions the corpus *couldn't* answer → content roadmap | `GET /api/rag/gaps[?space_id=]`, MCP `knowledge_gaps` |
 | **Ask your docs** | cited answers grounded on full chunks (+ follow-up questions) | `POST /api/rag/ask` |
 | **Ask-first authoring** | a grounded markdown *draft* for a new page from a topic | `POST /api/rag/draft` |
 | **Answer → page** ⭐ | answer a question AND save it as a cited page — closes ask→gap→write | `POST /api/rag/answer-to-page` |
@@ -105,6 +105,10 @@ feature — is the gem.
 
 ## Privacy & control
 
-`ask_log` records questions to power gaps; reading it is **instance-admin only**,
-and logging can be disabled instance-wide with `TELA_RAG_LOG_ASKS=0`. Everything
-else reads only content the caller can already access.
+`ask_log` records questions to power gaps. Reading it is open to every signed-in
+user, scoped by `rag.GapScope` to **their own asks plus asks made inside spaces
+they are a member of** — membership, not readability, so publishing a space does
+not hand strangers its members' questions, and an ask with a NULL `space_id`
+(asked across everything) is visible only to its asker. Instance admins see the
+whole instance. Logging can be disabled instance-wide with `TELA_RAG_LOG_ASKS=0`.
+Everything else reads only content the caller can already access.

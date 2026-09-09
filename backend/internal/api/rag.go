@@ -580,17 +580,28 @@ func (s *Server) RAGOverlaps(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"overlaps": pairs})
 }
 
-// RAGGaps handles GET /api/rag/gaps[?since_days=&limit=]
-// Knowledge gaps: the most-asked questions the corpus couldn't answer. Admin-only
-// — it exposes users' questions.
+// RAGGaps handles GET /api/rag/gaps[?space_id=&since_days=&limit=]
+// Knowledge gaps: the most-asked questions the corpus couldn't answer. Open to
+// every signed-in user — rag.GapScope, not this handler, is what keeps one user's
+// questions out of another's view (own asks + asks in spaces they're a member of;
+// instance admins see the whole instance).
 func (s *Server) RAGGaps(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireInstanceAdmin(w, r); !ok {
+	u, ok := requireUser(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
 	sinceDays, _ := strconv.Atoi(q.Get("since_days"))
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	gaps, err := s.rag.KnowledgeGaps(r.Context(), sinceDays, limit)
+	scope := rag.GapScope{UserID: u.ID, Instance: u.IsInstanceAdmin}
+	if sid, err := strconv.ParseInt(q.Get("space_id"), 10, 64); err == nil && sid > 0 {
+		scope.SpaceID = &sid
+	}
+	// A space-scoped bearer key may only ever see its one space.
+	if b := bearerSpace(r); b != nil {
+		scope.SpaceID = b
+	}
+	gaps, err := s.rag.KnowledgeGaps(r.Context(), scope, sinceDays, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "gaps query failed")
 		return
