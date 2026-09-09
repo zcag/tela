@@ -38,6 +38,7 @@ import {
 } from '../components/ui/card'
 import { queryClient } from '../lib/queryClient'
 import { useOrgAccent } from '../lib/useOrgAccent'
+import { useNoindex } from '../lib/useHeadMeta'
 import {
   authKeys,
   fetchMe,
@@ -93,6 +94,7 @@ const rootRoute = createRootRoute({
     )
   },
   notFoundComponent: function NotFound() {
+    useNoindex()
     return (
       <EmptyState
         fullScreen

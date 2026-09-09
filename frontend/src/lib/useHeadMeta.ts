@@ -80,3 +80,20 @@ export function useHeadMeta({
     }
   }, [title, description, canonicalPath, image, ogType, feedHref])
 }
+
+// Keep a not-found surface out of the index, whatever the status line said.
+// The edge only downgrades a handle URL to a real 404 when the backend gives a
+// DEFINITE "no" (the auth_request probe in frontend/nginx.conf): a fail-open
+// miss, a URL shape the handle regex doesn't cover, or an in-app route still
+// answers 200 with this screen. Googlebot executes JS and honours a client-set
+// robots meta, so this is the belt to that 404's braces. Removed on unmount, so
+// navigating on to a real page drops it again.
+export function useNoindex() {
+  useEffect(() => {
+    const el = document.createElement('meta')
+    el.setAttribute('name', 'robots')
+    el.setAttribute('content', 'noindex')
+    document.head.appendChild(el)
+    return () => el.remove()
+  }, [])
+}

@@ -88,6 +88,54 @@ public-only semantic hit opens via the redirect rather than linking straight to
 the reader. Correct, one hop slower; thread `is_member` through `hydrate` to
 close it.
 
+### Handle URLs answer a real 404 — and the check fails open
+
+`/{handle}`, `/{handle}/{space-slug}` and `/{handle}/{space-slug}/{pageId}` are
+SPA routes, so the frontend nginx used to answer **200 + app shell** for anything
+handle-shaped: every typo, every renamed handle, every dead shared link and every
+machine probe (`/ai.txt` — and `/openapi.json`, until it got its own Caddy route)
+reported itself to crawlers and uptime monitors as a live page. It was invisible
+in a browser, because the SPA renders a perfectly nice "not found" screen either
+way.
+
+Three pieces, and the middle one is the load-bearing constraint:
+
+1. **`GET /api/public/exists/{handle}[/{slug}[/{pageId}]]`**
+   (`public_exists.go`) — a body-less probe over the SAME resolution the reader
+   uses (`resolveHandle` / `handleHasPublicSpace` / `publicSpaceIDForHandle`), so
+   the edge can never disagree with the page. The status IS the answer:
+   **204** exists · **404** definitely doesn't · **500** couldn't tell (DB error).
+   Public + read-only like the rest of `/api/public/`, and it discloses nothing
+   `by-handle` doesn't.
+2. **nginx `auth_request`** on handle-shaped paths (`@handle_spa` in
+   `frontend/nginx.conf`) turns a definite "no" into a real 404 whose body is
+   still the SPA shell — humans see the same branded screen, only the status
+   changes. **It FAILS OPEN by construction:** auth_request only reads 401/403 as
+   a denial, so the `/_handle_exists` location maps the backend's 404 → 403 and
+   *everything else* (timeout, 5xx, backend restarting or absent, unresolvable
+   DNS) becomes a 500 that `error_page … =200 @spa_shell` serves as the old 200
+   shell. Timeouts are explicit and sub-second (300 ms connect / 500 ms read,
+   `resolver_timeout 300ms` — the resolver's own 30 s default is NOT covered by
+   the proxy timeouts). A live public page 404ing on a hiccup is far worse than
+   the bug being fixed.
+3. **`useNoindex()`** (`lib/useHeadMeta.ts`) on the not-found surfaces
+   (`PublicUnavailable`, the router's `notFoundComponent`) — Googlebot executes
+   JS and honours a client-set `robots` meta, which covers the fail-open window
+   and anything the regex misses.
+
+Cost is one cached subrequest: `proxy_cache` keyed on the path with the query
+string and the decorative title slug stripped (the page id resolves a page), 60 s
+per answer, `proxy_cache_use_stale` across a backend blip. A popular space pays
+no per-view round-trip, and publishing a space stops 404ing within a minute.
+
+Real files still win (`try_files $uri` runs before the subrequest is reached),
+and Caddy's bot/OG routes match earlier, so link unfurls are untouched. **The
+handle regex is defined twice** — `frontend/nginx.conf` and
+`deploy/proxy/sites.caddy` — and they must stay in sync; nginx serves the SPA
+shell as its 404 body, so a shape missing from its allowlist renders perfectly
+while returning 404. Verify a new URL shape with
+`curl -o /dev/null -w '%{http_code}'`, never by eye.
+
 ## Shipped (frontend)
 
 - No-login public reader route `/public/spaces/{id}/pages/{id}/{slug}` (reuses

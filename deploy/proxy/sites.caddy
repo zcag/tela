@@ -415,6 +415,13 @@
 		# gulden.gullu), optionally followed by a numeric page id + decorative slug.
 		# Anything that isn't a real landing file, a known app route, or
 		# handle-shaped falls to the noindex fallback below.
+		#
+		# KEEP THIS REGEX IN SYNC with the handle `location ~` in
+		# frontend/nginx.conf — the shape is defined twice, and only nginx knows
+		# whether the handle actually EXISTS (it auth_requests the backend's
+		# /api/public/exists/… probe and 404s a definite miss). A path that is
+		# handle-shaped here but not there gets no existence check; one that is
+		# shaped there but not here never reaches nginx at all.
 		@handle path_regexp ^/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+(/[0-9]+(/[A-Za-z0-9._-]*)?)?)?$
 		handle @handle {
 			reverse_proxy {$TELA_UPSTREAM_FRONTEND:frontend:80}

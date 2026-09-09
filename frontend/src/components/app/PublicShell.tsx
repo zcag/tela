@@ -3,6 +3,7 @@ import { BrandLogo } from '../BrandLogo'
 import { useHostContext, useTelaHomeHref } from '../../lib/queries/host-context'
 import { cn } from '../../lib/utils'
 import { Card, CardDescription, CardHeader, CardTitle } from '../ui/card'
+import { useNoindex } from '../../lib/useHeadMeta'
 
 // The chrome around every logged-out surface (public reader, handle homes, the
 // file page): brand + theme switcher over a full-height column. On an org custom
@@ -58,6 +59,7 @@ export function PublicUnavailable({
 }: {
   message?: string
 }) {
+  useNoindex()
   return (
     <PublicShell>
       <Card className="w-full max-w-[24rem]">

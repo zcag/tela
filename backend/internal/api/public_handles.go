@@ -130,15 +130,25 @@ func (s *Server) GetPublicByHandleSpace(w http.ResponseWriter, r *http.Request) 
 
 // resolveHandle maps a handle to (kind, ownerID, displayName, bio). User
 // namespace wins on a collision. bio is the user's bio (orgs have none → "").
-// ok=false when the handle matches no user and no org.
+// ok=false when the handle matches no user and no org — OR when the lookup
+// itself failed, which every caller here renders as the same 404. The existence
+// probe (public_exists.go) must NOT conflate those (a DB error there would turn
+// a live URL into a hard 404 at the edge), so it calls lookupHandle instead.
 func (s *Server) resolveHandle(ctx context.Context, handle string) (kind string, ownerID int64, name, bio string, ok bool) {
+	kind, ownerID, name, bio, err := s.lookupHandle(ctx, handle)
+	return kind, ownerID, name, bio, err == nil
+}
+
+// lookupHandle is resolveHandle with the error kept: sql.ErrNoRows for "no such
+// handle", anything else for "we couldn't tell".
+func (s *Server) lookupHandle(ctx context.Context, handle string) (kind string, ownerID int64, name, bio string, err error) {
 	var (
 		uid         int64
 		username    string
 		displayName string
 		userBio     string
 	)
-	err := s.DB.QueryRowContext(ctx,
+	err = s.DB.QueryRowContext(ctx,
 		`SELECT id, username, display_name, bio FROM users WHERE LOWER(username) = LOWER($1)`, handle).
 		Scan(&uid, &username, &displayName, &userBio)
 	if err == nil {
@@ -146,10 +156,10 @@ func (s *Server) resolveHandle(ctx context.Context, handle string) (kind string,
 		if n == "" {
 			n = username
 		}
-		return handleKindUser, uid, n, userBio, true
+		return handleKindUser, uid, n, userBio, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return "", 0, "", "", false
+		return "", 0, "", "", err
 	}
 
 	var (
@@ -160,21 +170,29 @@ func (s *Server) resolveHandle(ctx context.Context, handle string) (kind string,
 		`SELECT id, name FROM orgs WHERE LOWER(slug) = LOWER($1)`, handle).
 		Scan(&oid, &orgName)
 	if err == nil {
-		return handleKindOrg, oid, orgName, "", true
+		return handleKindOrg, oid, orgName, "", nil
 	}
-	return "", 0, "", "", false
+	return "", 0, "", "", err
 }
 
 // handleHasPublicSpace reports whether the account has ≥1 public space under
 // handleOwnerWhere — the SAME predicate that decides whether /{handle} resolves.
 // The OG/sitemap surfaces gate on this so they can never advertise a card for a
 // home that 404s (which is exactly what the org-attribution bug produced).
+// A failed query reads as "no" here — an OG card is better skipped than wrong.
+// The existence probe needs the difference, so it calls the -Err form.
 func (s *Server) handleHasPublicSpace(ctx context.Context, kind string, ownerID int64) bool {
+	ok, err := s.queryHandleHasPublicSpace(ctx, kind, ownerID)
+	return err == nil && ok
+}
+
+// queryHandleHasPublicSpace is handleHasPublicSpace with the error kept.
+func (s *Server) queryHandleHasPublicSpace(ctx context.Context, kind string, ownerID int64) (bool, error) {
 	var ok bool
-	_ = s.DB.QueryRowContext(ctx,
+	err := s.DB.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM spaces s
 		                WHERE s.visibility = 'public' AND `+handleOwnerWhere(kind)+`)`, ownerID).Scan(&ok)
-	return ok
+	return ok, err
 }
 
 // spaceHandlePath returns a public space's canonical pretty path,

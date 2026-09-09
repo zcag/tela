@@ -348,6 +348,14 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	// public_handles.go.
 	mux.HandleFunc("GET /api/public/by-handle/{handle}", srv.GetPublicByHandle)
 	mux.HandleFunc("GET /api/public/by-handle/{handle}/spaces/{slug}", srv.GetPublicByHandleSpace)
+	// Body-less existence probe for those same three URL shapes, called by the
+	// frontend nginx (auth_request) on every handle-shaped request so a path with
+	// nothing behind it answers a REAL 404 instead of a 200 app shell. 204 = yes,
+	// 404 = definitely not, 500 = couldn't tell (the edge fails open). See
+	// public_exists.go + the auth_request block in frontend/nginx.conf.
+	mux.HandleFunc("GET /api/public/exists/{handle}", srv.PublicHandleExists)
+	mux.HandleFunc("GET /api/public/exists/{handle}/{slug}", srv.PublicHandleExists)
+	mux.HandleFunc("GET /api/public/exists/{handle}/{slug}/{pageId}", srv.PublicHandleExists)
 
 	// M17.A.1 Feedback submit-only channel. Session OR bearer (any scope —
 	// the bearer carve-out lives in auth.scopeAllowsRequest so the MCP
