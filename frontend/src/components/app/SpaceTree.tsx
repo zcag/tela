@@ -43,6 +43,7 @@ import {
 } from '../ui/dropdown-menu'
 import { Input } from '../ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { useMe } from '../../lib/queries/auth'
 import { useSpaceAccess } from '../../lib/queries/space-grants'
 import {
   useHiddenSpaces,
@@ -114,10 +115,13 @@ export function SpaceTree({ activeSpaceId, activePageId }: SpaceTreeProps) {
   // flag (else everything reads behind — noise on an instance that isn't running
   // it). Failed summaries are excluded (see staleness.ts) so the dot stays a
   // "catching up" signal, not a stuck error.
+  // Opt-out (Settings → Search index): when off, no dot is computed at all.
+  const showDot = useMe().data?.show_backfill_dot ?? true
   const freshness = useFreshness()
   const summaries = useSummaries()
   const staleLabelBySpace = useMemo(() => {
     const indexing = new Map<number, number>()
+    if (!showDot) return new Map<number, string>()
     if (freshness.data?.enabled) {
       for (const f of freshness.data.spaces) {
         if (f.stale_pages > 0) indexing.set(f.space_id, f.stale_pages)
@@ -135,7 +139,7 @@ export function SpaceTree({ activeSpaceId, activePageId }: SpaceTreeProps) {
       if (label) labels.set(id, label)
     }
     return labels
-  }, [freshness.data, summaries.data])
+  }, [freshness.data, summaries.data, showDot])
 
   // Alphabetical order useSpaces() already gives us, clustered by org below.
   const all = spaces.data ?? []

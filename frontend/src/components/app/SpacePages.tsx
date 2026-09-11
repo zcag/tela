@@ -15,6 +15,7 @@ import {
   usePages,
   useUpdatePage,
 } from '../../lib/queries/pages'
+import { useMe } from '../../lib/queries/auth'
 import { useSpaceFreshness } from '../../lib/queries/freshness'
 import { useSpaceSummaries } from '../../lib/queries/summaries'
 import { pageStaleLabel } from './staleness'
@@ -80,10 +81,13 @@ export function SpacePages({ spaceId, activePageId }: SpacePagesProps) {
   // reads behind — noise on an instance not running that subsystem). Failed
   // summaries are excluded (see staleness.ts) so the dot stays a "catching up"
   // signal. Map page id → composed tooltip; absent = nothing outstanding.
+  // Opt-out (Settings → Search index): when off, no dot is computed at all.
+  const showDot = useMe().data?.show_backfill_dot ?? true
   const freshness = useSpaceFreshness(spaceId)
   const summaries = useSpaceSummaries(spaceId)
   const staleLabels = useMemo(() => {
     const indexing = new Map<number, 'stale' | 'unindexed'>()
+    if (!showDot) return new Map<number, string>()
     if (freshness.data?.enabled) {
       for (const p of freshness.data.pages) {
         if (p.status === 'stale' || p.status === 'unindexed')
@@ -103,7 +107,7 @@ export function SpacePages({ spaceId, activePageId }: SpacePagesProps) {
       if (label) m.set(id, label)
     }
     return m
-  }, [freshness.data, summaries.data])
+  }, [freshness.data, summaries.data, showDot])
 
   // Auto-reveal the active page when navigation lands on it from outside the
   // sidebar (backlink click, command-palette result, [[wikilink]], direct URL,

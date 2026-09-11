@@ -25,6 +25,10 @@ type updateProfileRequest struct {
 	DisplayName *string `json:"display_name"`
 	// Bio is the author blurb shown on /u/{handle}. Empty string clears it.
 	Bio *string `json:"bio"`
+	// ShowBackfillDot toggles the sidebar staleness dot for this account (all
+	// devices). Nil leaves it alone — the field is opt-in per request like the
+	// other two.
+	ShowBackfillDot *bool `json:"show_backfill_dot"`
 }
 
 // UpdateMyProfile patches the caller's own profile fields (display name, bio).
@@ -40,7 +44,7 @@ func (s *Server) UpdateMyProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", "could not parse request body")
 		return
 	}
-	if req.Bio == nil && req.DisplayName == nil {
+	if req.Bio == nil && req.DisplayName == nil && req.ShowBackfillDot == nil {
 		writeError(w, http.StatusBadRequest, "no_fields", "nothing to update")
 		return
 	}
@@ -71,6 +75,18 @@ func (s *Server) UpdateMyProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out["bio"] = bio
+	}
+	if req.ShowBackfillDot != nil {
+		v := 0
+		if *req.ShowBackfillDot {
+			v = 1
+		}
+		if _, err := s.DB.ExecContext(r.Context(),
+			`UPDATE users SET show_backfill_dot = $1, updated_at = tela_now() WHERE id = $2`, v, u.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "update profile failed")
+			return
+		}
+		out["show_backfill_dot"] = *req.ShowBackfillDot
 	}
 	writeJSON(w, http.StatusOK, out)
 }

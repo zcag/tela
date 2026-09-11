@@ -31,6 +31,7 @@ type authUserDTO struct {
 	Trial           *trialDTO `json:"trial,omitempty"`           // active trial in its notify window, else nil
 	FeedbackUnseen  *int      `json:"feedback_unseen,omitempty"` // unread feedback count (instance admins only)
 	MCPConnected    bool      `json:"mcp_connected"`             // has ever made an authenticated MCP request
+	ShowBackfillDot bool      `json:"show_backfill_dot"`         // sidebar staleness dot opt-out (default true)
 }
 
 // trialDTO drives the in-app trial banner. Ended distinguishes "ends soon" from
@@ -212,8 +213,12 @@ func (s *Server) Me(w http.ResponseWriter, r *http.Request) {
 	// and prefill the profile editor.
 	var displayName, bio string
 	var mcpSeen sql.NullString
+	// Default the dot ON, so a failed read degrades to today's behaviour rather
+	// than silently hiding a signal the user never asked to hide.
+	showBackfillDot := 1
 	_ = s.DB.QueryRowContext(r.Context(),
-		`SELECT display_name, bio, mcp_last_seen_at FROM users WHERE id = $1`, u.ID).Scan(&displayName, &bio, &mcpSeen)
+		`SELECT display_name, bio, mcp_last_seen_at, show_backfill_dot FROM users WHERE id = $1`, u.ID).
+		Scan(&displayName, &bio, &mcpSeen, &showBackfillDot)
 
 	dto := authUserDTO{
 		ID:          u.ID,
@@ -227,6 +232,7 @@ func (s *Server) Me(w http.ResponseWriter, r *http.Request) {
 		Bio:             bio,
 		Trial:           s.userTrialStatus(r.Context(), u.ID),
 		MCPConnected:    mcpSeen.Valid,
+		ShowBackfillDot: showBackfillDot != 0,
 	}
 	// Unread feedback badge — instance admins only (the inbox is admin-gated).
 	if u.IsInstanceAdmin {

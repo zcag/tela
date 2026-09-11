@@ -25,6 +25,9 @@ export interface AuthUser {
   // Whether the user has ever made an authenticated MCP request (any credential).
   // Drives the "connect an agent" nudge.
   mcp_connected?: boolean
+  // Whether to show the sidebar backfill (staleness) dot. Account-level, so it
+  // follows the user across devices. Absent on an older server → treat as on.
+  show_backfill_dot?: boolean
 }
 
 
@@ -67,15 +70,23 @@ export function useMe() {
   })
 }
 
-// Patch the caller's own profile (display name and/or bio). Only the supplied
+// Patch the caller's own profile (display name, bio, UI preferences). Only the supplied
 // fields are sent; the server echoes back the saved values, which we merge into
 // the me cache in place so the settings form and any open /u/{handle} preview
 // reflect them.
 export function useUpdateProfile() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: { display_name?: string; bio?: string }) => {
-      return api<{ display_name?: string; bio?: string }>('/api/users/me', {
+    mutationFn: async (input: {
+      display_name?: string
+      bio?: string
+      show_backfill_dot?: boolean
+    }) => {
+      return api<{
+        display_name?: string
+        bio?: string
+        show_backfill_dot?: boolean
+      }>('/api/users/me', {
         method: 'PATCH',
         body: JSON.stringify(input),
       })

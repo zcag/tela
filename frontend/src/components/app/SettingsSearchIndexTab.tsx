@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Card } from '../ui/card'
+import { Checkbox } from '../ui/checkbox'
+import { useMe, useUpdateProfile } from '../../lib/queries/auth'
 import {
   useFreshness,
   useReindexSpace,
@@ -136,7 +138,40 @@ function SpaceRow({ space }: { space: SpaceFreshness }) {
 // with a per-space Reindex action and an expandable per-page status list. Backed
 // by GET /api/rag/freshness. Renders a clear disabled state when the server has
 // no embedder configured.
-export function SettingsSearchIndexTab() {
+// The account-level opt-out for the sidebar staleness dot. Lives here because
+// this tab is what the dot is about — someone who wants it gone is already
+// looking at indexing. Saved on the account, not in this browser, so turning it
+// off follows you to your other devices.
+function BackfillDotPref() {
+  const me = useMe()
+  const update = useUpdateProfile()
+  const shown = me.data?.show_backfill_dot ?? true
+
+  return (
+    <label className="flex items-start gap-[var(--space-3)] rounded-[var(--radius-md)] border border-[var(--border-subtle)] px-[var(--space-4)] py-[var(--space-3)]">
+      <Checkbox
+        checked={shown}
+        disabled={me.isLoading || update.isPending}
+        aria-label="Show indexing activity in the sidebar"
+        onCheckedChange={(v) => update.mutate({ show_backfill_dot: v === true })}
+        className="mt-[2px]"
+      />
+      <span className="flex flex-col gap-[1px]">
+        <span className="text-[length:var(--text-sm)] text-[var(--text-primary)] font-medium">
+          Show indexing activity in the sidebar
+        </span>
+        <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+          The small amber dot next to a page or space while its index or summary
+          is catching up. Turning it off changes nothing about the indexing
+          itself — this page still shows the full status.
+        </span>
+      </span>
+    </label>
+  )
+}
+
+// Per-space index status: counts, per-page detail, manual reindex.
+function IndexStatus() {
   const { data, isLoading, isError } = useFreshness()
 
   if (isLoading) {
@@ -183,6 +218,15 @@ export function SettingsSearchIndexTab() {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+export function SettingsSearchIndexTab() {
+  return (
+    <div className="flex flex-col gap-[var(--space-4)]">
+      <BackfillDotPref />
+      <IndexStatus />
     </div>
   )
 }

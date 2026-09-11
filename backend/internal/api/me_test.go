@@ -154,3 +154,48 @@ func TestDeleteAllMySessions_KeepsCurrent(t *testing.T) {
 		t.Fatalf("sessions=%d, want 1", n)
 	}
 }
+
+// The backfill-dot opt-out rides PATCH /api/users/me with the other profile
+// fields. Default is ON, so the interesting case is that turning it off sticks
+// and that the field alone is enough to make the request valid (the handler
+// rejects a body with no fields at all).
+func TestUpdateMyProfile_TogglesBackfillDot(t *testing.T) {
+	ctx := context.Background()
+	d := newAPITestDB(t)
+	srv := New(d)
+	uid := seedUser(t, d, "alice", "pw-long-enough", false)
+	sid := seedSession(t, d, uid)
+
+	read := func() int {
+		var v int
+		if err := d.QueryRowContext(ctx, `SELECT show_backfill_dot FROM users WHERE id = $1`, uid).Scan(&v); err != nil {
+			t.Fatalf("read show_backfill_dot: %v", err)
+		}
+		return v
+	}
+	if got := read(); got != 1 {
+		t.Fatalf("default show_backfill_dot = %d, want 1", got)
+	}
+
+	req := userRequestWithSession(http.MethodPatch, "/api/users/me",
+		`{"show_backfill_dot":false}`, authUser(uid, "alice", false), sid)
+	rec := recordHandler(srv.UpdateMyProfile, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"show_backfill_dot":false`) {
+		t.Fatalf("response did not echo the saved value: %q", rec.Body.String())
+	}
+	if got := read(); got != 0 {
+		t.Fatalf("after off, show_backfill_dot = %d, want 0", got)
+	}
+
+	req = userRequestWithSession(http.MethodPatch, "/api/users/me",
+		`{"show_backfill_dot":true}`, authUser(uid, "alice", false), sid)
+	if rec := recordHandler(srv.UpdateMyProfile, req); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q want 200", rec.Code, rec.Body.String())
+	}
+	if got := read(); got != 1 {
+		t.Fatalf("after on, show_backfill_dot = %d, want 1", got)
+	}
+}
