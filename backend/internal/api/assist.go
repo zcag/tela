@@ -83,11 +83,6 @@ func lowConfidence(rerankOn bool, topScore float64) bool {
 	return rerankOn && topScore < askLowConfidenceScore
 }
 
-// askContext retrieves grounding for query and renders the numbered, cited
-// excerpt block that feeds every generative feature, plus the per-page hits (for
-// source citation, aligned to the [n] numbering) and the top fused score. It
-// dedups chunks to pages and expands topically-central pages to their full body
-// (see the knobs above). An empty hits slice means "nothing retrieved".
 // askResult is one retrieval pass's grounding. Considered vs len(Hits) is the
 // honesty bit: retrieval routinely finds more distinct sources than the render
 // cap shows, and until this was reported a caller could not tell whether the
@@ -103,6 +98,12 @@ type askResult struct {
 // caller can re-ask with a bigger `limit` to see them.
 func (r askResult) Truncated() bool { return r.Considered > len(r.Hits) }
 
+// askContext retrieves grounding for query and renders the numbered, cited
+// excerpt block that feeds every generative feature, plus the per-source hits
+// (for citation, aligned to the [n] numbering), the top fused score, and how many
+// distinct sources were considered. It dedups chunks to sources and expands
+// topically-central pages to their full body (see the knobs above). An empty Hits
+// means "nothing retrieved".
 func (s *Server) askContext(ctx context.Context, userID int64, query string, spaceID *int64, limit int) (askResult, error) {
 	depth, maxSources := askRetrieveDepth, askMaxPages
 	if limit > 0 {
