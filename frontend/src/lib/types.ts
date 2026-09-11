@@ -691,8 +691,13 @@ export interface AdminAccountUsage {
 export interface KnowledgeGap {
   question: string
   asks: number
+  /** Retrieved anything at all — nearly always true, so not the interesting number. */
   answered: number
+  /** Retrieved something RELEVANT. A gap is a question this stayed low on. */
+  grounded: number
   avg_hits: number
+  /** Best top-score the question ever got — how close the corpus came. */
+  best_score: number
   last_asked: string
 }
 export interface AdminUsage {

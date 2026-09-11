@@ -59,15 +59,15 @@ const (
 	// askHubProbe: how many top-by-density pages the rerank-independent hub probe
 	// returns (whole-page answers the reranker would bury).
 	askHubProbe = 8
-	// askLowConfidenceScore: when reranking is on, a top hit scoring below this
-	// cross-encoder logit means retrieval found nothing strongly relevant. The
-	// answer is still produced (best effort) but flagged low-confidence so the
-	// reader knows to verify. Calibrated on the live corpus: a strong query tops
-	// ~+3, an answerable aggregate ~-0.2, a genuinely out-of-scope question ~-6.6 —
-	// so -4 fires only on the last kind. The reranker score scale is the only one
-	// this threshold is valid for; with reranking off there's no comparable signal.
-	askLowConfidenceScore = -4.0
 )
+
+// askLowConfidenceScore: when reranking is on, a top hit scoring below this
+// cross-encoder logit means retrieval found nothing strongly relevant. The answer
+// is still produced (best effort) but flagged low-confidence so the reader knows
+// to verify. Defined in rag (with its calibration) because the SAME line decides
+// what counts as a knowledge gap — a question the answer told you not to trust is
+// exactly a question worth writing a page for. One constant, one judgement.
+const askLowConfidenceScore = rag.LowConfidenceTopScore
 
 // lowConfidenceNote prefixes an answer the system isn't confident in — rendered
 // as a tela CAUTION callout. Deterministic (not left to the model) so the

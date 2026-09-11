@@ -106,3 +106,56 @@ func TestKnowledgeGaps_ScopedToCaller(t *testing.T) {
 		t.Errorf("space-pinned view = %v, want only the shared-space gap", got)
 	}
 }
+
+// The failure this view had in production: retrieval almost never comes back
+// EMPTY — hybrid search plus a reranker returns the least-bad chunks whatever you
+// ask — so defining a gap as "retrieved nothing" hid ~97% of the real gaps. A gap
+// is a question retrieval couldn't GROUND, however many chunks it handed back.
+func TestKnowledgeGaps_UngroundedCountsAsAGap(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	u := newUser(t, d, "alice")
+	sp := newSpace(t, d, "alpha", u)
+	svc := NewServiceWithEmbedder(d, &fakeEmbedder{})
+
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("logask: %v", err)
+		}
+	}
+	// Asked 3×. Retrieval returned a full 12 hits every time — so the old
+	// answered>0 test called it answered — but the top hit was far below the
+	// relevance line each time, i.e. the reader was told not to trust the answer.
+	for i := 0; i < 3; i++ {
+		must(svc.LogAsk(ctx, u, &sp, "How do I rotate the signing key?", 12, LowConfidenceTopScore-2))
+	}
+	// Asked 3×, well grounded → not a gap, even though it's asked just as often.
+	for i := 0; i < 3; i++ {
+		must(svc.LogAsk(ctx, u, &sp, "How do I deploy?", 12, 3.1))
+	}
+	// Right at the line counts as grounded — the threshold is inclusive.
+	must(svc.LogAsk(ctx, u, &sp, "What is the edge case?", 12, LowConfidenceTopScore))
+
+	gaps, err := svc.KnowledgeGaps(ctx, GapScope{Instance: true}, 0, 50)
+	if err != nil {
+		t.Fatalf("gaps: %v", err)
+	}
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %d, want 1 (only the ungrounded question): %+v", len(gaps), gaps)
+	}
+	g := gaps[0]
+	if !strings.Contains(strings.ToLower(g.Question), "signing key") {
+		t.Errorf("gap question = %q, want the ungrounded one", g.Question)
+	}
+	// It retrieved plenty and still grounded nothing — that gap is the whole point.
+	if g.Asks != 3 || g.Answered != 3 || g.Grounded != 0 {
+		t.Errorf("gap = asks %d, answered %d, grounded %d; want 3/3/0", g.Asks, g.Answered, g.Grounded)
+	}
+	if g.AvgHits != 12 {
+		t.Errorf("avg_hits = %v, want 12 (retrieval was not empty)", g.AvgHits)
+	}
+	if g.BestScore != LowConfidenceTopScore-2 {
+		t.Errorf("best_score = %v, want %v", g.BestScore, LowConfidenceTopScore-2)
+	}
+}

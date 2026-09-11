@@ -143,7 +143,9 @@ function GapRow({ g }: { g: KnowledgeGap }) {
         {g.question}
       </span>
       <span className="shrink-0 text-[length:var(--text-xs)] text-[var(--text-muted)] tabular-nums">
-        asked {g.asks}× · {g.answered}/{g.asks} answered
+        {/* `grounded`, not `answered` — retrieval nearly always returns SOMETHING,
+            so "3/3 answered" on a question in this list reads as a contradiction. */}
+        asked {g.asks}× · {g.grounded > 0 ? `${g.grounded}/${g.asks} answered well` : 'never answered well'}
       </span>
       <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setOpen(true)}>
         Draft page

@@ -54,7 +54,7 @@ tree, never replacing them.
 | **Related pages** | semantic "see also" for any page (centroid → nearest pages) | `GET /api/pages/{id}/related`, MCP `related_pages` |
 | **Link suggestions** | existing pages a *draft* should link to (assisted authoring) | `POST /api/rag/suggest-links`, MCP `suggest_links` |
 | **Overlap detection** | near-duplicate page pairs to merge/redirect (hygiene) | `GET /api/rag/overlaps`, MCP `find_overlaps` |
-| **Knowledge gaps** | most-asked questions the corpus *couldn't* answer → content roadmap | `GET /api/rag/gaps[?space_id=]`, MCP `knowledge_gaps` |
+| **Knowledge gaps** | most-asked questions the corpus couldn't *ground* → content roadmap | `GET /api/rag/gaps[?space_id=]`, MCP `knowledge_gaps` |
 | **Ask your docs** | cited answers grounded on full chunks (+ follow-up questions) | `POST /api/rag/ask` |
 | **Ask-first authoring** | a grounded markdown *draft* for a new page from a topic | `POST /api/rag/draft` |
 | **Answer → page** ⭐ | answer a question AND save it as a cited page — closes ask→gap→write | `POST /api/rag/answer-to-page` |
@@ -104,6 +104,18 @@ and an agent can drive the whole loop through MCP. That loop — not any single
 feature — is the gem.
 
 ## Privacy & control
+
+A gap is a question retrieval couldn't **ground**, not one that returned no rows.
+The distinction is the whole feature: hybrid search plus a reranker hands back the
+twelve least-bad chunks whatever you ask, so on the live instance only **6 of 766**
+asks ever came back empty while **201** retrieved nothing relevant (a negative top
+score). Defining a gap as `hit_count = 0` therefore reported ~3% of its own signal
+and the view read as permanently empty. `KnowledgeGaps` instead counts an ask as
+grounded when its `top_score` clears `rag.LowConfidenceTopScore` (-4.0) — the same
+constant `lowConfidence` uses to put the *"verify this"* callout on an answer, so
+the flag shown to a reader and the definition of a gap are one judgement. With
+reranking off, RRF scores are small positives and nothing trips it (the feature
+degrades to quiet rather than wrong).
 
 `ask_log` records questions to power gaps. Reading it is open to every signed-in
 user, scoped by `rag.GapScope` to **their own asks plus asks made inside spaces
