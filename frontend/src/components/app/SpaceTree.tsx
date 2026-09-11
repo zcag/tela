@@ -457,7 +457,8 @@ function SpaceRow({
         </button>
 
         {/* Resting state stays calm: only a published space flags itself, plus a
-            staleness rollup. Both yield to the access cluster + ⋯ on hover. */}
+            staleness rollup. The globe yields to the access cluster + ⋯ on hover;
+            the staleness dot only recedes, so its tooltip stays hoverable. */}
         {space.visibility === 'public' ? (
           <Globe
             width={13}
@@ -467,11 +468,7 @@ function SpaceRow({
           />
         ) : null}
 
-        {staleLabel ? (
-          <span className="shrink-0 inline-flex items-center group-hover:hidden">
-            <StalenessDot label={staleLabel} />
-          </span>
-        ) : null}
+        {staleLabel ? <StalenessDot label={staleLabel} /> : null}
 
         {/* Access cluster + actions — revealed on hover (or on the active row for
             no-hover devices), so the row reads as just a name at rest. Click the

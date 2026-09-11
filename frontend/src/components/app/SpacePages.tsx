@@ -301,12 +301,10 @@ function PageNode({
         </button>
 
         {/* Staleness marker — trailing, only when this page has background
-            backfill outstanding (indexing and/or summaries). Hides on row hover
-            to make room for the ⋯ menu. */}
+            backfill outstanding (indexing and/or summaries). Recedes on row
+            hover (see StalenessDot) so the ⋯ menu leads without hiding it. */}
         {staleLabels.has(node.id) ? (
-          <span className="shrink-0 inline-flex items-center group-hover:hidden">
-            <StalenessDot label={staleLabels.get(node.id)!} />
-          </span>
+          <StalenessDot label={staleLabels.get(node.id)!} />
         ) : null}
 
         {/* Exposure marker — trailing, only when the page is actually exposed.
