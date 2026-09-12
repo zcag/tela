@@ -14,10 +14,11 @@ import (
 )
 
 func TestUpdateSubscriptionSeats(t *testing.T) {
-	var gotMethod, gotPath, gotAuth string
+	var gotMethod, gotPath, gotAuth, gotVersion string
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		gotVersion = r.Header.Get("Polar-Version")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Write([]byte(`{}`))
 	}))
@@ -32,6 +33,9 @@ func TestUpdateSubscriptionSeats(t *testing.T) {
 	}
 	if gotAuth != "Bearer tok" {
 		t.Fatalf("missing bearer auth, got %q", gotAuth)
+	}
+	if gotVersion != apiVersion {
+		t.Fatalf("Polar-Version = %q, want %q", gotVersion, apiVersion)
 	}
 	if gotBody["seats"] != float64(7) {
 		t.Fatalf("seats body = %v, want 7", gotBody["seats"])

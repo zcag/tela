@@ -295,6 +295,13 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 
 // do issues an authenticated JSON request and decodes a 2xx body into out (out
 // may be nil to ignore the body). A nil request body sends no payload (GETs).
+// apiVersion pins the Polar API contract. Polar versions by date and moves
+// unpinned requests to the newest version on each cutover (2026-04 → 2026-10 on
+// 1 Oct 2026); pinning keeps checkout/portal/seat responses stable until the
+// bump is made deliberately. Deprecated versions stay usable ~3 months past the
+// cutover. Set the same version on the webhook endpoint in the Polar dashboard.
+const apiVersion = "2026-04"
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -309,6 +316,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	req.Header.Set("Polar-Version", apiVersion)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
