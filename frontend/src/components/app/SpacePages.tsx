@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   ChevronDown,
   ChevronRight,
+  FilePen,
   MoreHorizontal,
   RotateCw,
 } from 'lucide-react'
@@ -309,6 +310,18 @@ function PageNode({
             hover (see StalenessDot) so the ⋯ menu leads without hiding it. */}
         {staleLabels.has(node.id) ? (
           <StalenessDot label={staleLabels.get(node.id)!} />
+        ) : null}
+
+        {/* Draft marker: work in progress, kept off public spaces and share
+            links until published. Recedes on hover like the exposure marker. */}
+        {node.status === 'draft' ? (
+          <span
+            className="shrink-0 inline-flex items-center text-[var(--text-muted)] group-hover:hidden"
+            title="Draft"
+            aria-label="Draft"
+          >
+            <FilePen width={12} height={12} />
+          </span>
         ) : null}
 
         {/* Exposure marker — trailing, only when the page is actually exposed.

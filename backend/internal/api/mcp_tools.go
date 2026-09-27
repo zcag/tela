@@ -171,7 +171,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "update_page",
 		Title:       "Update page",
-		Description: "Patch a page's title and/or body (editor+). A body change auto-snapshots a revision. " + authoringToolHint() + deckAuthoringToolHint() + sheetAuthoringToolHint(),
+		Description: "Patch a page's title, body, props and/or draft status (editor+). A body change auto-snapshots a revision. Pass base_version (from get_page) to refuse the write if someone edited the page since you read it. " + authoringToolHint() + deckAuthoringToolHint() + sheetAuthoringToolHint(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: &no, IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.mcpUpdatePage)
 
@@ -572,6 +572,7 @@ func (s *Server) mcpGetSpace(ctx context.Context, req *mcp.CallToolRequest, in g
 type listPagesIn struct {
 	SpaceID  int64  `json:"space_id" jsonschema:"id of the space to list pages in"`
 	ParentID *int64 `json:"parent_id,omitempty" jsonschema:"optional parent page id; omit for top-level pages"`
+	Status   string `json:"status,omitempty" jsonschema:"optional: 'draft' or 'published' to list only pages in that state; omit for all"`
 }
 
 type mcpPageListItem struct {
@@ -580,6 +581,7 @@ type mcpPageListItem struct {
 	ParentID *int64 `json:"parent_id"`
 	Title    string `json:"title"`
 	Position int64  `json:"position"`
+	Status   string `json:"status"`
 	URL      string `json:"url"`
 }
 
@@ -598,16 +600,20 @@ func (s *Server) mcpListPages(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 	// All pages share in.SpaceID — resolve the origin once (org domain or canonical).
 	origin := s.mcpOrigin(ctx, in.SpaceID)
-	out := listPagesOut{Pages: make([]mcpPageListItem, len(pages))}
-	for i, p := range pages {
-		out.Pages[i] = mcpPageListItem{
+	out := listPagesOut{Pages: []mcpPageListItem{}}
+	for _, p := range pages {
+		if in.Status != "" && p.Status != in.Status {
+			continue
+		}
+		out.Pages = append(out.Pages, mcpPageListItem{
 			ID:       p.ID,
 			SpaceID:  p.SpaceID,
 			ParentID: p.ParentID,
 			Title:    p.Title,
 			Position: p.Position,
+			Status:   p.Status,
 			URL:      origin + pageAppPath(p.SpaceID, p.ID, p.Title),
-		}
+		})
 	}
 	return nil, out, nil
 }
@@ -636,6 +642,8 @@ type createdPage struct {
 	Props     map[string]any `json:"props,omitempty"`
 	CreatedAt string         `json:"created_at"`
 	UpdatedAt string         `json:"updated_at"`
+	Version   int64          `json:"version"`
+	Status    string         `json:"status"`
 	URL       string         `json:"url"`
 }
 
@@ -662,6 +670,8 @@ func (s *Server) newCreatedPage(ctx context.Context, p models.Page) createdPage 
 		Props:     p.Props,
 		CreatedAt: p.CreatedAt,
 		UpdatedAt: p.UpdatedAt,
+		Version:   p.Version,
+		Status:    p.Status,
 		URL:       s.mcpPageURL(ctx, p),
 	}
 }
@@ -1084,6 +1094,7 @@ type createPageIn struct {
 	Title          string         `json:"title" jsonschema:"page title"`
 	Body           string         `json:"body" jsonschema:"markdown body"`
 	Props          map[string]any `json:"props,omitempty" jsonschema:"optional page properties (frontmatter); free-form keys, reserved keys like id/title/slug/created are ignored"`
+	Status         string         `json:"status,omitempty" jsonschema:"optional: 'draft' (work in progress: labelled in the app and kept off public spaces and share links) or 'published' (the default)"`
 	IdempotencyKey string         `json:"idempotency_key,omitempty" jsonschema:"optional client-generated key; a retry with the same key returns the original result instead of creating a duplicate page (safe retries after a dropped connection)"`
 }
 
@@ -1102,6 +1113,7 @@ func (s *Server) mcpCreatePage(ctx context.Context, req *mcp.CallToolRequest, in
 			Title:    in.Title,
 			Body:     in.Body,
 			Props:    in.Props,
+			Status:   in.Status,
 		}, true)
 		if ae != nil {
 			return mcpErr(ae), createPageOut{}, nil
@@ -1113,10 +1125,12 @@ func (s *Server) mcpCreatePage(ctx context.Context, req *mcp.CallToolRequest, in
 // ---- update_page ---------------------------------------------------------
 
 type updatePageIn struct {
-	ID    int64          `json:"id" jsonschema:"page id to patch"`
-	Title *string        `json:"title,omitempty" jsonschema:"new title (omit to leave unchanged)"`
-	Body  *string        `json:"body,omitempty" jsonschema:"new markdown body (omit to leave unchanged)"`
-	Props map[string]any `json:"props,omitempty" jsonschema:"replace the whole properties bag (omit to leave unchanged); reserved keys are ignored"`
+	ID          int64          `json:"id" jsonschema:"page id to patch"`
+	Title       *string        `json:"title,omitempty" jsonschema:"new title (omit to leave unchanged)"`
+	Body        *string        `json:"body,omitempty" jsonschema:"new markdown body (omit to leave unchanged)"`
+	Props       map[string]any `json:"props,omitempty" jsonschema:"replace the whole properties bag (omit to leave unchanged); reserved keys are ignored"`
+	Status      *string        `json:"status,omitempty" jsonschema:"'draft' or 'published' (omit to leave unchanged). Publishing a draft makes it eligible for public spaces and share links"`
+	BaseVersion *int64         `json:"base_version,omitempty" jsonschema:"optional: the page version you last read (get_page returns it). If the page has changed since, the write is refused with version_conflict instead of overwriting that edit; re-read and reapply. Omit for last-write-wins"`
 }
 
 func (s *Server) mcpUpdatePage(ctx context.Context, req *mcp.CallToolRequest, in updatePageIn) (*mcp.CallToolResult, writePageOut, error) {
@@ -1129,7 +1143,7 @@ func (s *Server) mcpUpdatePage(ctx context.Context, req *mcp.CallToolRequest, in
 	}
 	// agentWrite=true: an agent rewriting the body must invalidate the Yjs collab
 	// overlay so live/next editors see it instead of stale CRDT state.
-	p, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Title: in.Title, Body: in.Body, Props: in.Props}, true)
+	p, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Title: in.Title, Body: in.Body, Props: in.Props, Status: in.Status, BaseVersion: in.BaseVersion}, true)
 	if ae != nil {
 		return mcpErr(ae), writePageOut{}, nil
 	}
@@ -1145,6 +1159,7 @@ type patchPageIn struct {
 	Operation      string `json:"operation" jsonschema:"append (add to the end of the section's body), prepend (add right under the heading), replace (swap the section's body, heading kept), or delete (remove the heading and its body). A section means the heading AND EVERYTHING NESTED UNDER IT until the next same-or-higher heading — so replace/delete on a '##' also removes its '###' sub-sections (they come back in the response as removed_subsections), and append lands after the last of them. To edit only the prose under a heading that has sub-sections, target the sub-section instead."`
 	Content        string `json:"content,omitempty" jsonschema:"markdown to insert; omit for delete"`
 	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional client-generated key; a retry with the same key returns the original result instead of re-applying the patch"`
+	BaseVersion    *int64 `json:"base_version,omitempty" jsonschema:"optional: the page version you last read. If the page has changed since, the patch is refused with version_conflict; re-read and reapply. Even without it, a patch never overwrites an edit made while it was being applied"`
 }
 
 // patchPageOut is get_page's envelope plus the accounting for what the patch
@@ -1171,13 +1186,19 @@ func (s *Server) mcpPatchPage(ctx context.Context, req *mcp.CallToolRequest, in 
 		if ae != nil {
 			return mcpErr(ae), patchPageOut{}, nil
 		}
+		if in.BaseVersion != nil && *in.BaseVersion != p.Version {
+			return mcpErr(&apiErr{Status: 409, Code: "version_conflict", Message: fmt.Sprintf(
+				"page changed since version %d (it is now version %d); read it again and reapply your change", *in.BaseVersion, p.Version)}), patchPageOut{}, nil
+		}
 		patch, err := applyPatch(p.Body, in.Target, in.Operation, in.Content)
 		if err != nil {
 			return mcpErr(&apiErr{Status: 400, Code: "bad_request", Message: err.Error()}), patchPageOut{}, nil
 		}
 		// Write through the normal update path (agentWrite=true) so the revision,
 		// reindex, agreement and provenance all fire exactly as for any edit.
-		up, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Body: &patch.Body}, true)
+		// Always against the version the patch was computed on: an edit landing
+		// between that read and this write is refused, never silently undone.
+		up, ae := s.updatePageCore(ctx, u, k, in.ID, pageUpdateRequest{Body: &patch.Body, BaseVersion: &p.Version}, true)
 		if ae != nil {
 			return mcpErr(ae), patchPageOut{}, nil
 		}

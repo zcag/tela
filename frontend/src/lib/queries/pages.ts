@@ -294,7 +294,10 @@ export function useCreatePage() {
       }
     },
     onSuccess: (created) => {
+      // Seed for an instant render, then refetch: the create response lacks the
+      // GET-only siblings (short_path, exposure) the page header needs.
       qc.setQueryData(pageKeys.detail(created.id), created)
+      void qc.invalidateQueries({ queryKey: pageKeys.detail(created.id) })
       emitPageMutation()
     },
     onSettled: (_data, _err, input) => {
@@ -330,7 +333,10 @@ export function useUpdatePage() {
       return page
     },
     onSuccess: (updated) => {
-      qc.setQueryData(pageKeys.detail(updated.id), updated)
+      // Merge, don't replace: the PATCH response is the bare page, and the
+      // detail cache also carries GET-only siblings (exposure, short_path)
+      // that a write doesn't change.
+      qc.setQueryData<Page>(pageKeys.detail(updated.id), (prev) => (prev ? { ...prev, ...updated } : updated))
       void qc.invalidateQueries({ queryKey: pageKeys.space(updated.space_id) })
       emitPageMutation()
       notifyBodyIndexUpdate(updated)
@@ -380,7 +386,9 @@ export function useMovePage() {
       return page
     },
     onSuccess: (moved, vars) => {
-      qc.setQueryData(pageKeys.detail(moved.id), moved)
+      // Merge, then refetch: a move can change the inherited exposure.
+      qc.setQueryData<Page>(pageKeys.detail(moved.id), (prev) => (prev ? { ...prev, ...moved } : moved))
+      void qc.invalidateQueries({ queryKey: pageKeys.detail(moved.id) })
       void qc.invalidateQueries({ queryKey: pageKeys.space(moved.space_id) })
       if (vars.fromSpaceId !== moved.space_id) {
         void qc.invalidateQueries({ queryKey: pageKeys.space(vars.fromSpaceId) })

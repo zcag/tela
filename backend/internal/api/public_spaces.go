@@ -135,7 +135,7 @@ func (s *Server) GetPublicSpaceTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.DB.QueryContext(r.Context(),
-		`SELECT id, title, parent_id, position, body, props, created_at, updated_at
+		`SELECT id, title, parent_id, position, body, props, created_at, updated_at, status
 		   FROM pages
 		  WHERE space_id = $1 AND deleted_at IS NULL
 		  ORDER BY position ASC, id ASC`, id)
@@ -145,13 +145,16 @@ func (s *Server) GetPublicSpaceTree(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	nodes := []publicTreeNode{}
+	parentOf := map[int64]*int64{} // every page, drafts included, to re-parent past drafts
+	drafts := map[int64]bool{}
 	for rows.Next() {
 		var (
 			n        publicTreeNode
 			body     string
 			propsRaw []byte
+			status   string
 		)
-		if err := rows.Scan(&n.ID, &n.Title, &n.ParentID, &n.Position, &body, &propsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Title, &n.ParentID, &n.Position, &body, &propsRaw, &n.CreatedAt, &n.UpdatedAt, &status); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "scan tree row failed")
 			return
 		}
@@ -165,11 +168,25 @@ func (s *Server) GetPublicSpaceTree(w http.ResponseWriter, r *http.Request) {
 		if n.Kind == "sheet" {
 			n.Cover = fmt.Sprintf("/p/%d/og.png", n.ID)
 		}
+		parentOf[n.ID] = n.ParentID
+		if status == pageStatusDraft {
+			drafts[n.ID] = true
+			continue
+		}
 		nodes = append(nodes, n)
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "iterate tree failed")
 		return
+	}
+	// A draft is left out of the public tree, but its published children still
+	// belong in it: hang each under its nearest published ancestor (or the root).
+	for i := range nodes {
+		p := nodes[i].ParentID
+		for p != nil && drafts[*p] {
+			p = parentOf[*p]
+		}
+		nodes[i].ParentID = p
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"pages": nodes})
 }
@@ -190,9 +207,9 @@ func (s *Server) publicSpacePage(w http.ResponseWriter, r *http.Request) (models
 		return models.Page{}, false
 	}
 	page, err := selectPageByID(r.Context(), s.DB, pageID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && page.SpaceID != spaceID) {
-		// Page missing, deleted, or in a different space — never confirm it
-		// exists outside the public space being read.
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (page.SpaceID != spaceID || page.Status != pageStatusPublished)) {
+		// Page missing, deleted, in a different space, or a draft: never
+		// confirm it exists outside the public space being read.
 		writeError(w, http.StatusNotFound, "not_found", "no such page in this space")
 		return models.Page{}, false
 	}

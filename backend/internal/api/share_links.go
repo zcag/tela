@@ -379,8 +379,13 @@ func selectShareLinkByIDTx(ctx context.Context, tx *sql.Tx, id int64) (shareLink
 	return scanShareLink(row)
 }
 
+// selectShareLinkByToken is the public resolution of a share token (every
+// /share and /api/share handler goes through it). A share of a DRAFT page
+// resolves as not found, the same as a revoked one, until the page is
+// published: drafts are never served on a public surface.
 func selectShareLinkByToken(ctx context.Context, q *sql.DB, token string) (shareLink, error) {
-	row := q.QueryRowContext(ctx, shareLinkSelectColumns+` WHERE token = $1`, token)
+	row := q.QueryRowContext(ctx, shareLinkSelectColumns+` WHERE token = $1
+		AND NOT EXISTS (SELECT 1 FROM pages dp WHERE dp.id = share_links.page_id AND dp.status = 'draft')`, token)
 	return scanShareLink(row)
 }
 
@@ -1167,7 +1172,7 @@ func pageInShareSubtree(ctx context.Context, q *sql.DB, rootID, descendantID int
 		  SELECT p.id, p.space_id, s.depth + 1
 		    FROM pages p
 		    JOIN scope s ON p.parent_id = s.id
-		   WHERE p.space_id = s.space_id AND p.deleted_at IS NULL AND s.depth < $2
+		   WHERE p.space_id = s.space_id AND p.deleted_at IS NULL AND p.status = 'published' AND s.depth < $2
 		)
 		SELECT 1 FROM scope WHERE id = $3 LIMIT 1`
 	var x int
@@ -1211,7 +1216,7 @@ func shareSubtree(ctx context.Context, q *sql.DB, rootID int64, includeDescendan
 		  SELECT p.id, p.title, p.parent_id, p.position, p.space_id, s.depth + 1
 		    FROM pages p
 		    JOIN scope s ON p.parent_id = s.id
-		   WHERE p.space_id = s.space_id AND p.deleted_at IS NULL AND s.depth < $2
+		   WHERE p.space_id = s.space_id AND p.deleted_at IS NULL AND p.status = 'published' AND s.depth < $2
 		)
 		SELECT id, title, parent_id, position FROM scope
 		 ORDER BY position ASC, id ASC`

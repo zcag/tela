@@ -401,7 +401,7 @@ func (s *Server) findSiblingByFilename(ctx context.Context, spaceID int64, paren
 		rows *sql.Rows
 		err  error
 	)
-	const cols = `id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename`
+	const cols = pageCols
 	if parentID == nil {
 		rows, err = s.DB.QueryContext(ctx,
 			`SELECT `+cols+` FROM pages

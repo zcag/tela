@@ -136,7 +136,7 @@ func lookupSharedFile(ctx context.Context, db *sql.DB, prefix string) (sharedFil
 	var isPublic int
 	err := db.QueryRowContext(ctx, `
 		SELECT f.content_hash, f.name, f.mime, f.byte_size, f.space_id, sp.name,
-		       CASE WHEN sp.visibility = 'public' THEN 1 ELSE 0 END,
+		       CASE WHEN sp.visibility = 'public' AND COALESCE(p.status, 'published') = 'published' THEN 1 ELSE 0 END,
 		       COALESCE(sp.org_id, 0), COALESCE(f.parent_page_id, 0),
 		       COALESCE(p.title, ''), COALESCE(f.summary, '')
 		  FROM space_files f

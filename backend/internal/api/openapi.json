@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "tela REST API",
-    "version": "2026-09-09",
+    "version": "2026-09-28",
     "summary": "HTTP API of tela, a self-hostable markdown-native team wiki.",
     "description": "Machine-readable description of the HTTP API behind [tela](https://telawiki.com), an open-source markdown-native team wiki with a built-in MCP server.\n\n## Stability\n\n**`/api/*` is an internal API.** It powers tela's own React frontend and carries no version prefix; routes and shapes may change between releases without notice. `GET /api/health` and `GET /api/version` are the only routes with a stability promise.\n\n**The stable integration surface is the MCP server** at `POST /api/mcp` (Streamable HTTP; OAuth 2.1 via the connector flow, or a personal access token as a bearer). Its tool schema is versioned and is the intended API for agents and third-party tools. Discovery metadata: `/.well-known/mcp.json` and `/.well-known/oauth-protected-resource`. The MCP transport is deliberately **not** described here — it speaks JSON-RPC over one endpoint, which OpenAPI cannot usefully model.\n\nThis document exists so an integrator, a crawler, or an agent directory can see what the HTTP surface actually is instead of guessing. Build against MCP where you can.\n\n## Coverage\n\nDescribed: meta, authentication, personal access tokens, spaces, pages (CRUD, move, revisions, backlinks, markdown export), search (lexical and semantic), comments, attachments, share links (management and the public token API), the no-login public-space read API, and feedback.\n\nDeliberately omitted (real routes, not described): instance administration (`/api/admin/*`), organizations, groups, members and invitations, billing and licensing, Atlas documentation runs (`/api/atlas/*`), generative AI (`/api/rag/ask`, `/api/rag/draft`, summaries), notifications, digests, decks and sheets, the WebDAV sync surface (`/dav/`), the Yjs collaboration websocket (`/ws/`), Prometheus metrics, and OG/social-card rendering. They are internal, operator-only, or not HTTP-shaped.\n\nAlso not here: **section-level page patching**. The heading-path patch (`patch_page`) exists only as an MCP tool; over REST you read `page.body`, edit it, and `PATCH` the whole body back.\n\n## Authentication\n\nTwo credentials, checked in that order:\n\n1. `Authorization: Bearer tela_pat_<43 chars>` — a personal access token (Settings -> API keys, or `POST /api/api_keys`). If the header is present it is used; a bad token is `401` and never falls back to the cookie.\n2. `Cookie: tela_session` — the browser session set by `POST /api/auth/login`.\n\nA token carries a **scope**: `read` permits `GET`/`HEAD` only, `write` and `admin` permit any method. A scope violation is `403 api_key_scope`, written by middleware before the handler runs. `POST /api/feedback` is the single carve-out — any scope may call it.\n\nA token may also be **pinned to one space** (`space_id`). Endpoints that resolve a target space then refuse other spaces with `403 api_key_space_scope`; endpoints that list across spaces silently narrow to the pinned one.\n\nWithin a space, roles are `owner > editor > viewer`; `editor+` is required to write. Note two asymmetries: reading **comments** and reading **revisions** both require `editor+`, not `viewer`.\n\nEndpoints marked with an empty `security` need no credential: they self-authenticate on a token in the path, a signature, or a space published to the open web.\n\n## Errors\n\nEvery JSON error is `{\"error\": \"<human message>\", \"code\": \"<machine code>\"}`. Key on `code`. `403 forbidden` doubles as \"not found\" on page and space reads — a missing object and an inaccessible one are deliberately indistinguishable, so ids cannot be enumerated.\n\n## Dates\n\nTimestamps are `\"YYYY-MM-DD HH:MM:SS\"` in UTC (no offset, no `Z`) unless a field says otherwise. This is a carry-over from tela's SQLite era and is stable.",
     "contact": {
@@ -730,7 +730,8 @@
                   "parent_id": { "type": ["integer", "null"], "format": "int64", "description": "Omit or null for a top-level page. Must live in the same space." },
                   "title": { "type": "string", "minLength": 1, "maxLength": 500 },
                   "body": { "type": "string", "description": "Markdown." },
-                  "props": { "$ref": "#/components/schemas/PageProps" }
+                  "props": { "$ref": "#/components/schemas/PageProps" },
+                  "status": { "type": "string", "enum": ["draft", "published"], "description": "A `draft` is labelled in the app and never served on public spaces or share links until published. Defaults to `published`." }
                 }
               }
             }
@@ -870,7 +871,7 @@
       "patch": {
         "tags": ["pages"],
         "operationId": "updatePage",
-        "summary": "Update a page's title, body, or properties",
+        "summary": "Update a page's title, body, properties, or draft status",
         "description": "`editor+`. A change to `title` or `body` snapshots a revision first. **`props` replaces the whole bag** — send the properties you want to keep. There is no section-level patch over REST; the `patch_page` MCP tool is the only place heading-path targeting exists.",
         "requestBody": {
           "required": true,
@@ -882,7 +883,9 @@
                 "properties": {
                   "title": { "type": "string", "minLength": 1, "maxLength": 500 },
                   "body": { "type": "string", "description": "The whole markdown document." },
-                  "props": { "$ref": "#/components/schemas/PageProps" }
+                  "props": { "$ref": "#/components/schemas/PageProps" },
+                  "status": { "type": "string", "enum": ["draft", "published"], "description": "A `draft` is labelled in the app and never served on public spaces or share links until published." },
+                  "base_version": { "type": "integer", "format": "int64", "description": "The page `version` you last read. If the page has changed since, the write is refused with `409 version_conflict` instead of overwriting that edit. Omit for last-write-wins." }
                 }
               }
             }
@@ -891,11 +894,15 @@
         "responses": {
           "200": { "$ref": "#/components/responses/PageEnvelope" },
           "400": {
-            "description": "`invalid_json`, `no_fields`, or `invalid_title`.",
+            "description": "`invalid_json`, `no_fields`, `invalid_title`, or `invalid_status`.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "403": { "$ref": "#/components/responses/ForbiddenOrMissingPage" },
           "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "`version_conflict`: `base_version` is stale. Re-read the page and reapply your change.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": { "$ref": "#/components/responses/Internal" }
         }
       },
@@ -2409,7 +2416,9 @@
           "position": { "type": "integer", "format": "int64", "description": "Sort order among siblings." },
           "props": { "$ref": "#/components/schemas/PageProps" },
           "created_at": { "$ref": "#/components/schemas/Timestamp" },
-          "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" },
+          "version": { "type": "integer", "format": "int64", "description": "Advances on every title/body/props change. Send it back as `base_version` on update to refuse overwriting an edit you haven't seen." },
+          "status": { "type": "string", "enum": ["draft", "published"], "description": "A `draft` is labelled in the app and never served on public spaces or share links until published." }
         }
       },
       "PageNode": {

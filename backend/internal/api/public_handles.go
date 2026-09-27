@@ -271,7 +271,7 @@ func (s *Server) recentPostsForHandle(r *http.Request, kind string, ownerID int6
 	rows, err := s.DB.QueryContext(r.Context(), `
 		SELECT s.id, s.name, s.slug, p.id, p.title, p.body, p.props, p.created_at, p.updated_at
 		  FROM pages p JOIN spaces s ON s.id = p.space_id
-		 WHERE s.visibility = 'public' AND p.parent_id IS NULL AND p.deleted_at IS NULL AND `+where+`
+		 WHERE s.visibility = 'public' AND p.parent_id IS NULL AND p.deleted_at IS NULL AND p.status = 'published' AND `+where+`
 		 ORDER BY p.created_at DESC, p.id DESC
 		 LIMIT $2`, ownerID, limit)
 	if err != nil {
@@ -309,7 +309,7 @@ func (s *Server) publicSpacesForHandle(r *http.Request, kind string, ownerID int
 		  LEFT JOIN LATERAL (
 		         SELECT COUNT(*) AS page_count, MAX(p.updated_at) AS last_updated
 		           FROM pages p
-		          WHERE p.space_id = s.id AND p.deleted_at IS NULL
+		          WHERE p.space_id = s.id AND p.deleted_at IS NULL AND p.status = 'published'
 		       ) agg ON TRUE
 		 WHERE s.visibility = 'public' AND `+where+`
 		 ORDER BY agg.last_updated DESC NULLS LAST, s.id DESC`, ownerID)

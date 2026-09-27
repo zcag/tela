@@ -62,7 +62,7 @@ func (s *Server) HandlePublicShare(w http.ResponseWriter, r *http.Request) {
 		ownerOrgID int64 // NULL space.org_id scans as 0 via COALESCE
 	)
 	err := s.DB.QueryRowContext(r.Context(),
-		`SELECT p.title, p.body, sp.name, p.space_id, sp.visibility, COALESCE(sp.org_id, 0)
+		`SELECT p.title, p.body, sp.name, p.space_id, `+pageVisibilityExpr+`, COALESCE(sp.org_id, 0)
 		   FROM pages p
 		   JOIN spaces sp ON sp.id = p.space_id
 		  WHERE p.id = $1 AND p.deleted_at IS NULL`, pageID,
@@ -158,6 +158,11 @@ func slugMatchesTitle(slug, title string) bool {
 	want := pageSlug(title)
 	return want != "" && slug == want
 }
+
+// pageVisibilityExpr is a page's EFFECTIVE visibility (for a query joining
+// pages p and spaces sp): public only when its space is public AND it is
+// published. A draft in a public space is handled exactly like a private page.
+const pageVisibilityExpr = `CASE WHEN sp.visibility = 'public' AND p.status = 'published' THEN 'public' ELSE 'private' END`
 
 // linkProvesTitle reports whether a /p/{id}/{seg} link may be told the title:
 // seg is the title's slug, the page's link key (pageLinkKey, which the app hands

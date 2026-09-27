@@ -114,7 +114,8 @@ func (s *Server) publicHandlePathExists(r *http.Request) existsResult {
 	}
 	// Page in a different space → not this URL's page (and never confirm one
 	// outside the public space being read).
-	return yesNo(page.SpaceID == spaceID)
+	// A draft isn't public yet, so its URL doesn't exist to a visitor.
+	return yesNo(page.SpaceID == spaceID && page.Status == pageStatusPublished)
 }
 
 func yesNo(b bool) existsResult {

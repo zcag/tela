@@ -18,12 +18,15 @@ import { shareErrorMessage } from './ShareManagerSheet-utils'
 
 interface ShareManagerSheetProps {
   pageId: number
+  // A draft's share links resolve as not found until the page is published.
+  isDraft?: boolean
   open: boolean
   onOpenChange: (next: boolean) => void
 }
 
 export function ShareManagerSheet({
   pageId,
+  isDraft = false,
   open,
   onOpenChange,
 }: ShareManagerSheetProps) {
@@ -65,6 +68,12 @@ export function ShareManagerSheet({
             Anyone with the link can read this page. Optional password and
             subtree options below.
           </SheetDescription>
+          {isDraft ? (
+            <p className="text-[length:var(--text-sm)] text-[var(--text-muted)]">
+              This page is a <strong>draft</strong>: its links won&rsquo;t open until you
+              publish it (••• → Publish).
+            </p>
+          ) : null}
         </SheetHeader>
 
         <SheetBody className="flex flex-col gap-[var(--space-5)]">

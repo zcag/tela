@@ -128,7 +128,7 @@ func (s *Server) topLevelPosts(r *http.Request, spaceID int64, limit int) []ogPo
 	rows, err := s.DB.QueryContext(r.Context(),
 		`SELECT id, title, created_at
 		   FROM pages
-		  WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL
+		  WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL AND status = 'published'
 		  ORDER BY created_at DESC, id DESC
 		  LIMIT $2`, spaceID, limit)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *Server) HandlePublicReaderOG(w http.ResponseWriter, r *http.Request) {
 // shapes unfurl identically and both emit the pretty path as canonical.
 func (s *Server) renderReaderOG(w http.ResponseWriter, r *http.Request, sp models.Space, pageID int64) {
 	page, err := selectPageByID(r.Context(), s.DB, pageID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && page.SpaceID != sp.ID) {
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (page.SpaceID != sp.ID || page.Status != pageStatusPublished)) {
 		writeNotFoundHTML(w)
 		return
 	}
@@ -675,7 +675,7 @@ func (s *Server) HandlePublicSitemap(w http.ResponseWriter, r *http.Request) {
 		`SELECT p.id, p.title, p.space_id, p.updated_at, s.slug, `+spaceHandleExpr+`
 		   FROM pages p JOIN spaces s ON s.id = p.space_id
 		   LEFT JOIN orgs o ON o.id = s.org_id
-		  WHERE s.visibility = 'public' AND p.deleted_at IS NULL
+		  WHERE s.visibility = 'public' AND p.deleted_at IS NULL AND p.status = 'published'
 		  ORDER BY p.space_id, p.id`); err == nil {
 		for rows.Next() {
 			var pid, sid int64

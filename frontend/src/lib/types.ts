@@ -86,6 +86,12 @@ export interface Page {
   // private page's link preview shows its title only to a link carrying its
   // slug or this key. Attached by `usePage` from the GET sibling field.
   short_path?: string
+  // Advances on every title/body/props change; send back as base_version to
+  // refuse a write over an edit you haven't seen.
+  version?: number
+  // 'draft' pages are labelled in the app and kept off public spaces and
+  // share links until published. Absent on older cached rows = published.
+  status?: 'draft' | 'published'
 }
 
 export interface PageTreeNode extends Page {
@@ -280,6 +286,7 @@ export interface UpdatePageInput {
   // Replace the whole props bag (PUT semantics) — e.g. mark a page a deck + its
   // theme. Reserved keys are ignored server-side.
   props?: Record<string, unknown>
+  status?: 'draft' | 'published'
 }
 
 // `parent_id`: omit to keep current; pass explicit `null` to make root.

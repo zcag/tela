@@ -20,7 +20,9 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  FileCheck,
   FileDown,
+  FilePen,
   FileQuestion,
   FileText,
   Hash,
@@ -126,6 +128,7 @@ import {
   DialogTitle,
 } from '../ui/dialog'
 import { SaveIndicator, type SaveStatus } from '../ui/save-indicator'
+import { Badge } from '../ui/badge'
 import { VisibilityBadge } from '../ui/visibility-badge'
 import {
   DropdownMenu,
@@ -649,6 +652,7 @@ function PageViewer({
                 inherited={page.exposure?.inherited ?? false}
               />
             ) : null}
+            {page.status === 'draft' ? <DraftBadge /> : null}
           </div>
           {/* Sheets have no read mode; their export menu stays on the bar. */}
           {isSheet ? (
@@ -707,6 +711,7 @@ function PageViewer({
               pageId={page.id}
               title={page.title}
               shortPath={page.short_path}
+              status={page.status}
               isViewer={isViewer}
               onDelete={() => setDeleteOpen(true)}
               compactActions={
@@ -873,6 +878,20 @@ function PageViewer({
 
 const EMPTY_ORPHAN_IDS: Set<number> = new Set()
 
+// DraftBadge marks a work-in-progress page: kept off public spaces and share
+// links until it's published (••• → Publish).
+function DraftBadge({ className }: { className?: string }) {
+  return (
+    <Badge
+      variant="warning"
+      className={className}
+      title="Draft: not shown on public spaces or share links until published"
+    >
+      Draft
+    </Badge>
+  )
+}
+
 // PageActionsMenu — the header "•••" overflow. Keeps the bar to its frequent
 // actions (Comments, Share) and tucks the rest here, Confluence-style. "Copy
 // link" is the primary, obvious action (pretty /p/{id}/{slug}); "Copy short
@@ -887,6 +906,7 @@ function PageActionsMenu({
   pageId,
   title,
   shortPath,
+  status,
   isViewer,
   onDelete,
   compactActions,
@@ -895,11 +915,14 @@ function PageActionsMenu({
   pageId: number
   title: string
   shortPath?: string
+  status?: 'draft' | 'published'
   isViewer: boolean
   onDelete: () => void
   compactActions?: React.ReactNode
 }) {
   const navigate = useNavigate()
+  const updatePage = useUpdatePage()
+  const isDraft = status === 'draft'
   // /pdf is page-type aware on the backend: a deck renders to a real per-slide
   // Slidev PDF, a doc to the gotenberg-rendered reader. So this one call is
   // correct for both.
@@ -999,6 +1022,23 @@ function PageActionsMenu({
             }
           >
             <History width={14} height={14} /> Version history
+          </DropdownMenuItem>
+        ) : null}
+        {!isViewer ? (
+          <DropdownMenuItem
+            onSelect={() =>
+              updatePage.mutate({ id: pageId, status: isDraft ? 'published' : 'draft' })
+            }
+          >
+            {isDraft ? (
+              <>
+                <FileCheck width={14} height={14} /> Publish
+              </>
+            ) : (
+              <>
+                <FilePen width={14} height={14} /> Mark as draft
+              </>
+            )}
           </DropdownMenuItem>
         ) : null}
         {!isViewer ? (
@@ -1653,6 +1693,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
                     className="ml-[var(--space-1)]"
                   />
                 ) : null}
+                {page.status === 'draft' ? <DraftBadge className="ml-[var(--space-1)]" /> : null}
               </div>
               {roleResolved ? (
                 <PageActionsMenu
@@ -1660,6 +1701,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
                   pageId={page.id}
                   title={page.title}
                   shortPath={page.short_path}
+                  status={page.status}
                   isViewer={isViewer}
                   onDelete={() => setDeleteOpen(true)}
                   compactActions={
@@ -1932,6 +1974,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
         <Suspense fallback={null}>
           <ShareManagerSheet
             pageId={page.id}
+            isDraft={page.status === 'draft'}
             open={shareOpen}
             onOpenChange={setShareOpen}
           />

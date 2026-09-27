@@ -61,7 +61,7 @@ func (s *Server) GetPublicSpaceFeed(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.DB.QueryContext(r.Context(),
 		`SELECT id, title, body, props, created_at
 		   FROM pages
-		  WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL
+		  WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL AND status = 'published'
 		  ORDER BY created_at DESC, id DESC
 		  LIMIT 50`, id)
 	if err != nil {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -25,6 +26,8 @@ type pageCreateRequest struct {
 	Title    string         `json:"title"`
 	Body     string         `json:"body"`
 	Props    map[string]any `json:"props"`
+	// Status is 'published' (the default when empty) or 'draft'.
+	Status string `json:"status"`
 	// Filename pins the page's stable /dav/ on-disk name (sync-create only; the
 	// REST/MCP create paths leave it nil → name falls back to slugify(title)).
 	Filename *string `json:"-"`
@@ -34,10 +37,20 @@ type pageCreateRequest struct {
 // Props (including an explicit {}) replaces the whole bag (Replace/PUT semantics
 // — see docs/page-properties.md "Update semantics").
 type pageUpdateRequest struct {
-	Title *string        `json:"title"`
-	Body  *string        `json:"body"`
-	Props map[string]any `json:"props"`
+	Title  *string        `json:"title"`
+	Body   *string        `json:"body"`
+	Props  map[string]any `json:"props"`
+	Status *string        `json:"status"`
+	// BaseVersion is the page version the writer last read. Set, the write is
+	// refused (409 version_conflict) if the page has moved on since, instead
+	// of overwriting an edit the writer never saw. Nil keeps last-write-wins.
+	BaseVersion *int64 `json:"base_version"`
 }
+
+const (
+	pageStatusDraft     = "draft"
+	pageStatusPublished = "published"
+)
 
 // propsJSON marshals a props bag to a JSON string for binding into a JSONB
 // column (with a ::jsonb cast at the call site). Empty/nil → "{}".
@@ -145,12 +158,12 @@ func listPagesFlat(ctx context.Context, db *sql.DB, spaceID int64, parentID *int
 	var err error
 	if parentID == nil {
 		rows, err = db.QueryContext(ctx,
-			`SELECT id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename
+			`SELECT `+pageCols+`
 			 FROM pages WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL
 			 ORDER BY position ASC, id ASC`, spaceID)
 	} else {
 		rows, err = db.QueryContext(ctx,
-			`SELECT id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename
+			`SELECT `+pageCols+`
 			 FROM pages WHERE space_id = $1 AND parent_id = $2 AND deleted_at IS NULL
 			 ORDER BY position ASC, id ASC`, spaceID, *parentID)
 	}
@@ -381,6 +394,10 @@ func (s *Server) createPageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 	if title == "" {
 		return models.Page{}, &apiErr{http.StatusBadRequest, "invalid_title", "title is required"}
 	}
+	status := cmp.Or(req.Status, pageStatusPublished)
+	if status != pageStatusDraft && status != pageStatusPublished {
+		return models.Page{}, &apiErr{http.StatusBadRequest, "invalid_status", "status must be 'draft' or 'published'"}
+	}
 	// Body invariant: frontmatter never lives in pages.body, at any ingress —
 	// EXCEPT the verbatim-body doc-types (deck, sheet). A deck's body is Slidev
 	// markdown (leading `---...---` is the deck headmatter / first slide); a sheet's
@@ -504,8 +521,8 @@ func (s *Server) createPageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 
 	var id int64
 	if err := tx.QueryRowContext(ctx,
-		`INSERT INTO pages(space_id, parent_id, title, body, position, props, filename) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7) RETURNING id`,
-		req.SpaceID, nullableInt64(req.ParentID), title, body, position, propsJSON(props), nullableFilename(req.Filename)).Scan(&id); err != nil {
+		`INSERT INTO pages(space_id, parent_id, title, body, position, props, filename, status) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) RETURNING id`,
+		req.SpaceID, nullableInt64(req.ParentID), title, body, position, propsJSON(props), nullableFilename(req.Filename), status).Scan(&id); err != nil {
 		return models.Page{}, &apiErr{http.StatusInternalServerError, "internal", "create page failed"}
 	}
 	if err := syncPageLinks(ctx, tx, id, body); err != nil {
@@ -696,8 +713,11 @@ func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {
 // the cheap 400s (no_fields / invalid_title) surface before any tx or auth —
 // preserving error precedence across every caller of applyUpdateTx.
 func validateUpdateReq(req pageUpdateRequest) *apiErr {
-	if req.Title == nil && req.Body == nil && req.Props == nil {
-		return &apiErr{http.StatusBadRequest, "no_fields", "at least one of title, body, props must be provided"}
+	if req.Title == nil && req.Body == nil && req.Props == nil && req.Status == nil {
+		return &apiErr{http.StatusBadRequest, "no_fields", "at least one of title, body, props, status must be provided"}
+	}
+	if req.Status != nil && *req.Status != pageStatusDraft && *req.Status != pageStatusPublished {
+		return &apiErr{http.StatusBadRequest, "invalid_status", "status must be 'draft' or 'published'"}
 	}
 	if req.Title != nil {
 		title := strings.TrimSpace(*req.Title)
@@ -707,6 +727,22 @@ func validateUpdateReq(req pageUpdateRequest) *apiErr {
 		if len(title) > maxPageTitleLen {
 			return &apiErr{http.StatusBadRequest, "invalid_title", "title exceeds 500 characters"}
 		}
+	}
+	return nil
+}
+
+// checkBaseVersionTx refuses a write whose base version is stale. It locks the
+// row (FOR UPDATE) so a concurrent writer can't slip in between this check and
+// the UPDATE: the second of two writers from the same base always sees the
+// first one's bump and gets the conflict.
+func checkBaseVersionTx(ctx context.Context, tx *sql.Tx, id, base int64) *apiErr {
+	var cur int64
+	if err := tx.QueryRowContext(ctx, `SELECT version FROM pages WHERE id = $1 FOR UPDATE`, id).Scan(&cur); err != nil {
+		return &apiErr{http.StatusInternalServerError, "internal", "lookup page version failed"}
+	}
+	if cur != base {
+		return &apiErr{http.StatusConflict, "version_conflict", fmt.Sprintf(
+			"page changed since version %d (it is now version %d); read it again and reapply your change", base, cur)}
 	}
 	return nil
 }
@@ -778,6 +814,10 @@ func applyUpdateTx(ctx context.Context, tx *sql.Tx, id int64, req pageUpdateRequ
 	} else if bodyProps != nil {
 		args = append(args, propsJSON(bodyProps))
 		sets = append(sets, "props = $"+strconv.Itoa(len(args))+"::jsonb")
+	}
+	if req.Status != nil {
+		args = append(args, *req.Status)
+		sets = append(sets, "status = $"+strconv.Itoa(len(args)))
 	}
 	sets = append(sets, "updated_at = tela_now()")
 	args = append(args, id)
@@ -870,6 +910,11 @@ func (s *Server) updatePageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 	}
 	if ae := s.requireEditTx(ctx, tx, u, k, existing.SpaceID); ae != nil {
 		return models.Page{}, ae
+	}
+	if req.BaseVersion != nil {
+		if ae := checkBaseVersionTx(ctx, tx, id, *req.BaseVersion); ae != nil {
+			return models.Page{}, ae
+		}
 	}
 	// Lint-gate agent rewrites of a deck body (see createPageCore). A deck stores
 	// its body verbatim, so *req.Body is exactly what would be persisted.
@@ -1359,7 +1404,7 @@ func (s *Server) applyMoveTx(ctx context.Context, tx *sql.Tx, u *auth.User, k *a
 
 func buildPageTree(ctx context.Context, db *sql.DB, spaceID int64) ([]*pageNode, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename
+		`SELECT `+pageCols+`
 		 FROM pages WHERE space_id = $1 AND deleted_at IS NULL
 		 ORDER BY position ASC, id ASC`, spaceID)
 	if err != nil {
@@ -1416,14 +1461,14 @@ func buildPageTree(ctx context.Context, db *sql.DB, spaceID int64) ([]*pageNode,
 // selectPageByIDIncludingDeleted for the resurrect path.
 func selectPageByID(ctx context.Context, db *sql.DB, id int64) (models.Page, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename
+		`SELECT `+pageCols+`
 		 FROM pages WHERE id = $1 AND deleted_at IS NULL`, id)
 	return scanPageFromRow(row)
 }
 
 func selectPageByIDTx(ctx context.Context, tx *sql.Tx, id int64) (models.Page, error) {
 	row := tx.QueryRowContext(ctx,
-		`SELECT id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename
+		`SELECT `+pageCols+`
 		 FROM pages WHERE id = $1 AND deleted_at IS NULL`, id)
 	return scanPageFromRow(row)
 }
@@ -1440,12 +1485,16 @@ func scanPageFromRows(rows *sql.Rows) (models.Page, error) {
 	return scanPageInto(rows)
 }
 
+// pageCols is the column list scanPageInto reads, in order. Every page SELECT
+// that feeds it uses this, so adding a column can't leave one query behind.
+const pageCols = `id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename, version, status`
+
 func scanPageInto(r rowScanner) (models.Page, error) {
 	var p models.Page
 	var parentID sql.NullInt64
 	var propsRaw []byte
 	var filename sql.NullString
-	if err := r.Scan(&p.ID, &p.SpaceID, &parentID, &p.Title, &p.Body, &p.Position, &propsRaw, &p.CreatedAt, &p.UpdatedAt, &filename); err != nil {
+	if err := r.Scan(&p.ID, &p.SpaceID, &parentID, &p.Title, &p.Body, &p.Position, &propsRaw, &p.CreatedAt, &p.UpdatedAt, &filename, &p.Version, &p.Status); err != nil {
 		return p, err
 	}
 	if parentID.Valid {

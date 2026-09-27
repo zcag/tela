@@ -64,7 +64,7 @@ func (s *Server) GetPublicDiscover(w http.ResponseWriter, r *http.Request) {
 		  LEFT JOIN LATERAL (
 		         SELECT COUNT(*) AS page_count, MAX(p.updated_at) AS last_updated
 		           FROM pages p
-		          WHERE p.space_id = s.id AND p.deleted_at IS NULL
+		          WHERE p.space_id = s.id AND p.deleted_at IS NULL AND p.status = 'published'
 		       ) agg ON TRUE
 		 WHERE s.visibility = 'public'
 		 ORDER BY `+order+`

@@ -58,7 +58,7 @@ func countLivePages(t *testing.T, d *sql.DB, spaceID int64) int {
 func pageByTitle(t *testing.T, d *sql.DB, spaceID int64, title string) (models.Page, bool) {
 	t.Helper()
 	row := d.QueryRowContext(context.Background(),
-		`SELECT id, space_id, parent_id, title, body, position, props, created_at, updated_at, filename
+		`SELECT `+pageCols+`
 		   FROM pages WHERE space_id = $1 AND title = $2 AND deleted_at IS NULL`, spaceID, title)
 	p, err := scanPageFromRow(row)
 	if err == sql.ErrNoRows {
