@@ -218,9 +218,11 @@ func (s *Server) SSOCallback(w http.ResponseWriter, r *http.Request) {
 		// An org IdP is authoritative only for its own domains: only auto-link
 		// to an existing tela account when the email domain belongs to this org.
 		id.linkTrusted = s.orgOwnsEmailDomain(ctx, st.OrgID, id.email)
-	} else if !id.linkTrusted {
+	} else if !id.linkTrusted && !s.ssoIdentityLinked(ctx, id) {
 		// Social providers must vouch for the email (email_verified) before we
-		// either adopt an existing account or mint one on it.
+		// either adopt an existing account or mint one on it. A returning user is
+		// matched by (provider, subject), never by email, so they don't need to:
+		// resolveSSOUser takes its step (1) and the email is never consulted.
 		ssoFail(w, r, "your email address is not verified with the provider")
 		return
 	}
@@ -282,6 +284,7 @@ func (p *ssoProvider) identityFromOIDC(ctx context.Context, tok *oauth2.Token, n
 		EmailVerified     bool   `json:"email_verified"`
 		Name              string `json:"name"`
 		PreferredUsername string `json:"preferred_username"`
+		EDOV              any    `json:"xms_edov"`
 	}
 	if err := idt.Claims(&c); err != nil {
 		return ssoIdentity{}, err
@@ -294,8 +297,38 @@ func (p *ssoProvider) identityFromOIDC(ctx context.Context, tok *oauth2.Token, n
 		subject:     idt.Subject,
 		email:       c.Email,
 		displayName: name,
-		linkTrusted: c.EmailVerified || (p.trustEmail && c.Email != ""),
+		linkTrusted: c.EmailVerified || (p.trustEmail && c.Email != "" && claimTrue(c.EDOV)),
 	}, nil
+}
+
+// claimTrue reads a boolean-ish optional claim. Microsoft's email claim is
+// unverified and set by whoever administers the issuing tenant, and 'common'
+// accepts any tenant, so trusting it let anyone with their own tenant claim a
+// victim's address and be linked into their account (nOAuth). xms_edov ("email
+// domain owner verified") is the claim that proves the tenant owns the email's
+// domain; it's optional and must be enabled on the app registration. Read
+// defensively: a bool, or its string/number spelling.
+func claimTrue(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return x == "true" || x == "1"
+	case float64:
+		return x == 1
+	}
+	return false
+}
+
+// ssoIdentityLinked reports whether this (provider, subject) already belongs to
+// an active account, i.e. this is a returning user rather than a first login.
+func (s *Server) ssoIdentityLinked(ctx context.Context, id ssoIdentity) bool {
+	var ok bool
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM sso_identities si JOIN users u ON u.id = si.user_id
+		               WHERE si.provider = $1 AND si.subject = $2 AND u.is_active = 1)`,
+		id.provider, id.subject).Scan(&ok)
+	return err == nil && ok
 }
 
 // identityFromGitHub resolves identity from GitHub's REST API (it isn't OIDC):

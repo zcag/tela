@@ -43,11 +43,18 @@ instance.
 1. **Known identity** — `(provider, subject)` already in `sso_identities` → that user.
 2. **Auto-link** — a *trusted* email matching an existing account → attach the
    identity (no duplicate). Trusted means: social providers must assert
-   `email_verified` (GitHub: a primary verified email from `/user/emails`); an org
+   `email_verified` (GitHub: a primary verified email from `/user/emails`;
+   Microsoft sends no `email_verified`, so its email counts only with the optional
+   `xms_edov` claim, because a tenant admin can set any address and `common` accepts
+   every tenant: the nOAuth takeover); an org
    IdP is trusted only for its **own** auto-join domains (`orgOwnsEmailDomain`), so
    it can't claim out-of-domain accounts.
 3. **Create** — a fresh account with the IdP-asserted email stored pre-verified
    and an unusable random password (SSO-only, no password the user knows).
+
+A social login whose email isn't trusted is refused before resolution, unless its
+`(provider, subject)` is already linked: a returning user is matched by subject
+at step 1 and the email is never read.
 
 ## Enforcement
 
@@ -63,7 +70,9 @@ redirect URL `https://<host>/api/auth/sso/<provider>/callback`:
 
 ```
 TELA_SSO_GOOGLE_CLIENT_ID / _SECRET        # OIDC
-TELA_SSO_MICROSOFT_CLIENT_ID / _SECRET     # OIDC (multi-tenant 'common')
+TELA_SSO_MICROSOFT_CLIENT_ID / _SECRET     # OIDC (multi-tenant 'common'); add the
+                                           # optional ID-token claim xms_edov on the
+                                           # app registration, or first logins are refused
 TELA_SSO_GITHUB_CLIENT_ID / _SECRET        # OAuth2 (identity via REST)
 ```
 

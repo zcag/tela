@@ -29,7 +29,7 @@ type ssoProvider struct {
 	userInfoURL string                // GitHub: identity endpoint
 	emailsURL   string                // GitHub: verified-emails endpoint
 	issuerOK    func(string) bool     // optional manual iss check (Microsoft 'common')
-	trustEmail  bool                  // treat a present email as verified (Microsoft omits email_verified)
+	trustEmail  bool                  // Microsoft: no email_verified; trust the email only with xms_edov (see identityFromOIDC)
 }
 
 func (p *ssoProvider) isOIDC() bool { return p.verifier != nil }
