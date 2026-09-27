@@ -590,7 +590,7 @@ func (s *Server) GetPage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "resolve exposure failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"page": p, "exposure": exp})
+	writeJSON(w, http.StatusOK, map[string]any{"page": p, "exposure": exp, "short_path": s.pageShortPath(p.ID)})
 }
 
 // RecordPageView logs a logged-in page view into the unified Events feed —

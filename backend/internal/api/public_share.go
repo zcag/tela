@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -85,7 +87,7 @@ func (s *Server) HandlePublicShare(w http.ResponseWriter, r *http.Request) {
 		// asks by id (the same enumeration the crawler card guards against). The
 		// SPA fills the slug in after login.
 		dest := pageAppPath(spaceID, pageID, "")
-		if slugMatchesTitle(r.PathValue("slug"), title) {
+		if s.linkProvesTitle(r.Context(), r.PathValue("slug"), title, pageID) {
 			dest = pageAppPath(spaceID, pageID, title)
 		}
 		if visibility == spaceVisibilityPublic {
@@ -101,7 +103,7 @@ func (s *Server) HandlePublicShare(w http.ResponseWriter, r *http.Request) {
 	// and space name. Every link people actually share has the slug (Copy link,
 	// the address bar via Caddy's deep-link rewrite), so a real unfurl still shows
 	// the title; a bare or stale /p/{id} gets a generic card.
-	if visibility != spaceVisibilityPublic && !slugMatchesTitle(r.PathValue("slug"), title) {
+	if visibility != spaceVisibilityPublic && !s.linkProvesTitle(r.Context(), r.PathValue("slug"), title, pageID) {
 		s.writeGenericPageOGHTML(r, w, pageID)
 		return
 	}
@@ -157,6 +159,54 @@ func slugMatchesTitle(slug, title string) bool {
 	return want != "" && slug == want
 }
 
+// linkProvesTitle reports whether a /p/{id}/{seg} link may be told the title:
+// seg is the title's slug, the page's link key (pageLinkKey, which the app hands
+// out where a slug can't serve: the short link, and titles with no slug), or the
+// slug of an EARLIER title, so a link shared before a rename keeps unfurling.
+// Each needs knowledge of the page a walker of ids doesn't have.
+func (s *Server) linkProvesTitle(ctx context.Context, seg, title string, pageID int64) bool {
+	if seg == "" {
+		return false
+	}
+	if slugMatchesTitle(seg, title) || hmac.Equal([]byte(seg), []byte(s.pageLinkKey(pageID))) {
+		return true
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT DISTINCT title FROM page_revisions WHERE page_id = $1`, pageID)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t string
+		if rows.Scan(&t) == nil && slugMatchesTitle(seg, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// pageLinkKey is a page's unguessable short link segment: 12 hex of an HMAC of
+// its id. It survives renames, and like a slug it only goes to people the app
+// showed the page to, so it can stand in for one without reopening enumeration.
+func (s *Server) pageLinkKey(pageID int64) string {
+	return hex.EncodeToString(s.pageHMAC("tela-page-link-v1", pageID)[:6])
+}
+
+// pageShortPath is the short permalink the app's "Copy short link" hands out.
+func (s *Server) pageShortPath(pageID int64) string {
+	return "/p/" + strconv.FormatInt(pageID, 10) + "/" + s.pageLinkKey(pageID)
+}
+
+// pageHMAC is an HMAC of a page id under a purpose-derived key, so the OG image
+// sig and the link key can't be swapped for one another.
+func (s *Server) pageHMAC(purpose string, pageID int64) []byte {
+	k := hmac.New(sha256.New, s.shareSecret)
+	k.Write([]byte(purpose))
+	mac := hmac.New(sha256.New, k.Sum(nil))
+	mac.Write([]byte(strconv.FormatInt(pageID, 10)))
+	return mac.Sum(nil)
+}
+
 // writeGenericPageOGHTML is the card for a private page reached without its
 // title: no title, no space name, no image, and branded only by the request's
 // host (a custom domain), never by the page's owning org, which would itself
@@ -180,11 +230,7 @@ func (s *Server) ogImageURL(origin string, pageID int64) string {
 }
 
 func (s *Server) ogImageSig(pageID int64) string {
-	k := hmac.New(sha256.New, s.shareSecret)
-	k.Write([]byte("tela-og-image-v1"))
-	mac := hmac.New(sha256.New, k.Sum(nil))
-	mac.Write([]byte(strconv.FormatInt(pageID, 10)))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
+	return base64.RawURLEncoding.EncodeToString(s.pageHMAC("tela-og-image-v1", pageID)[:16])
 }
 
 func (s *Server) validOGImageSig(pageID int64, sig string) bool {

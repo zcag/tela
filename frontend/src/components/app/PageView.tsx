@@ -706,6 +706,7 @@ function PageViewer({
               spaceId={spaceId}
               pageId={page.id}
               title={page.title}
+              shortPath={page.short_path}
               isViewer={isViewer}
               onDelete={() => setDeleteOpen(true)}
               compactActions={
@@ -875,7 +876,7 @@ const EMPTY_ORPHAN_IDS: Set<number> = new Set()
 // PageActionsMenu — the header "•••" overflow. Keeps the bar to its frequent
 // actions (Comments, Share) and tucks the rest here, Confluence-style. "Copy
 // link" is the primary, obvious action (pretty /p/{id}/{slug}); "Copy short
-// link" (bare /p/{id}) is present but deliberately demoted so people don't grab
+// link" (/p/{id}/{key}) is present but deliberately demoted so people don't grab
 // the opaque one by default. Links are built off window.location.origin and
 // resolve via the canonical id, surviving rename.
 // `compactActions` are header controls that don't fit below md — the caller
@@ -885,6 +886,7 @@ function PageActionsMenu({
   spaceId,
   pageId,
   title,
+  shortPath,
   isViewer,
   onDelete,
   compactActions,
@@ -892,6 +894,7 @@ function PageActionsMenu({
   spaceId: number
   pageId: number
   title: string
+  shortPath?: string
   isViewer: boolean
   onDelete: () => void
   compactActions?: React.ReactNode
@@ -908,8 +911,11 @@ function PageActionsMenu({
   })
   const origin = window.location.origin
   const slug = pageSlug(title)
-  const pretty = slug ? `${origin}/p/${pageId}/${slug}` : `${origin}/p/${pageId}`
-  const short = `${origin}/p/${pageId}`
+  // Both carry something that proves the sender could see the page (the title
+  // slug, or the page's short key): a private page's link preview shows its
+  // title only then, so a bare /p/{id} would unfurl as a generic card.
+  const short = `${origin}${shortPath ?? `/p/${pageId}`}`
+  const pretty = slug ? `${origin}/p/${pageId}/${slug}` : short
   const copy = (url: string) => {
     void navigator.clipboard?.writeText?.(url)
   }
@@ -1653,6 +1659,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
                   spaceId={spaceId}
                   pageId={page.id}
                   title={page.title}
+                  shortPath={page.short_path}
                   isViewer={isViewer}
                   onDelete={() => setDeleteOpen(true)}
                   compactActions={

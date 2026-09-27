@@ -241,7 +241,16 @@ func (s *Server) pageLink(ctx context.Context, in notificationInput) string {
 	if in.SpaceID != nil {
 		space = *in.SpaceID
 	}
-	return origin + "/spaces/" + strconv.FormatInt(space, 10) + "/pages/" + strconv.FormatInt(in.SubjectID, 10)
+	return origin + pageAppPath(space, in.SubjectID, s.pageTitle(ctx, in.SubjectID))
+}
+
+// pageTitle is a page's current title ("" when missing). Email links carry the
+// title slug like the address bar does, so a link pasted out of an email unfurls
+// with its title (a private page's card needs the slug; see HandlePublicShare).
+func (s *Server) pageTitle(ctx context.Context, pageID int64) string {
+	var t string
+	_ = s.DB.QueryRowContext(ctx, `SELECT title FROM pages WHERE id = $1`, pageID).Scan(&t)
+	return t
 }
 
 // relatedLinks returns up to 3 semantically-related pages for the email's
@@ -257,7 +266,7 @@ func (s *Server) relatedLinks(ctx context.Context, userID, pageID int64, spaceID
 	for _, r := range related {
 		out = append(out, mailer.NotifLink{
 			Label: r.Title,
-			URL:   origin + "/spaces/" + strconv.FormatInt(r.SpaceID, 10) + "/pages/" + strconv.FormatInt(r.PageID, 10),
+			URL:   origin + pageAppPath(r.SpaceID, r.PageID, r.Title),
 		})
 	}
 	return out

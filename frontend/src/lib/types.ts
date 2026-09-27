@@ -81,6 +81,11 @@ export interface Page {
   // from the GET /api/pages/{id} sibling field. Optional so older cached rows
   // and optimistic nodes stay valid.
   exposure?: PageExposure | null
+  // Short permalink /p/{id}/{key} (server-computed, unguessable per page): what
+  // "Copy short link" hands out, and "Copy link" when the title has no slug. A
+  // private page's link preview shows its title only to a link carrying its
+  // slug or this key. Attached by `usePage` from the GET sibling field.
+  short_path?: string
 }
 
 export interface PageTreeNode extends Page {

@@ -204,14 +204,16 @@ export function useAgreement(pageId: number | null | undefined) {
   })
 }
 
-// GET returns exposure as a sibling (models.Page can't carry it); fold it onto
-// the page object so consumers read `page.exposure` uniformly with the
-// tree/list rows. Shared by usePage and prefetchPage.
+// GET returns exposure and short_path as siblings (models.Page can't carry
+// them); fold them onto the page object so consumers read `page.exposure`
+// uniformly with the tree/list rows. Shared by usePage and prefetchPage.
 async function fetchPageDetail(id: number): Promise<Page & { exposure: PageExposure | null }> {
-  const { page, exposure } = await api<{ page: Page; exposure?: PageExposure }>(
-    `/api/pages/${id}`,
-  )
-  return { ...page, exposure: exposure ?? null }
+  const { page, exposure, short_path } = await api<{
+    page: Page
+    exposure?: PageExposure
+    short_path?: string
+  }>(`/api/pages/${id}`)
+  return { ...page, exposure: exposure ?? null, short_path }
 }
 
 export function usePage(id: number | null | undefined) {

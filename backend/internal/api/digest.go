@@ -158,7 +158,7 @@ func (s *Server) digestUnsubURL(base string, userID int64) string {
 // one digest can mix hosts (an ngss page links to tela.ngss.io while a personal
 // page links to the canonical host).
 func (s *Server) digestPageLink(ctx context.Context, spaceID, pageID int64) string {
-	return fmt.Sprintf("%s/spaces/%d/pages/%d", s.shareOriginForPage(ctx, pageID), spaceID, pageID)
+	return s.shareOriginForPage(ctx, pageID) + pageAppPath(spaceID, pageID, s.pageTitle(ctx, pageID))
 }
 
 // recipientHomeBase is the origin for a digest's non-page "chrome" links

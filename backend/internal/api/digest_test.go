@@ -191,7 +191,7 @@ func TestPageLink(t *testing.T) {
 	// A space with no org → canonical host.
 	personal := seedSpace(t, d, "Personal", "personal-s", owner)
 	pPage := seedPageInSpace(t, d, personal, nil, "Note", "body")
-	want := fmt.Sprintf("%s/spaces/%d/pages/%d", canonicalBaseURL(), personal, pPage)
+	want := fmt.Sprintf("%s/spaces/%d/pages/%d/note", canonicalBaseURL(), personal, pPage)
 	if got := srv.digestPageLink(ctx, personal, pPage); got != want {
 		t.Fatalf("personal page link = %q, want %q", got, want)
 	}
@@ -204,7 +204,7 @@ func TestPageLink(t *testing.T) {
 		t.Fatalf("set space org: %v", err)
 	}
 	oPage := seedPageInSpace(t, d, orgSpace, nil, "Doc", "body")
-	want = fmt.Sprintf("https://wiki.acme.test/spaces/%d/pages/%d", orgSpace, oPage)
+	want = fmt.Sprintf("https://wiki.acme.test/spaces/%d/pages/%d/doc", orgSpace, oPage)
 	if got := srv.digestPageLink(ctx, orgSpace, oPage); got != want {
 		t.Fatalf("org page link = %q, want %q", got, want)
 	}
