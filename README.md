@@ -354,7 +354,7 @@ Both run the same code from this repository.
 
 ## Security
 
-Please report security issues **privately** to **tela@telawiki.com**. Do **not** open a public issue or PR for a vulnerability. Note that a missing or rotated `TELA_API_KEY_SECRET` / `TELA_SHARE_SECRET` leads to forgeable tokens — keep them set and stable.
+Please report security issues **privately** to **tela@telawiki.com**, not as a public issue or PR. Policy and acknowledgements: [`SECURITY.md`](SECURITY.md).
 
 ## License
 
