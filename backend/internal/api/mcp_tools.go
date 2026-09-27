@@ -80,6 +80,20 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 	}, s.mcpListBacklinks)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_page_revisions",
+		Title:       "List page revisions",
+		Description: "A page's revision history, newest first (read-only, editor+ on its space). A revision is snapshotted on every title/body change, by a person, an agent, sync or Atlas. Returns `page` (with `deleted_at` set when the page is in the trash, and `current_revision_id`) and `revisions` (metadata only: id, created_at, author, source, byte_size, `is_current`). Works for trashed pages too, so you can recover what a removed page said. Page back with `cursor` = `next_cursor`. Read one revision's full text with get_page_revision.",
+		Annotations: readOnly,
+	}, s.mcpListPageRevisions)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_page_revision",
+		Title:       "Get page revision",
+		Description: "One historical revision of a page: its title, full markdown body and properties as they were at that point (read-only, editor+ on its space). Take `revision_id` from list_page_revisions. Works for trashed pages. For the page as it is now use get_page.",
+		Annotations: readOnly,
+	}, s.mcpGetPageRevision)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
 		Title:       "Search",
 		Description: "Keyword (full-text) lookup over title + body, ranked + snippet-highlighted. Use to find a page you can name or that contains an exact term/identifier/error string. Works WITHOUT an embedder (always available). Optional space_id narrows to one space. To answer a question or gather material on a topic by meaning, use `research` instead.",
@@ -701,6 +715,73 @@ func (s *Server) mcpListBacklinks(ctx context.Context, req *mcp.CallToolRequest,
 		return mcpErr(ae), listBacklinksOut{}, nil
 	}
 	return nil, listBacklinksOut{Backlinks: hits}, nil
+}
+
+// ---- page revisions ------------------------------------------------------
+
+type listPageRevisionsIn struct {
+	PageID int64 `json:"page_id" jsonschema:"page whose history to list (may be in the trash)"`
+	Cursor int64 `json:"cursor,omitempty" jsonschema:"next_cursor from a previous call; omit for the newest"`
+	Limit  int64 `json:"limit,omitempty" jsonschema:"max revisions (default 50, max 200)"`
+}
+
+type mcpRevision struct {
+	models.PageRevision
+	IsCurrent bool `json:"is_current"`
+}
+
+type listPageRevisionsOut struct {
+	Page       revisionPage  `json:"page"`
+	Revisions  []mcpRevision `json:"revisions"`
+	NextCursor *int64        `json:"next_cursor,omitempty"`
+}
+
+// isCurrentRevision: the newest snapshot of a live page is its current state
+// (every title/body write snapshots). A trashed page has no current state.
+func isCurrentRevision(p revisionPage, revID int64) bool {
+	return p.DeletedAt == nil && p.CurrentRevisionID != nil && *p.CurrentRevisionID == revID
+}
+
+func (s *Server) mcpListPageRevisions(ctx context.Context, req *mcp.CallToolRequest, in listPageRevisionsIn) (*mcp.CallToolResult, listPageRevisionsOut, error) {
+	u, k := mcpIdentity(req)
+	if u == nil {
+		return mcpUnauthErr(), listPageRevisionsOut{}, nil
+	}
+	page, revs, ae := s.listPageRevisionsCore(ctx, u, k, in.PageID, in.Cursor, in.Limit)
+	if ae != nil {
+		return mcpErr(ae), listPageRevisionsOut{}, nil
+	}
+	out := listPageRevisionsOut{Page: page, Revisions: make([]mcpRevision, len(revs))}
+	for i, r := range revs {
+		out.Revisions[i] = mcpRevision{PageRevision: r, IsCurrent: isCurrentRevision(page, r.ID)}
+	}
+	// A full page may have more behind it; the last id is the next cursor.
+	if n := len(revs); n > 0 && int64(n) == revisionLimit(in.Limit) {
+		out.NextCursor = &revs[n-1].ID
+	}
+	return nil, out, nil
+}
+
+type getPageRevisionIn struct {
+	PageID     int64 `json:"page_id" jsonschema:"page the revision belongs to"`
+	RevisionID int64 `json:"revision_id" jsonschema:"revision id from list_page_revisions"`
+}
+
+type getPageRevisionOut struct {
+	Page     revisionPage `json:"page"`
+	Revision mcpRevision  `json:"revision"`
+}
+
+func (s *Server) mcpGetPageRevision(ctx context.Context, req *mcp.CallToolRequest, in getPageRevisionIn) (*mcp.CallToolResult, getPageRevisionOut, error) {
+	u, k := mcpIdentity(req)
+	if u == nil {
+		return mcpUnauthErr(), getPageRevisionOut{}, nil
+	}
+	page, rev, ae := s.getPageRevisionCore(ctx, u, k, in.PageID, in.RevisionID)
+	if ae != nil {
+		return mcpErr(ae), getPageRevisionOut{}, nil
+	}
+	return nil, getPageRevisionOut{Page: page, Revision: mcpRevision{PageRevision: rev, IsCurrent: isCurrentRevision(page, rev.ID)}}, nil
 }
 
 // ---- search --------------------------------------------------------------

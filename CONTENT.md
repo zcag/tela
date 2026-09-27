@@ -261,7 +261,7 @@ Read it as: **Atlas + Ask = tela's first-party intelligence** (both grounded-and
   ```
   - Caption: `For Claude Code, Cursor, or your own agent. Scoped token, same server.`
 - **Tool catalog (compact, real names — pick ~9 to show, group by scope):**
-  - `read` — `research` (meaning + keyword, fused) · `search` (full-text, ranked) · `read_chunk` · `related_pages` · `suggest_links` · `get_page` · `list_pages` · `list_backlinks`
+  - `read` — `research` (meaning + keyword, fused) · `search` (full-text, ranked) · `read_chunk` · `related_pages` · `suggest_links` · `get_page` · `list_pages` · `list_backlinks` · `list_page_revisions` · `get_page_revision`
   - `write` — `create_page` · `update_page` (auto-snapshots a revision) · `add_comment` (text-anchored) · `move_page`
   - `admin` — space + key management · `find_overlaps` / `knowledge_gaps` (knowledge-intelligence) · `atlas_run` / `atlas_run_status` (kick off & check an Atlas run)
   - Footnote: `39 tools total. Keys are scoped read / write / admin and can be pinned to a single space. Interactive result cards render in-chat.`
