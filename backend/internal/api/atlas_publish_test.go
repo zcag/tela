@@ -162,6 +162,21 @@ func TestAtlasPublish(t *testing.T) {
 		t.Errorf("reindex ids after create = %v, want %v", got, wantIDs)
 	}
 
+	// every created page got its first revision, authored by no one, source agent
+	for slug, id := range created {
+		if n := revCount(t, d, id); n != 1 {
+			t.Errorf("page %q revisions after create = %d, want 1", slug, n)
+		}
+	}
+	var src string
+	var author sql.NullInt64
+	if err := d.QueryRowContext(ctx, `SELECT source, author_id FROM page_revisions WHERE page_id = $1`, created["overview"]).Scan(&src, &author); err != nil {
+		t.Fatalf("load revision: %v", err)
+	}
+	if src != "agent" || author.Valid {
+		t.Errorf("atlas revision source/author = %q/%v, want agent/NULL", src, author)
+	}
+
 	// page count under the space = root + 3 docs
 	if n := liveCount(t, d, spaceID); n != 4 {
 		t.Fatalf("live page count = %d, want 4", n)
@@ -178,6 +193,11 @@ func TestAtlasPublish(t *testing.T) {
 	}
 	if got := capt.snapshot(); len(got) != 0 {
 		t.Errorf("reindex queued on no-op republish: %v", got)
+	}
+	for slug, id := range created {
+		if n := revCount(t, d, id); n != 1 {
+			t.Errorf("page %q revisions after no-op republish = %d, want 1", slug, n)
+		}
 	}
 	upAfter := updatedAtSnapshot(t, d, spaceID)
 	for id, before := range upBefore {
@@ -224,6 +244,23 @@ func TestAtlasPublish(t *testing.T) {
 	if got := capt.snapshot(); !equalInt64(got, []int64{rootID}) {
 		t.Errorf("reindex after prune = %v, want just root %d", got, rootID)
 	}
+	// The changed root snapshots again; the pruned page keeps its history.
+	if n := revCount(t, d, rootID); n != 2 {
+		t.Errorf("root revisions after prune = %d, want 2", n)
+	}
+	if n := revCount(t, d, created["config"]); n != 1 {
+		t.Errorf("pruned page revisions = %d, want 1 (kept in trash)", n)
+	}
+}
+
+func revCount(t *testing.T, d *sql.DB, pageID int64) int {
+	t.Helper()
+	var n int
+	if err := d.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM page_revisions WHERE page_id = $1`, pageID).Scan(&n); err != nil {
+		t.Fatalf("revCount: %v", err)
+	}
+	return n
 }
 
 // --- small test helpers ---

@@ -19,8 +19,10 @@ import (
 // atlasPublisher is the in-process engine.Publisher: it delivers a finished
 // atlas run's pages into the bound tela space by writing the `pages` table
 // DIRECTLY (the summarize/agreement background-write pattern — no per-write user
-// identity, no revision/notification, and updated_at only bumped on a real
-// change). It is the SQL port of standalone atlas's REST delivery
+// identity, no notification, and updated_at only bumped on a real change). Each
+// real change also snapshots a revision (source 'agent', no author), so a
+// regeneration never silently overwrites the previous generated text and a page
+// the prune trashes keeps its history. It is the SQL port of standalone atlas's REST delivery
 // (atlas/internal/engine/deliver.go): the same per-source overview + page upsert
 // + publish-prune logic, with the (source, slug)→page mapping kept in
 // atlas_page_map instead of atlas's page_deliveries, and tela's RAG reindex
@@ -164,6 +166,9 @@ func (p *atlasPublisher) upsert(ctx context.Context, tx *sql.Tx, sourceID int64,
 				title, body, propsJSON(props), nullableInt64(parentID), pos, mapped.Int64); err != nil {
 				return 0, false, fmt.Errorf("update page: %w", err)
 			}
+			if _, err := insertPageRevision(ctx, tx, mapped.Int64, body, title, props, nil, "agent"); err != nil {
+				return 0, false, fmt.Errorf("snapshot revision: %w", err)
+			}
 			return mapped.Int64, true, nil
 		}
 		if err != sql.ErrNoRows {
@@ -206,6 +211,9 @@ func (p *atlasPublisher) upsert(ctx context.Context, tx *sql.Tx, sourceID int64,
 		 ON CONFLICT (source_id, slug) DO UPDATE SET page_id = EXCLUDED.page_id`,
 		sourceID, slug, id); err != nil {
 		return 0, false, fmt.Errorf("upsert map: %w", err)
+	}
+	if _, err := insertPageRevision(ctx, tx, id, body, title, props, nil, "agent"); err != nil {
+		return 0, false, fmt.Errorf("snapshot revision: %w", err)
 	}
 	return id, true, nil
 }
