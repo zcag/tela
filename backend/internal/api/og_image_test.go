@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,9 @@ func TestOGImage_FullFlow(t *testing.T) {
 	}
 
 	pngMagic := []byte("\x89PNG\r\n\x1a\n")
+	// The page is private, so its card needs the signed URL its OG envelope
+	// hands out; take it from there, as a crawler would.
+	ogPath := signedOGImagePath(t, ts, pageID, "welcome")
 
 	get := func(t *testing.T, c *http.Client, path string, headers map[string]string) (*http.Response, []byte) {
 		t.Helper()
@@ -54,7 +58,7 @@ func TestOGImage_FullFlow(t *testing.T) {
 	}
 
 	t.Run("OK_RealBrowser", func(t *testing.T) {
-		resp, body := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), nil)
+		resp, body := get(t, nil, ogPath, nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d want 200", resp.StatusCode)
 		}
@@ -83,8 +87,38 @@ func TestOGImage_FullFlow(t *testing.T) {
 		}
 	})
 
+	// A private page's card fetched by id alone (or with a forged sig) is the
+	// generic one: byte-identical to another private page's, so it carries
+	// nothing of either title (nor, for a deck, its first slide).
+	t.Run("Private_UnsignedIsGeneric", func(t *testing.T) {
+		var otherID int64
+		if err := d.QueryRow(`INSERT INTO pages (space_id, parent_id, title, body, position)
+		                      VALUES ($1, NULL, 'Quarterly numbers', 'x', 1) RETURNING id`, space).Scan(&otherID); err != nil {
+			t.Fatalf("seed page: %v", err)
+		}
+		_, signed := get(t, nil, ogPath, nil)
+		_, bare := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), nil)
+		_, forged := get(t, nil, fmt.Sprintf("/p/%d/og.png?sig=AAAAAAAAAAAAAAAAAAAAAA", pageID), nil)
+		_, otherBare := get(t, nil, fmt.Sprintf("/p/%d/og.png", otherID), nil)
+		if !bytes.HasPrefix(bare, pngMagic) {
+			t.Fatal("unsigned card is not a PNG")
+		}
+		if !bytes.Equal(bare, forged) || !bytes.Equal(bare, otherBare) {
+			t.Fatal("unsigned/forged cards differ between private pages: they carry page data")
+		}
+		if bytes.Equal(bare, signed) {
+			t.Fatal("signed card equals the generic one: the sig isn't honoured")
+		}
+		// And the sig of one page doesn't unlock another.
+		u, _ := url.Parse(ogPath)
+		_, cross := get(t, nil, fmt.Sprintf("/p/%d/og.png?%s", otherID, u.RawQuery), nil)
+		if !bytes.Equal(cross, otherBare) {
+			t.Fatal("page A's sig unlocked page B's card")
+		}
+	})
+
 	t.Run("OK_BotUA", func(t *testing.T) {
-		resp, body := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), map[string]string{
+		resp, body := get(t, nil, ogPath, map[string]string{
 			"User-Agent": "Slackbot-LinkExpanding 1.0",
 		})
 		if resp.StatusCode != http.StatusOK {
@@ -119,12 +153,12 @@ func TestOGImage_FullFlow(t *testing.T) {
 	})
 
 	t.Run("ConditionalGet_IfNoneMatch_Hit", func(t *testing.T) {
-		resp, _ := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), nil)
+		resp, _ := get(t, nil, ogPath, nil)
 		etag := resp.Header.Get("ETag")
 		if etag == "" {
 			t.Fatalf("first request: ETag missing")
 		}
-		resp2, body2 := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), map[string]string{
+		resp2, body2 := get(t, nil, ogPath, map[string]string{
 			"If-None-Match": etag,
 		})
 		if resp2.StatusCode != http.StatusNotModified {
@@ -142,7 +176,7 @@ func TestOGImage_FullFlow(t *testing.T) {
 	})
 
 	t.Run("ConditionalGet_IfNoneMatch_Stale", func(t *testing.T) {
-		resp, _ := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), nil)
+		resp, _ := get(t, nil, ogPath, nil)
 		oldEtag := resp.Header.Get("ETag")
 		if oldEtag == "" {
 			t.Fatalf("first request: ETag missing")
@@ -156,7 +190,7 @@ func TestOGImage_FullFlow(t *testing.T) {
 			t.Fatalf("bump updated_at: %v", err)
 		}
 
-		resp2, body2 := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), map[string]string{
+		resp2, body2 := get(t, nil, ogPath, map[string]string{
 			"If-None-Match": oldEtag,
 		})
 		if resp2.StatusCode != http.StatusOK {
@@ -200,7 +234,7 @@ func TestOGImage_FullFlow(t *testing.T) {
 		// /p/* were missing, the request would 401 here. The other subtests
 		// already use cookie-less clients; this one pins the assertion
 		// explicitly so a future middleware change is loud.
-		resp, _ := get(t, nil, fmt.Sprintf("/p/%d/og.png", pageID), nil)
+		resp, _ := get(t, nil, ogPath, nil)
 		if resp.StatusCode == http.StatusUnauthorized {
 			t.Fatalf("middleware bypass for /p/* missing — cookie-less request returned 401")
 		}

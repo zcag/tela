@@ -1,10 +1,15 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -75,11 +80,29 @@ func (s *Server) HandlePublicShare(w http.ResponseWriter, r *http.Request) {
 		// (the SPA gates it on a session as before). The SPA page route is nested
 		// under the space (/spaces/{spaceID}/pages/{id}/{slug}); a bare
 		// /pages/{id} no longer resolves and renders the SPA's not-found view.
-		dest := pageAppPath(spaceID, pageID, title)
+		// A private page's slug is its title, so the redirect only carries one the
+		// link already had; otherwise Location would hand the title to anyone who
+		// asks by id (the same enumeration the crawler card guards against). The
+		// SPA fills the slug in after login.
+		dest := pageAppPath(spaceID, pageID, "")
+		if slugMatchesTitle(r.PathValue("slug"), title) {
+			dest = pageAppPath(spaceID, pageID, title)
+		}
 		if visibility == spaceVisibilityPublic {
 			dest = s.canonicalPagePath(r.Context(), spaceID, pageID, title)
 		}
 		http.Redirect(w, r, dest, http.StatusFound)
+		return
+	}
+
+	// A private page's title is shown only to a link that already carries it: the
+	// trailing slug must equal the current title's slug. Page ids are sequential,
+	// so without this anyone could walk /p/1..N and harvest every private title
+	// and space name. Every link people actually share has the slug (Copy link,
+	// the address bar via Caddy's deep-link rewrite), so a real unfurl still shows
+	// the title; a bare or stale /p/{id} gets a generic card.
+	if visibility != spaceVisibilityPublic && !slugMatchesTitle(r.PathValue("slug"), title) {
+		s.writeGenericPageOGHTML(r, w, pageID)
 		return
 	}
 
@@ -122,8 +145,50 @@ func (s *Server) writeOGHTML(r *http.Request, w http.ResponseWriter, pageID int6
 	origin := s.ogOriginForPage(r, pageID)
 	// Canonical permalink carries the cosmetic slug (/p/{id}/{slug}); the id is
 	// still what resolves, so a stale slug never breaks.
-	writeOGHTMLWithURL(w, pageID, title, body, spaceName,
-		origin+pagePermalinkPath(pageID, title), origin, s.ogSiteName(r, ownerOrgID))
+	writeOGHTMLWithURL(w, title, body, spaceName, origin+pagePermalinkPath(pageID, title),
+		s.ogImageURL(origin, pageID), s.ogSiteName(r, ownerOrgID))
+}
+
+// slugMatchesTitle reports whether a URL's trailing slug is the current slug of
+// title. A title with no slug (emoji/CJK-only) never matches: there is nothing
+// in the link to prove the sender knew it.
+func slugMatchesTitle(slug, title string) bool {
+	want := pageSlug(title)
+	return want != "" && slug == want
+}
+
+// writeGenericPageOGHTML is the card for a private page reached without its
+// title: no title, no space name, no image, and branded only by the request's
+// host (a custom domain), never by the page's owning org, which would itself
+// say whose page the id is.
+func (s *Server) writeGenericPageOGHTML(r *http.Request, w http.ResponseWriter, pageID int64) {
+	origin := s.originFor(r)
+	if origin == "" {
+		origin = canonicalBaseURL()
+	}
+	site := s.ogSiteName(r, 0)
+	writeGenericOGHTML(w, "A page on "+site, "Open the link to view it.",
+		fmt.Sprintf("%s/p/%d", origin, pageID), site)
+}
+
+// ogImageURL is a page's OG image URL, signed. /p/{id}/og.png renders a private
+// page's title (and a deck's first slide) only for a valid sig, so the image
+// can't be fetched by walking ids either; the sig only ever reaches a crawler
+// inside an envelope that already passed the slug check (or a share link).
+func (s *Server) ogImageURL(origin string, pageID int64) string {
+	return fmt.Sprintf("%s/p/%d/og.png?sig=%s", origin, pageID, s.ogImageSig(pageID))
+}
+
+func (s *Server) ogImageSig(pageID int64) string {
+	k := hmac.New(sha256.New, s.shareSecret)
+	k.Write([]byte("tela-og-image-v1"))
+	mac := hmac.New(sha256.New, k.Sum(nil))
+	mac.Write([]byte(strconv.FormatInt(pageID, 10)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
+}
+
+func (s *Server) validOGImageSig(pageID int64, sig string) bool {
+	return hmac.Equal([]byte(sig), []byte(s.ogImageSig(pageID)))
 }
 
 func writeNotFoundHTML(w http.ResponseWriter) {

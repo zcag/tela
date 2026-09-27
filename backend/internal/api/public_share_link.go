@@ -167,7 +167,7 @@ func (s *Server) writeShareOGHTML(r *http.Request, w http.ResponseWriter, _ *sha
 			pageURL += "/" + sl
 		}
 	}
-	writeOGHTMLWithURL(w, pageID, title, body, spaceName, pageURL, origin, s.ogSiteName(r, ownerOrgID))
+	writeOGHTMLWithURL(w, title, body, spaceName, pageURL, s.ogImageURL(origin, pageID), s.ogSiteName(r, ownerOrgID))
 }
 
 // writeOGHTMLWithURL is the URL-overridable variant of writeOGHTML. The /p/{id}
@@ -177,7 +177,7 @@ func (s *Server) writeShareOGHTML(r *http.Request, w http.ResponseWriter, _ *sha
 // path-only in dev). The renderer is public and keyed only on page id, so it
 // resolves on either host. siteName brands og:site_name (the owning/host org's
 // name on a white-label domain, else "tela").
-func writeOGHTMLWithURL(w http.ResponseWriter, pageID int64, title, body, spaceName, pageURL, origin, siteName string) {
+func writeOGHTMLWithURL(w http.ResponseWriter, title, body, spaceName, pageURL, imageURL, siteName string) {
 	if siteName == "" {
 		siteName = "tela"
 	}
@@ -191,8 +191,6 @@ func writeOGHTMLWithURL(w http.ResponseWriter, pageID int64, title, body, spaceN
 	//   plain := stripMarkdownToText(body)
 	//   ogDesc := runeTruncate(plain, 200)
 	ogDesc := runeTruncate(title, 200)
-
-	imageURL := fmt.Sprintf("%s/p/%d/og.png", origin, pageID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
@@ -236,14 +234,18 @@ func writeOGHTMLWithURL(w http.ResponseWriter, pageID int64, title, body, spaceN
 // is intentionally absent — sharing the page's image card on a locked share
 // would defeat the password.
 func writeLockedShareOGHTML(w http.ResponseWriter, origin, token, siteName string) {
+	writeGenericOGHTML(w, "Protected page on Tela",
+		"This page is password-protected. Open the link to enter the password.",
+		shareRootURL(origin, token), siteName)
+}
+
+// writeGenericOGHTML emits a content-free OG envelope: a fixed title and
+// description, no image. For links whose page must not be described to a
+// crawler (a locked share, a private page reached without its title).
+func writeGenericOGHTML(w http.ResponseWriter, title, desc, pageURL, siteName string) {
 	if siteName == "" {
 		siteName = "tela"
 	}
-	const lockedTitle = "Protected page on Tela"
-	const lockedDesc = "This page is password-protected. Open the link to enter the password."
-
-	pageURL := shareRootURL(origin, token)
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
@@ -263,12 +265,12 @@ func writeLockedShareOGHTML(w http.ResponseWriter, origin, token, siteName strin
 </head>
 <body></body>
 </html>`,
-		html.EscapeString(lockedTitle),
+		html.EscapeString(title),
 		html.EscapeString(siteName),
-		html.EscapeString(lockedTitle),
-		html.EscapeString(lockedDesc),
+		html.EscapeString(title),
+		html.EscapeString(desc),
 		html.EscapeString(pageURL),
-		html.EscapeString(lockedTitle),
-		html.EscapeString(lockedDesc),
+		html.EscapeString(title),
+		html.EscapeString(desc),
 	)
 }

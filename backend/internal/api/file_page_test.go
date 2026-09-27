@@ -125,6 +125,14 @@ func TestFilePage_PublicMetadata(t *testing.T) {
 	if resp, _ := getUA(t, ts.URL+"/api/public/files/deadbeefdead", ""); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown-hash meta status = %d, want 404", resp.StatusCode)
 	}
+	// Shorter than the shareable prefix never resolves: the response hands back
+	// the full hash (the blob's capability), so a short prefix would make a
+	// private file guessable.
+	for _, n := range []int{8, fileHashShortLen - 1} {
+		if resp, _ := getUA(t, ts.URL+"/api/public/files/"+hash[:n], ""); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%d-hex prefix meta status = %d, want 404", n, resp.StatusCode)
+		}
+	}
 }
 
 func TestFilePage_BlobURLUnfurlsForCrawlers(t *testing.T) {

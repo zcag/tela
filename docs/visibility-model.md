@@ -133,3 +133,30 @@ it's shared, and a title + cover slide is intentionally shareable, while the bod
 stays private. The **rich body excerpt** remains gated behind an explicit
 `/share/{token}` link. (This supersedes the interim hard-404 for private-space
 pages from `f921ccc`/`b0d6c65`, which had over-corrected the leak fix.)
+
+## Resolved (2026-09-27): no title enumeration
+
+Reported privately: page ids are sequential, so walking `/p/1..N` with a crawler UA
+harvested every private page's title and space name, and `/p/{id}/og.png` rendered a
+private deck's first slide to anyone. The card stays, but a **private** page is now
+described only to a link that already carries its title:
+
+- `/p/{id}/{slug}` shows the title card only when `slug` equals the current title's
+  slug (`slugMatchesTitle`, `public_share.go`). A bare `/p/{id}`, a wrong or stale slug,
+  or a title with no slug gets a generic card: no title, no space name, no image,
+  branded by the request host only (the owning org's brand would itself say whose
+  page the id is). Every link people share carries the slug: *Copy link* builds
+  `/p/{id}/{slug}`, and Caddy's in-app deep-link rewrite (`@page_bots` in
+  `sites.caddy`) now keeps the slug segment instead of dropping it.
+- The card's `og:image` is signed (`ogImageURL`: HMAC of the page id under a key
+  derived from `TELA_SHARE_SECRET`). `/p/{id}/og.png` renders a private page's title or
+  deck cover only with that sig; without it, the same generic image for every page.
+  `/share/{token}` envelopes use the signed URL too.
+- A browser hitting a private `/p/{id}` is redirected to the in-app route **without**
+  the title slug unless the link carried it (the `Location` header is as readable
+  as the card; the SPA fills the slug in after login).
+- Public-space pages are unchanged. Cost: a link shared before a rename unfurls
+  generic (it still opens, since the id resolves).
+- Found in the same audit: `/api/public/files/{prefix}` resolved an 8-hex prefix and
+  returned the full hash (the blob's capability URL) for private files too; it now
+  requires the 12-hex shareable prefix every `/f` link carries (`fileHashShortLen`).

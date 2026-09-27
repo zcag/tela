@@ -223,18 +223,19 @@
 
 	# In-app page deep links (/spaces/{id}/pages/{id}/...) are what people copy
 	# from the address bar to share. Bot UAs get a server-rendered OG card by
-	# rewriting to that page's /p/{id} permalink (backend HandlePublicShare →
+	# rewriting to that page's /p/{id}/{slug} permalink, slug kept (a private page's
+	# card shows its title only to a link carrying its slug; backend HandlePublicShare →
 	# title-only card, branded to the org's custom domain when the page has one);
 	# humans fall through to the app SPA below, unchanged. noindex (these are
 	# app deep links). Keep the UA regex + capture in sync with botUASubstrings
 	# in backend/internal/api/public_share.go.
 	@page_bots {
-		path_regexp pageog ^/spaces/[0-9]+/pages/([0-9]+)(?:/.*)?$
+		path_regexp pageog ^/spaces/[0-9]+/pages/([0-9]+)(/[^/]+)?(?:/.*)?$
 		header_regexp User-Agent "(?i)(slackbot-linkexpanding|twitterbot|facebookexternalhit|facebookcatalog|discordbot|telegrambot|linkedinbot|whatsapp|mastodon|cardyb|slack-imgproxy|pinterest|skypeuripreview|embedly|iframely|bot/|bot\s)"
 	}
 	handle @page_bots {
 		header X-Robots-Tag "noindex"
-		rewrite * /p/{re.pageog.1}
+		rewrite * /p/{re.pageog.1}{re.pageog.2}
 		reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
 	}
 
@@ -532,11 +533,11 @@ https:// {
 	# noindex already applies. Mirror of the canonical block; keep the UA regex in
 	# sync with botUASubstrings in backend/internal/api/public_share.go.
 	@page_bots {
-		path_regexp pageog ^/spaces/[0-9]+/pages/([0-9]+)(?:/.*)?$
+		path_regexp pageog ^/spaces/[0-9]+/pages/([0-9]+)(/[^/]+)?(?:/.*)?$
 		header_regexp User-Agent "(?i)(slackbot-linkexpanding|twitterbot|facebookexternalhit|facebookcatalog|discordbot|telegrambot|linkedinbot|whatsapp|mastodon|cardyb|slack-imgproxy|pinterest|skypeuripreview|embedly|iframely|bot/|bot\s)"
 	}
 	handle @page_bots {
-		rewrite * /p/{re.pageog.1}
+		rewrite * /p/{re.pageog.1}{re.pageog.2}
 		reverse_proxy {$TELA_UPSTREAM_BACKEND:backend:8080}
 	}
 

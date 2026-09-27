@@ -137,13 +137,14 @@ func (s *Server) HandleOGImage(w http.ResponseWriter, r *http.Request) {
 		propsRaw   []byte
 		spaceID    int64
 		ownerOrgID int64 // NULL space.org_id scans as 0 via COALESCE
+		visibility string
 	)
 	err = s.DB.QueryRowContext(r.Context(),
-		`SELECT p.title, sp.name, p.updated_at, p.body, p.props, p.space_id, COALESCE(sp.org_id, 0)
+		`SELECT p.title, sp.name, p.updated_at, p.body, p.props, p.space_id, COALESCE(sp.org_id, 0), sp.visibility
 		   FROM pages p
 		   JOIN spaces sp ON sp.id = p.space_id
 		  WHERE p.id = $1 AND p.deleted_at IS NULL`, pageID,
-	).Scan(&title, &spaceName, &updatedAt, &body, &propsRaw, &spaceID, &ownerOrgID)
+	).Scan(&title, &spaceName, &updatedAt, &body, &propsRaw, &spaceID, &ownerOrgID, &visibility)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeNotFoundHTML(w)
 		return
@@ -151,6 +152,23 @@ func (s *Server) HandleOGImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("og_image: load page", "page_id", pageID, "err", err)
 		writeInternalHTML(w)
+		return
+	}
+
+	// A private page's card carries its title (and a deck's first slide), so it
+	// needs the sig its OG envelope hands out (ogImageURL); fetched by id alone
+	// it's a generic card branded only by the request host, like the envelope.
+	if visibility != spaceVisibilityPublic && !s.validOGImageSig(pageID, r.URL.Query().Get("sig")) {
+		png, err := renderOGCardOpts(ogCardOpts{title: "A page on " + s.ogSiteName(r, 0), brand: s.resolveOGBrand(r, 0)})
+		if err != nil {
+			writeInternalHTML(w)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Content-Length", strconv.Itoa(len(png)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(png)
 		return
 	}
 
@@ -178,7 +196,7 @@ func (s *Server) HandleOGImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A deck's share image is its first slide (its visual identity), for public
-	// AND private decks. Best-effort + time-bounded — fall back to the generic card
+	// decks and for private ones reached through a signed URL. Best-effort + time-bounded — fall back to the generic card
 	// if the cover render is slow or unavailable so crawlers always get something.
 	if isDeckBag(decodeProps(propsRaw)) {
 		if raw, ct, ok := s.deckCoverPNG(r.Context(), body, decodeProps(propsRaw), spaceID); ok {

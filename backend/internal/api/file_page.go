@@ -117,7 +117,7 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%.0f MB", mb)
 }
 
-// lookupSharedFile resolves a content-hash PREFIX (8–64 lowercase hex) to a live
+// lookupSharedFile resolves a content-hash PREFIX (12–64 lowercase hex) to a live
 // file. sql.ErrNoRows when nothing matches or the prefix is malformed.
 //
 // The prefix is expressed as a RANGE rather than LIKE so it uses the
@@ -125,7 +125,11 @@ func humanBytes(n int64) string {
 // bound because hex digits stop at 'f'.
 func lookupSharedFile(ctx context.Context, db *sql.DB, prefix string) (sharedFile, error) {
 	prefix = strings.ToLower(prefix)
-	if len(prefix) < 8 || len(prefix) > 64 || strings.Trim(prefix, "0123456789abcdef") != "" {
+	// At least the shareable prefix (fileHashShortLen, what every /f link
+	// carries): this resolves files in PRIVATE spaces too and hands back the full
+	// hash, which is the blob's capability, so a shorter prefix would let a guess
+	// over a smaller space unlock a private file.
+	if len(prefix) < fileHashShortLen || len(prefix) > 64 || strings.Trim(prefix, "0123456789abcdef") != "" {
 		return sharedFile{}, sql.ErrNoRows
 	}
 	var f sharedFile
