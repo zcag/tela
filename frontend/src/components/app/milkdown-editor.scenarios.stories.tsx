@@ -538,6 +538,7 @@ function fakeCollabProviderFactory(): CollabProviderFactory {
       awareness,
       getStatus: () => 'connected',
       onStatus: () => () => {},
+      onReset: () => () => {},
       onFirstSync: (fn: (i: { hadServerState: boolean }) => void) => {
         fn({ hadServerState: false })
         return () => {}

@@ -63,6 +63,10 @@ export class TelaProvider {
   // here is persisted or CRDT-merged. Consumers (DiagramSession) own their own
   // convergence (reconcileElements) and writeback.
   private ephemeralListeners = new Set<EphemeralListener>()
+  // Server dropped the page's Yjs overlay (TAG_RESET). Only a MOUNTED editor
+  // subscribes (useCollabSession), so an orphan provider from a discarded
+  // render hears it and does nothing.
+  private resetListeners = new Set<() => void>()
   private reconnectAttempts = 0
   private reconnectTimer: number | null = null
   private destroyed = false
@@ -160,6 +164,7 @@ export class TelaProvider {
     if (obs && typeof obs.clear === 'function') obs.clear()
     this.sendAwarenessRemoval()
     this.ephemeralListeners.clear()
+    this.resetListeners.clear()
     this.doc.off('update', this.onDocUpdate)
     this.awareness.destroy()
     if (this.ws) {
@@ -219,6 +224,13 @@ export class TelaProvider {
     this.statusListeners.add(fn)
     return () => {
       this.statusListeners.delete(fn)
+    }
+  }
+
+  onReset(fn: () => void): () => void {
+    this.resetListeners.add(fn)
+    return () => {
+      this.resetListeners.delete(fn)
     }
   }
 
@@ -361,10 +373,12 @@ export class TelaProvider {
     const payload = frame.subarray(1)
     switch (tag) {
       case TAG_RESET:
-        // The body was rewritten out-of-band (an agent MCP write) and the
-        // server dropped the Yjs overlay; this Y.Doc is now stale. Reload to
-        // re-seed from pages.body — DB-wins, per the agent-backend sync design.
-        if (!this.destroyed) window.location.reload()
+        // The body was rewritten out-of-band (agent, file sync, markdown source
+        // mode) and the server dropped the Yjs overlay; this Y.Doc is now stale.
+        // The mounted editor decides what to do (it reloads). Deciding here
+        // reloaded the tab from orphan providers too, e.g. the editor's own
+        // tab after it left for source mode and saved.
+        for (const fn of this.resetListeners) fn()
         return
       case TAG_UPDATE:
         Y.applyUpdate(this.doc, payload, this)

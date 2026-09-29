@@ -81,8 +81,14 @@ export function useCollabSession(
   // setLocalState({}) itself, so a provider is in its own map — and, once its
   // 15s clock renewal broadcasts, in every peer's map — from construction.
   // Deferring a seed cannot keep an orphan out of the room; reaping it can.
+  //
+  // Claiming is also where the reset reload is wired: the server's TAG_RESET
+  // (body rewritten out-of-band) re-seeds a MOUNTED editor from pages.body by
+  // reloading, while an orphan hears it and does nothing.
   useEffect(() => {
-    if (session) claimSession(session)
+    if (!session) return
+    claimSession(session)
+    return session.provider.onReset(() => window.location.reload())
   }, [session])
 
   const [status, setStatus] = useState<TelaProviderStatus>(
