@@ -3,94 +3,11 @@ import { createPortal } from 'react-dom'
 import { usePluginViewContext } from '@prosemirror-adapter/react'
 import { useInstance } from '@milkdown/react'
 import { BlockProvider } from '@milkdown/kit/plugin/block'
-import { commandsCtx, editorViewCtx } from '@milkdown/kit/core'
+import { editorViewCtx } from '@milkdown/kit/core'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import type { Ctx } from '@milkdown/ctx'
-import {
-  createCodeBlockCommand,
-  turnIntoTextCommand,
-  wrapInBlockquoteCommand,
-  wrapInBulletListCommand,
-  wrapInHeadingCommand,
-  wrapInOrderedListCommand,
-} from '@milkdown/kit/preset/commonmark'
-import {
-  Code,
-  Copy,
-  GripVertical,
-  Heading1,
-  Heading2,
-  Heading3,
-  List,
-  ListOrdered,
-  Plus,
-  Quote,
-  Trash2,
-  Type,
-  type LucideIcon,
-} from 'lucide-react'
-
-// "Turn into" targets for the block-action menu. Each reuses an existing
-// commonmark command — all are node-type transforms that round-trip to
-// markdown (no proprietary blocks). The command runs against the active
-// block after the caret is moved into it (see applyTurnInto).
-interface TurnIntoOption {
-  id: string
-  label: string
-  icon: LucideIcon
-  run: (ctx: Ctx) => void
-}
-
-const TURN_INTO: TurnIntoOption[] = [
-  {
-    id: 'text',
-    label: 'Text',
-    icon: Type,
-    run: (ctx) => ctx.get(commandsCtx).call(turnIntoTextCommand.key),
-  },
-  {
-    id: 'h1',
-    label: 'Heading 1',
-    icon: Heading1,
-    run: (ctx) => ctx.get(commandsCtx).call(wrapInHeadingCommand.key, 1),
-  },
-  {
-    id: 'h2',
-    label: 'Heading 2',
-    icon: Heading2,
-    run: (ctx) => ctx.get(commandsCtx).call(wrapInHeadingCommand.key, 2),
-  },
-  {
-    id: 'h3',
-    label: 'Heading 3',
-    icon: Heading3,
-    run: (ctx) => ctx.get(commandsCtx).call(wrapInHeadingCommand.key, 3),
-  },
-  {
-    id: 'bullet',
-    label: 'Bulleted list',
-    icon: List,
-    run: (ctx) => ctx.get(commandsCtx).call(wrapInBulletListCommand.key),
-  },
-  {
-    id: 'ordered',
-    label: 'Numbered list',
-    icon: ListOrdered,
-    run: (ctx) => ctx.get(commandsCtx).call(wrapInOrderedListCommand.key),
-  },
-  {
-    id: 'quote',
-    label: 'Quote',
-    icon: Quote,
-    run: (ctx) => ctx.get(commandsCtx).call(wrapInBlockquoteCommand.key),
-  },
-  {
-    id: 'code',
-    label: 'Code block',
-    icon: Code,
-    run: (ctx) => ctx.get(commandsCtx).call(createCodeBlockCommand.key),
-  },
-]
+import { Copy, GripVertical, Plus, Trash2 } from 'lucide-react'
+import { TURN_INTO, type TurnIntoOption } from './milkdown-turn-into'
 
 // Block drag-handle + add-block gutter (the Notion/GitBook left-gutter pattern).
 // Built on Milkdown's `block` plugin, which tracks the block under the cursor

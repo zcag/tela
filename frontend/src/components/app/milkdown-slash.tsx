@@ -4,19 +4,13 @@ import { usePluginViewContext } from '@prosemirror-adapter/react'
 import { useInstance } from '@milkdown/react'
 import { commandsCtx, editorViewCtx } from '@milkdown/kit/core'
 import type { Ctx } from '@milkdown/ctx'
-import {
-  createCodeBlockCommand,
-  insertHrCommand,
-  wrapInBlockquoteCommand,
-  wrapInBulletListCommand,
-  wrapInHeadingCommand,
-  wrapInOrderedListCommand,
-} from '@milkdown/kit/preset/commonmark'
+import { insertHrCommand } from '@milkdown/kit/preset/commonmark'
 import { insertTableCommand } from '@milkdown/kit/preset/gfm'
 import { COLLAPSIBLE_DEFAULT_SUMMARY } from './milkdown-collapsibles'
 import { insertCallout } from './milkdown-callouts'
 import { insertExcalidraw } from './milkdown-excalidraw'
 import { insertTaskList } from './milkdown-task-list'
+import { TURN_INTO } from './milkdown-turn-into'
 import { insertMathBlock } from './milkdown-math'
 import { TEMPLATES, insertTemplate } from './milkdown-templates'
 import { positionFloating, setShow } from './milkdown-floating'
@@ -51,18 +45,14 @@ interface SlashCommand {
 // new block needs an entry in both. The integrity check below fails loudly in
 // dev if the two ever drift.
 const RUN: Record<string, (ctx: Ctx) => void> = {
-  h1: (ctx) => ctx.get(commandsCtx).call(wrapInHeadingCommand.key, 1),
-  h2: (ctx) => ctx.get(commandsCtx).call(wrapInHeadingCommand.key, 2),
-  h3: (ctx) => ctx.get(commandsCtx).call(wrapInHeadingCommand.key, 3),
-  'bullet-list': (ctx) => ctx.get(commandsCtx).call(wrapInBulletListCommand.key),
-  'ordered-list': (ctx) => ctx.get(commandsCtx).call(wrapInOrderedListCommand.key),
+  // Block-type transforms (h1-3, lists, quote, code) are shared with the block
+  // handle and the bubble toolbar; 'text' isn't an insertable block.
+  ...Object.fromEntries(TURN_INTO.filter((o) => o.id !== 'text').map((o) => [o.id, o.run])),
   'task-list': insertTaskList,
-  quote: (ctx) => ctx.get(commandsCtx).call(wrapInBlockquoteCommand.key),
   'pull-quote': insertPullquote,
   callout: insertCallout,
   collapsible: insertCollapsible,
   excalidraw: insertExcalidraw,
-  code: (ctx) => ctx.get(commandsCtx).call(createCodeBlockCommand.key),
   divider: (ctx) => ctx.get(commandsCtx).call(insertHrCommand.key),
   table: (ctx) =>
     ctx.get(commandsCtx).call(insertTableCommand.key, { row: 3, col: 2 }),

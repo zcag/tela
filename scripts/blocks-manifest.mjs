@@ -53,6 +53,7 @@ const INFRA = new Set([
   'milkdown-table-select', // table cell-selection behavior (no node)
   'milkdown-upload-placeholder', // transient upload placeholder decoration (no node)
   'milkdown-templates', // composed snippets, not a block type
+  'milkdown-turn-into', // block-type transforms shared by slash / block handle / bubble (no node)
   'milkdown-excalidraw-presence', // live "editing" badge decoration for the `excalidraw` block (no node)
   'milkdown-typography', // smart-quote/dash/ellipsis input rules (no node)
   'milkdown-url-unfurl', // link unfurl decoration
