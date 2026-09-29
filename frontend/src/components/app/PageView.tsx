@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileCheck,
+  FileCode,
   FileDown,
   FilePen,
   FileQuestion,
@@ -99,6 +100,7 @@ const PageLintNotice = lazy(() =>
   import('./PageLintNotice').then((m) => ({ default: m.PageLintNotice })),
 )
 import {
+  fetchFreshPage,
   prefetchPage,
   useAllPages,
   useCreatePage,
@@ -108,7 +110,7 @@ import {
   useUpdatePage,
 } from '../../lib/queries/pages'
 import { useSpace, useSpaceRole } from '../../lib/queries/spaces'
-import type { Page, PageTreeNode } from '../../lib/types'
+import type { Page, PageTreeNode, UpdatePageInput } from '../../lib/types'
 import { Button } from '../ui/button'
 import { EmptyState } from '../ui/empty-state'
 import {
@@ -156,6 +158,9 @@ import { toast, updateToast } from '../ui/toast'
 const MilkdownEditor = lazy(() =>
   import('./milkdown-editor').then((m) => ({ default: m.MilkdownEditor })),
 )
+
+// CodeMirror: only decks and the prose editor's markdown source mode load it.
+const MarkdownSourceEditor = lazy(() => import('../ui/markdown-source-editor'))
 
 const EDITOR_MIN_H = 'min-h-[calc(var(--space-8)*8)]'
 
@@ -1066,6 +1071,7 @@ interface PageEditorProps {
 
 function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scrollRef }: PageEditorProps) {
   const updatePage = useUpdatePage()
+  const qc = useQueryClient()
   const navigate = useNavigate()
   const [title, setTitle] = useState(page.title)
   const [body, setBody] = useState(page.body)
@@ -1449,8 +1455,18 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
     [],
   )
 
+  // Markdown source mode: the prose body edited as raw text instead of in
+  // Milkdown. It writes AROUND the collab session (Milkdown is unmounted), so it
+  // saves explicitly (blur / Mod-s / leaving the mode), never per keystroke:
+  // every save sends base_version (409 if anyone else saved meanwhile) and
+  // reset_collab, which reloads live editors onto the new body.
+  const [sourceMode, setSourceMode] = useState(false)
+  const [sourceConflict, setSourceConflict] = useState(false)
+  // Version of the last body this editor read or wrote; source saves send it.
+  const versionRef = useRef(page.version)
+
   const save = useCallback(
-    async (patch: { title?: string; body?: string }): Promise<boolean> => {
+    async (patch: Omit<UpdatePageInput, 'props' | 'status'>): Promise<boolean> => {
       // Any new save attempt supersedes a pending retry of an earlier payload.
       if (retryTimerRef.current != null) {
         window.clearTimeout(retryTimerRef.current)
@@ -1460,9 +1476,15 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
       try {
         const updated = await updatePage.mutateAsync({ id: page.id, ...patch })
         lastSavedRef.current = { title: updated.title, body: updated.body }
+        versionRef.current = updated.version
         setStatus('saved')
         return true
       } catch (err) {
+        if (err instanceof ApiError && err.code === 'version_conflict') {
+          setSourceConflict(true)
+          setStatus('error')
+          return false
+        }
         // 5xx → one automatic retry after a short delay. 4xx and network
         // errors (status === 0) go straight to 'error' — those won't
         // self-heal within the retry window.
@@ -1557,6 +1579,65 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
     stripDraftParam()
   }, [stripDraftParam])
 
+  // Start from the server's current body + version, not the local buffer: in a
+  // collab session another peer may be the one saving.
+  const loadSource = useCallback(async () => {
+    const fresh = await fetchFreshPage(qc, page.id)
+    bodyRef.current = fresh.body
+    setBody(fresh.body)
+    lastSavedRef.current = { title: lastSavedRef.current.title, body: fresh.body }
+    versionRef.current = fresh.version
+    setSourceConflict(false)
+    setStatus('idle')
+  }, [qc, page.id])
+
+  // Source saves are chained: blur, Mod-s and leaving the mode can fire
+  // together, and two in flight would both send the same base_version, the
+  // second 409ing against the first. While a conflict is open only the banner
+  // (overwrite) may save.
+  const sourceSaveRef = useRef<Promise<boolean>>(Promise.resolve(true))
+  const saveSource = useCallback(
+    (overwrite = false): Promise<boolean> => {
+      const run = async () => {
+        await sourceSaveRef.current
+        if (bodyRef.current === lastSavedRef.current.body) return true
+        if (sourceConflict && !overwrite) return false
+        const ok = await save({
+          body: bodyRef.current,
+          base_version: overwrite ? undefined : versionRef.current,
+          reset_collab: true,
+        })
+        if (ok) setSourceConflict(false)
+        return ok
+      }
+      sourceSaveRef.current = run()
+      return sourceSaveRef.current
+    },
+    [save, sourceConflict],
+  )
+
+  const enterSource = useCallback(async () => {
+    cancelPendingSave()
+    if (bodyRef.current !== lastSavedRef.current.body && !(await save({ body: bodyRef.current }))) return
+    await loadSource()
+    setProvider(null) // Milkdown unmounts and takes its collab session with it
+    setSourceMode(true)
+  }, [cancelPendingSave, save, loadSource])
+
+  const exitSource = useCallback(async () => {
+    if (await saveSource()) setSourceMode(false)
+  }, [saveSource])
+
+  // Unsaved source text is lost on unload (nothing autosaves it), so ask first.
+  // page.body is the last saved/loaded body: both paths write the query cache.
+  const sourceDirty = sourceMode && body !== page.body
+  useEffect(() => {
+    if (!sourceDirty) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [sourceDirty])
+
   // autoFocus rule: empty title → focus title; non-empty → focus body.
   const titleAutoFocus = page.title.length === 0
   const bodyAutoFocus = page.title.length > 0
@@ -1609,10 +1690,25 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
                   type="button"
                   variant="secondary"
                   size="sm"
-                  onClick={exitEdit}
+                  onClick={() => void (sourceMode ? saveSource() : Promise.resolve(true)).then((ok) => ok && exitEdit())}
                   className="h-[var(--space-8)] px-[var(--space-3)]"
                 >
                   Done
+                </Button>
+              ) : null}
+              {roleResolved && !isViewer && !isDeck && !isSheet ? (
+                <Button
+                  type="button"
+                  variant={sourceMode ? 'secondary' : 'ghost'}
+                  size="sm"
+                  aria-pressed={sourceMode}
+                  aria-label="Edit as Markdown"
+                  title={sourceMode ? 'Back to the rich editor' : 'Edit as Markdown'}
+                  onClick={() => void (sourceMode ? exitSource() : enterSource())}
+                  className="h-[var(--space-8)] px-[var(--space-2)]"
+                >
+                  <FileCode width={16} height={16} />
+                  <span className="hidden md:inline">Markdown</span>
                 </Button>
               ) : null}
               {isDeck && roleResolved ? (
@@ -1787,6 +1883,27 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
             </span>
           </div>
         ) : null}
+        {sourceMode && sourceConflict ? (
+          <div
+            role="alert"
+            className={cn(
+              'flex flex-wrap items-center gap-[var(--space-2)]',
+              'bg-[var(--surface-2)] border border-[var(--border-subtle)]',
+              'rounded-[var(--radius-sm)]',
+              'px-[var(--space-3)] py-[var(--space-2)]',
+              'text-[length:var(--text-sm)] text-[var(--text-muted)]',
+            )}
+          >
+            <TriangleAlert aria-hidden width={14} height={14} className="text-[var(--warning)]" />
+            <span className="flex-1">Someone else saved this page while you were editing its Markdown.</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void loadSource()}>
+              Discard mine, load theirs
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void saveSource(true)}>
+              Overwrite with mine
+            </Button>
+          </div>
+        ) : null}
 
         <textarea
           ref={titleRef}
@@ -1827,21 +1944,18 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
           // A live outline (parsed from the unsaved buffer) sits alongside on
           // wide screens.
           <div className="flex min-h-0 flex-1 gap-[var(--space-4)]">
-            <textarea
-              value={body}
-              onChange={(e) => handleBodyChange(e.target.value)}
-              onBlur={handleBodyBlur}
-              autoFocus={bodyAutoFocus}
-              spellCheck={false}
-              aria-label="Deck markdown"
-              placeholder={'# Slide one\n\nWrite slides in Markdown.\n\n---\n\n# Slide two\n\n- Separate slides with ---'}
-              className={cn(
-                EDITOR_MIN_H,
-                'min-w-0 flex-1 resize-none bg-transparent outline-none',
-                'font-[family-name:var(--font-mono)] text-[length:var(--text-sm)]',
-                'leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-muted)]',
-              )}
-            />
+            <Suspense fallback={<EditorFallback />}>
+              <MarkdownSourceEditor
+                value={body}
+                onChange={handleBodyChange}
+                onBlur={handleBodyBlur}
+                onSave={handleBodyBlur}
+                autoFocus={bodyAutoFocus}
+                ariaLabel="Deck markdown"
+                placeholder={'# Slide one\n\nWrite slides in Markdown.\n\n---\n\n# Slide two\n\n- Separate slides with ---'}
+                className={cn(EDITOR_MIN_H, 'flex-1')}
+              />
+            </Suspense>
             <Suspense fallback={null}>
               <DeckEditorOutline body={body} pageId={page.id} className="hidden w-[16rem] shrink-0 lg:flex" />
             </Suspense>
@@ -1886,6 +2000,21 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
               />
             </Suspense>
           )
+        ) : sourceMode ? (
+          <Suspense fallback={<EditorFallback />}>
+            <MarkdownSourceEditor
+              value={body}
+              onChange={(next) => {
+                bodyRef.current = next
+                setBody(next)
+              }}
+              onBlur={() => void saveSource()}
+              onSave={() => void saveSource()}
+              autoFocus
+              ariaLabel="Page markdown"
+              className={EDITOR_MIN_H}
+            />
+          </Suspense>
         ) : roleResolved ? (
           <Suspense fallback={<EditorFallback />}>
             <MilkdownEditor

@@ -13,12 +13,18 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
     "@defterjs/core": "^0.3.0",
     "@defterjs/formula": "^0.3.0",
     "@defterjs/react": "^0.3.0",
     "@defterjs/xlsx": "^0.3.0",
     "@defterjs/yjs": "^0.3.0",
     "@excalidraw/excalidraw": "^0.18.1",
+    "@lezer/highlight": "^1.2.5",
     "@mermaid-js/layout-elk": "^0.2.2",
     "@milkdown/kit": "^7.21.1",
     "@milkdown/plugin-prism": "^7.21.1",

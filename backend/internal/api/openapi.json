@@ -885,7 +885,8 @@
                   "body": { "type": "string", "description": "The whole markdown document." },
                   "props": { "$ref": "#/components/schemas/PageProps" },
                   "status": { "type": "string", "enum": ["draft", "published"], "description": "A `draft` is labelled in the app and never served on public spaces or share links until published." },
-                  "base_version": { "type": "integer", "format": "int64", "description": "The page `version` you last read. If the page has changed since, the write is refused with `409 version_conflict` instead of overwriting that edit. Omit for last-write-wins." }
+                  "base_version": { "type": "integer", "format": "int64", "description": "The page `version` you last read. If the page has changed since, the write is refused with `409 version_conflict` instead of overwriting that edit. Omit for last-write-wins." },
+                  "reset_collab": { "type": "boolean", "description": "Set when the body was edited outside the page's live collaborative session (e.g. as raw markdown). Anyone with the page open in the editor reloads it from the new body." }
                 }
               }
             }

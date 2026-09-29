@@ -287,6 +287,10 @@ export interface UpdatePageInput {
   // theme. Reserved keys are ignored server-side.
   props?: Record<string, unknown>
   status?: 'draft' | 'published'
+  // Refuse the write (409 version_conflict) if the page moved past this version.
+  base_version?: number
+  // The body was edited outside the live collab session: live editors reload.
+  reset_collab?: boolean
 }
 
 // `parent_id`: omit to keep current; pass explicit `null` to make root.

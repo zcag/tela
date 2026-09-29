@@ -45,6 +45,10 @@ type pageUpdateRequest struct {
 	// refused (409 version_conflict) if the page has moved on since, instead
 	// of overwriting an edit the writer never saw. Nil keeps last-write-wins.
 	BaseVersion *int64 `json:"base_version"`
+	// ResetCollab marks a body write that did not go through the page's live
+	// collab session (the editor's markdown source mode). Like an agent write,
+	// it drops the Yjs overlay so live editors re-seed from the new body.
+	ResetCollab bool `json:"reset_collab"`
 }
 
 const (
@@ -699,8 +703,8 @@ func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	k, _ := auth.APIKeyFromContext(r.Context())
-	// agentWrite=false: a REST save is the editor's own collab-synced write (or a
-	// generic client); it must NOT drop the Yjs overlay it is in sync with.
+	// agentWrite=false: a REST save is a person's edit. It keeps the Yjs overlay
+	// it is in sync with unless the client wrote around it (req.ResetCollab).
 	p, ae := s.updatePageCore(r.Context(), u, k, id, req, false)
 	if ae != nil {
 		writeError(w, ae.Status, ae.Code, ae.Message)
@@ -854,7 +858,7 @@ func applyUpdateTx(ctx context.Context, tx *sql.Tx, id int64, req pageUpdateRequ
 // out-of-band/agent writes) reset the live Yjs overlay so editors re-seed from
 // the new body. Runs after commit so a failure here can't roll the save back —
 // it logs and proceeds. Shared by updatePageCore and the sync ingress.
-func (s *Server) afterPageWrite(ctx context.Context, existing, p models.Page, bodyProvided, agentWrite bool, authorID int64, source string) {
+func (s *Server) afterPageWrite(ctx context.Context, existing, p models.Page, bodyProvided, outOfBand bool, authorID int64, source string) {
 	changed := p.Body != existing.Body || p.Title != existing.Title
 	if changed {
 		// Title is folded into each chunk's embed text and body is the source,
@@ -871,10 +875,11 @@ func (s *Server) afterPageWrite(ctx context.Context, existing, p models.Page, bo
 		s.summarize.Queue(p.ID)
 		s.agreement.Queue(p.ID)
 	}
-	// When the body is rewritten out-of-band (MCP agent, file sync), drop the Yjs
+	// When the body is rewritten out-of-band (MCP agent, file sync, the editor's
+	// markdown source mode), drop the Yjs
 	// collab overlay so live + next editors re-seed from the new body instead of
 	// masking it with stale CRDT state. DB-wins, per the agent-backend sync design.
-	if agentWrite && bodyProvided && p.Body != existing.Body {
+	if outOfBand && bodyProvided && p.Body != existing.Body {
 		if err := s.rooms.resetPage(ctx, s.DB, p.ID); err != nil {
 			slog.Error("page collab overlay reset failed", "page_id", p.ID, "err", err)
 		}
@@ -946,7 +951,7 @@ func (s *Server) updatePageCore(ctx context.Context, u *auth.User, k *auth.APIKe
 	if agentWrite {
 		editSource = "agent"
 	}
-	s.afterPageWrite(ctx, existing, p, req.Body != nil, agentWrite, u.ID, editSource)
+	s.afterPageWrite(ctx, existing, p, req.Body != nil, agentWrite || req.ResetCollab, u.ID, editSource)
 	// Editing is an "I care about this page" signal — auto-follow it (autowatch).
 	// This is the interactive edit path (REST/MCP); sync edits go through
 	// applyUpdateTx directly and never reach here, so a vault sync won't subscribe.

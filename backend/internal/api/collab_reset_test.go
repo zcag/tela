@@ -81,4 +81,26 @@ func TestMCP_AgentWriteResetsCollabOverlay(t *testing.T) {
 	if n := countYjs(t, d, "page_yjs_updates", pageID); n != 1 {
 		t.Fatalf("editor REST save must preserve the overlay, have %d page_yjs_updates", n)
 	}
+
+	// --- markdown source-mode save (reset_collab) clears it, but stays a human edit ---
+	req, _ = http.NewRequest(http.MethodPatch, ts.URL+"/api/pages/"+strconv.FormatInt(pageID, 10), strings.NewReader(`{"body":"v4-from-source","reset_collab":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = cli.Do(req)
+	if err != nil {
+		t.Fatalf("rest patch: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rest patch status %d", resp.StatusCode)
+	}
+	if n := countYjs(t, d, "page_yjs_updates", pageID) + countYjs(t, d, "page_yjs_snapshots", pageID); n != 0 {
+		t.Fatalf("reset_collab save should clear the overlay, have %d rows", n)
+	}
+	var source string
+	if err := d.QueryRow(`SELECT source FROM page_revisions WHERE page_id = $1 AND body = 'v4-from-source'`, pageID).Scan(&source); err != nil {
+		t.Fatalf("revision: %v", err)
+	}
+	if source != "manual" {
+		t.Fatalf("source-mode save must be recorded as a manual edit, got %q", source)
+	}
 }

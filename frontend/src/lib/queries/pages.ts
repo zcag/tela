@@ -235,6 +235,12 @@ export function prefetchPage(qc: QueryClient, id: number): void {
   })
 }
 
+// Fetch the page now, ignoring staleTime, and store it: for a caller that must
+// start from the server's current body and version (markdown source mode).
+export function fetchFreshPage(qc: QueryClient, id: number) {
+  return qc.fetchQuery({ queryKey: pageKeys.detail(id), queryFn: () => fetchPageDetail(id), staleTime: 0 })
+}
+
 function makeOptimisticTreeNode(input: CreatePageInput, tempId: number): PageTreeNode {
   return {
     id: tempId,
