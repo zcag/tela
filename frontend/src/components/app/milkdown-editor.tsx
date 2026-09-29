@@ -60,7 +60,7 @@ import {
   type CollabProviderFactory,
 } from '../../lib/collab/use-collab-session'
 import { slashPlugin, SlashView } from './milkdown-slash'
-import { bubblePlugin, BubbleToolbarView } from './milkdown-bubble-toolbar'
+import { bubblePlugin, BubbleToolbarView, commentSelectionCtx } from './milkdown-bubble-toolbar'
 import { BlockHandleView } from './milkdown-block-handle'
 import { taskCheckboxPlugin } from './milkdown-task-list'
 import {
@@ -255,6 +255,9 @@ export interface MilkdownEditorProps {
   onAnchorsResolved?: (
     resolutions: Map<number, { from: number; to: number } | null>,
   ) => void
+  // The bubble toolbar's Comment button (shown only when comments are enabled):
+  // the host opens its comments panel on the live selection.
+  onCommentSelection?: () => void
   // M8.5 — when true, resolved threads still paint a muted underline
   // (`.tela-comment-anchor.is-resolved`). When false (default), the
   // underline disappears for resolved threads. Mirrors the panel's
@@ -294,6 +297,7 @@ function MilkdownEditorInner({
   commentThreads,
   onAnchorClick,
   onAnchorsResolved,
+  onCommentSelection,
   showResolvedAnchors = false,
   wikilinkMode = 'edit',
   pageId = 0,
@@ -319,6 +323,7 @@ function MilkdownEditorInner({
     onSelectionChange,
     onAnchorClick,
     onAnchorsResolved,
+    onCommentSelection,
   })
   callbacks.current = {
     onChange,
@@ -327,6 +332,7 @@ function MilkdownEditorInner({
     onSelectionChange,
     onAnchorClick,
     onAnchorsResolved,
+    onCommentSelection,
   }
 
   // M13.3b — Excalidraw Edit Sheet state. `null` = closed. The click /
@@ -494,6 +500,12 @@ function MilkdownEditorInner({
           ctx.set(bubblePlugin.key, {
             view: pluginViewFactory({ component: BubbleToolbarView }),
           })
+          // Captured once at build, like the comment-anchor plugin: the
+          // trampoline reads the latest handler through the callbacks ref.
+          ctx.set(
+            commentSelectionCtx.key,
+            commentsEnabled ? () => callbacks.current.onCommentSelection?.() : null,
+          )
           ctx.set(wikilinkPlugin.key, {
             view: pluginViewFactory({ component: WikilinkView }),
           })
@@ -819,6 +831,7 @@ function MilkdownEditorInner({
       .use(codeBlockNodeView)
       .use(slashPlugin)
       .use(bubblePlugin)
+      .use(commentSelectionCtx)
       .use(wikilinkPlugin)
       // Emoji shortcodes: `:rocket:` → 🚀 input rule + a caret-anchored
       // `:query` autocomplete picker. The Unicode char is what's stored in the

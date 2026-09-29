@@ -59,3 +59,17 @@ export function useGlobalShortcut(bindings: ShortcutBindings): void {
 
 export const IS_MAC =
   typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+
+const MODIFIER_LABELS: Record<string, [mac: string, other: string]> = {
+  Mod: ['⌘', 'Ctrl'],
+  Ctrl: ['⌃', 'Ctrl'],
+  Alt: ['⌥', 'Alt'],
+  Shift: ['⇧', 'Shift'],
+}
+
+// ProseMirror-style key name ('Mod-b', 'Mod-Alt-x') to a display label:
+// ⌘B / ⌘⌥X on macOS, Ctrl+B / Ctrl+Alt+X elsewhere.
+export function formatShortcut(key: string): string {
+  const parts = key.split('-').map((p) => MODIFIER_LABELS[p]?.[IS_MAC ? 0 : 1] ?? p.toUpperCase())
+  return parts.join(IS_MAC ? '' : '+')
+}

@@ -4,39 +4,71 @@ import { usePluginViewContext } from '@prosemirror-adapter/react'
 import { useInstance } from '@milkdown/react'
 import { commandsCtx, editorViewCtx } from '@milkdown/kit/core'
 import type { CmdKey } from '@milkdown/kit/core'
-import type { Ctx } from '@milkdown/ctx'
+import type { Ctx, SliceType } from '@milkdown/ctx'
+import { $ctx } from '@milkdown/kit/utils'
 import { NodeSelection } from '@milkdown/kit/prose/state'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import {
+  emphasisKeymap,
+  inlineCodeKeymap,
+  strongKeymap,
   toggleEmphasisCommand,
   toggleInlineCodeCommand,
   toggleLinkCommand,
   toggleStrongCommand,
   updateLinkCommand,
 } from '@milkdown/kit/preset/commonmark'
-import { toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
+import { strikethroughKeymap, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
 import { toggleHighlightCommand } from './milkdown-highlight'
 import {
   Bold,
+  Check,
+  ChevronDown,
   Code,
   Highlighter,
   Italic,
   Link as LinkIcon,
+  MessageSquare,
   Strikethrough,
+  Type,
 } from 'lucide-react'
 import { Input } from '../ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { positionFloating, setShow } from './milkdown-floating'
+import { TURN_INTO, currentTurnInto, type TurnIntoOption } from './milkdown-turn-into'
+import { formatShortcut } from '../../lib/useGlobalShortcut'
 import { cn } from '../../lib/utils'
 
 // eslint-disable-next-line react-refresh/only-export-components -- milkdown plugin slice lives with its view
 export const bubblePlugin = tooltipFactory('tela-bubble')
 
+// Set by the editor host when comments are on for this page: the bubble's
+// Comment button calls it (the host opens the comments panel on the live
+// selection). Null hides the button.
+// eslint-disable-next-line react-refresh/only-export-components -- milkdown ctx slice lives with its view
+export const commentSelectionCtx = $ctx<(() => void) | null, 'commentSelection'>(
+  null,
+  'commentSelection',
+)
+
+// A mark keymap slice (strongKeymap.key etc.): its first shortcut, formatted.
+type KeymapConfig = Record<string, { shortcuts: string | string[] }>
+function shortcutOf<T extends KeymapConfig, N extends string>(
+  ctx: Ctx,
+  slice: SliceType<T, N>,
+): string | undefined {
+  const first = Object.values(ctx.get(slice))[0]
+  const key = Array.isArray(first?.shortcuts) ? first.shortcuts[0] : first?.shortcuts
+  return key ? formatShortcut(key) : undefined
+}
+
 // Selection bubble-toolbar. Appears above a non-empty text selection and lets
-// the user apply inline marks (bold / italic / code / strikethrough / link)
-// without knowing the markdown syntax — the Medium/Notion gesture. All five
-// marks already exist in the schema (commonmark + gfm), so this is pure UI
-// over existing commands; nothing about the canonical markdown changes.
+// the user change the block type (the shared Turn-into list), apply inline
+// marks (bold / italic / code / strikethrough / highlight / link) and start a
+// comment, without knowing the markdown syntax: the Medium/Notion gesture.
+// Everything is an existing command, so nothing about the canonical markdown
+// changes. Tooltips show each mark's shortcut, read from Milkdown's keymap.
 //
 // Like SlashView, we DON'T use Milkdown's TooltipProvider helper: its internal
 // lodash.debounce wedges under our React + Yjs + Vite setup (same failure mode
@@ -129,6 +161,10 @@ export function BubbleToolbarView() {
   // selection persists, so the applied mark lands on the right range).
   const [linkMode, setLinkMode] = useState(false)
   const [linkValue, setLinkValue] = useState('')
+  // Block type of the selection (null = none of the Turn-into options, e.g. a
+  // callout or table cell) and whether its dropdown is open.
+  const [blockType, setBlockType] = useState<TurnIntoOption | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   // Reparent out of the editor DOM so PM doesn't manage the node (mirrors
   // SlashView). Done once per view.
@@ -151,14 +187,18 @@ export function BubbleToolbarView() {
     }
     if (!shouldShow(view)) {
       setShow(el, false)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- closes the dropdown with the bubble; a no-op when already closed
+      setMenuOpen(false)
       return
     }
     setShow(el, true)
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs PM selection state, identity-guarded
+    // Syncs PM selection state, identity-guarded (no re-render when unchanged).
     setActive((prev) => {
       const next = computeActive(view.state)
       return sameActive(prev, next) ? prev : next
     })
+    // TURN_INTO entries are stable objects, so identity is the equality check.
+    setBlockType(currentTurnInto(view.state))
     const { from, to } = view.state.selection
     let start
     let end
@@ -221,6 +261,19 @@ export function BubbleToolbarView() {
     runAction((ctx) => ctx.get(editorViewCtx).focus())
   }
 
+  function turnInto(option: TurnIntoOption) {
+    runAction(option.run)
+    setMenuOpen(false)
+  }
+
+  // Read from the editor ctx on render: each mark's live shortcut and the
+  // host's comment handler (null until the editor has loaded).
+  const editorCtx = loading ? null : (getEditor()?.ctx ?? null)
+  const keyOf = <T extends KeymapConfig, N extends string>(slice: SliceType<T, N>) =>
+    editorCtx ? shortcutOf(editorCtx, slice) : undefined
+  const onComment = editorCtx?.get(commentSelectionCtx.key) ?? null
+  const BlockIcon = blockType?.icon ?? Type
+
   return (
     <div
       ref={ref}
@@ -251,8 +304,48 @@ export function BubbleToolbarView() {
         />
       ) : (
         <>
+          <div className="tela-bubble-menu-anchor">
+            <BubbleButton
+              label="Turn into"
+              wide
+              expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <BlockIcon size="1em" strokeWidth={2.5} aria-hidden />
+              <span className="tela-bubble-label">{blockType?.label ?? 'Turn into'}</span>
+              <ChevronDown className="tela-bubble-chevron" size="1em" aria-hidden />
+            </BubbleButton>
+            {menuOpen ? (
+              <div className="tela-block-menu tela-bubble-menu" role="menu">
+                <div className="tela-block-menu-label">Turn into</div>
+                {TURN_INTO.map((option) => {
+                  const Icon = option.icon
+                  const current = option === blockType
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={current}
+                      className="tela-block-menu-item"
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        turnInto(option)
+                      }}
+                    >
+                      <Icon size="1em" aria-hidden />
+                      <span>{option.label}</span>
+                      {current ? <Check className="tela-bubble-menu-check" size="1em" aria-hidden /> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+          </div>
+          <span className="tela-bubble-sep" aria-hidden />
           <BubbleButton
             label="Bold"
+            shortcut={keyOf(strongKeymap.key)}
             active={active.strong}
             onClick={() => toggleMark(toggleStrongCommand.key)}
           >
@@ -260,6 +353,7 @@ export function BubbleToolbarView() {
           </BubbleButton>
           <BubbleButton
             label="Italic"
+            shortcut={keyOf(emphasisKeymap.key)}
             active={active.emphasis}
             onClick={() => toggleMark(toggleEmphasisCommand.key)}
           >
@@ -267,6 +361,7 @@ export function BubbleToolbarView() {
           </BubbleButton>
           <BubbleButton
             label="Strikethrough"
+            shortcut={keyOf(strikethroughKeymap.key)}
             active={active.strike}
             onClick={() => toggleMark(toggleStrikethroughCommand.key)}
           >
@@ -274,6 +369,7 @@ export function BubbleToolbarView() {
           </BubbleButton>
           <BubbleButton
             label="Inline code"
+            shortcut={keyOf(inlineCodeKeymap.key)}
             active={active.inlineCode}
             onClick={() => toggleMark(toggleInlineCodeCommand.key)}
           >
@@ -286,9 +382,19 @@ export function BubbleToolbarView() {
           >
             <Highlighter size="1em" strokeWidth={2.5} aria-hidden />
           </BubbleButton>
+          <span className="tela-bubble-sep" aria-hidden />
           <BubbleButton label="Link" active={active.link} onClick={openLinkMode}>
             <LinkIcon size="1em" strokeWidth={2.5} aria-hidden />
           </BubbleButton>
+          {onComment ? (
+            <>
+              <span className="tela-bubble-sep" aria-hidden />
+              <BubbleButton label="Comment" wide onClick={onComment}>
+                <MessageSquare size="1em" strokeWidth={2.5} aria-hidden />
+                <span className="tela-bubble-label">Comment</span>
+              </BubbleButton>
+            </>
+          ) : null}
         </>
       )}
     </div>
@@ -297,27 +403,44 @@ export function BubbleToolbarView() {
 
 interface BubbleButtonProps {
   label: string
-  active: boolean
+  // Mark state (aria-pressed). Omitted for action buttons.
+  active?: boolean
+  // Set for a button that opens a menu (aria-expanded instead of pressed).
+  expanded?: boolean
+  // Carries a visible text label next to the icon (hidden on narrow screens).
+  wide?: boolean
+  shortcut?: string
   onClick: () => void
   children: React.ReactNode
 }
 
-function BubbleButton({ label, active, onClick, children }: BubbleButtonProps) {
+function BubbleButton({ label, active, expanded, wide, shortcut, onClick, children }: BubbleButtonProps) {
   return (
-    <button
-      type="button"
-      className={cn('tela-bubble-btn')}
-      aria-label={label}
-      aria-pressed={active}
-      data-active={active ? 'true' : 'false'}
-      // preventDefault keeps the editor focused + selection intact through the
-      // click, so the toggled mark lands on the selected range.
-      onMouseDown={(e) => {
-        e.preventDefault()
-        onClick()
-      }}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn('tela-bubble-btn', wide && 'tela-bubble-btn--wide')}
+          // A wide button is named by its visible text; the tooltip says what it does.
+          aria-label={wide ? undefined : label}
+          aria-pressed={active}
+          aria-haspopup={expanded === undefined ? undefined : 'menu'}
+          aria-expanded={expanded}
+          data-active={active || expanded ? 'true' : 'false'}
+          // preventDefault keeps the editor focused + selection intact through the
+          // click, so the command lands on the selected range.
+          onMouseDown={(e) => {
+            e.preventDefault()
+            onClick()
+          }}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        {label}
+        {shortcut ? <kbd className="tela-tooltip-kbd">{shortcut}</kbd> : null}
+      </TooltipContent>
+    </Tooltip>
   )
 }

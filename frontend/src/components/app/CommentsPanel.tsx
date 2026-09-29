@@ -47,6 +47,8 @@ interface CommentsPanelProps {
   onShowResolvedChange: (next: boolean) => void
   // When false, the new-comment composer is hidden (read view — no selection).
   canCompose?: boolean
+  // See CommentComposer.focusSignal.
+  composeFocusSignal?: number
 }
 
 export function CommentsPanel({
@@ -64,6 +66,7 @@ export function CommentsPanel({
   // Hidden in read view, where there's no editor selection to anchor a new
   // comment to (reading + replying to existing threads still works).
   canCompose = true,
+  composeFocusSignal,
 }: CommentsPanelProps) {
   // Backend orders threads ASC by created_at; show newest at top in the panel.
   const commentsQuery = useComments({ pageId })
@@ -170,6 +173,7 @@ export function CommentsPanel({
               captureAnchor={captureAnchor}
               anchorPreview={anchorPreview}
               onSubmit={handleCreateRoot}
+              focusSignal={composeFocusSignal}
             />
           ) : null}
 

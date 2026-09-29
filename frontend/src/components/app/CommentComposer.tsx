@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CommentAnchor } from '../../lib/comments/anchor'
 import { ApiError } from '../../lib/api'
 import { Button } from '../ui/button'
@@ -22,6 +22,10 @@ interface CommentComposerProps {
   // submit. Drives the inline "Commenting on: …" preview above the
   // textarea so the user can confirm the right passage is selected.
   anchorPreview: string | null
+  // Focus the textarea whenever this changes to a non-zero value (and on mount
+  // with one): the editor's bubble Comment button. 0 leaves focus alone, so
+  // opening the panel from the header doesn't pull focus off the editor.
+  focusSignal?: number
 }
 
 export function CommentComposer({
@@ -29,10 +33,15 @@ export function CommentComposer({
   captureAnchor,
   onSubmit,
   anchorPreview,
+  focusSignal = 0,
 }: CommentComposerProps) {
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (focusSignal) textareaRef.current?.focus()
+  }, [focusSignal])
 
   const disabled = !hasSelection || busy
 
@@ -100,6 +109,7 @@ export function CommentComposer({
         </p>
       ) : null}
       <TextArea
+        ref={textareaRef}
         font="sans"
         size="sm"
         value={body}

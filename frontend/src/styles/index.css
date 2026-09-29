@@ -423,6 +423,12 @@
   .tela-tooltip-arrow {
     fill: var(--surface-3);
   }
+  /* Keyboard shortcut after a tooltip label ("Bold ⌘B"). */
+  .tela-tooltip-kbd {
+    margin-left: var(--space-2);
+    font-family: var(--font-sans);
+    color: var(--text-muted);
+  }
 
   .tela-dropdown-content {
     z-index: 50;

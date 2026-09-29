@@ -1593,6 +1593,55 @@
   .tela-bubble-link-input {
     min-width: 18rem;
   }
+  /* Icon + visible text (block-type pill, Comment). */
+  .tela-bubble-btn--wide {
+    width: auto;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    white-space: nowrap;
+  }
+  .tela-bubble-chevron {
+    opacity: 0.6;
+  }
+  .tela-bubble-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: var(--space-1) 0;
+    background: var(--border-subtle);
+  }
+  /* The Turn-into dropdown hangs under its pill, inside the fixed bubble. */
+  .tela-bubble-menu-anchor {
+    position: relative;
+    display: flex;
+  }
+  /* Two classes: must beat .tela-block-menu's position: fixed (defined later). */
+  .tela-block-menu.tela-bubble-menu {
+    position: absolute;
+    top: calc(100% + var(--space-2));
+    left: 0;
+  }
+  .tela-bubble-menu .tela-block-menu-item[aria-checked='true'] {
+    color: var(--accent);
+  }
+  .tela-bubble-menu-check {
+    margin-left: auto;
+  }
+  /* Phones: the full bubble is wider than the screen, so wide buttons drop
+     their text (kept for screen readers) and the bubble fits on one row. */
+  @media (max-width: 47.99rem) {
+    .tela-bubble-btn--wide {
+      gap: 0;
+      padding: 0 var(--space-1);
+    }
+    .tela-bubble-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
 
   /* Kanban board (:::kanban). Columns laid out horizontally; cards are the
      list items, draggable between columns. */

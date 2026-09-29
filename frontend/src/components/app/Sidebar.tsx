@@ -26,7 +26,7 @@ import {
 import { emitOpenNewPage } from '../../lib/newPageEvent'
 import { emitOpenNewSpace } from '../../lib/newSpaceEvent'
 import { emitOpenPalette } from '../../lib/paletteEvent'
-import { IS_MAC } from '../../lib/useGlobalShortcut'
+import { formatShortcut } from '../../lib/useGlobalShortcut'
 import { cn } from '../../lib/utils'
 
 export function Sidebar({
@@ -58,7 +58,7 @@ export function Sidebar({
   // 'c', not Ctrl/⌘-N: browsers claim Ctrl/⌘-N for a new window before the page
   // sees the keydown, so the modifier chord never reaches us. See lib/keys/bindings.
   const newPageShortcut = 'c'
-  const searchShortcut = IS_MAC ? '⌘K' : 'Ctrl+K'
+  const searchShortcut = formatShortcut('Mod-k')
 
   return (
     <aside

@@ -1187,9 +1187,18 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
   }, [])
   // The side panels are mutually exclusive; one handler each, shared by the
   // header bar and the compact "•••" menu (mirrors PageViewer).
+  // Bumped by the bubble's Comment button so the composer takes focus; the
+  // header button resets it, opening the panel without moving focus.
+  const [composeFocus, setComposeFocus] = useState(0)
   const openComments = useCallback(() => {
     setGraphOpen(false)
     setCommentsOpen(true)
+    setComposeFocus(0)
+  }, [])
+  const commentOnSelection = useCallback(() => {
+    setGraphOpen(false)
+    setCommentsOpen(true)
+    setComposeFocus((n) => n + 1)
   }, [])
   const openGraph = useCallback(() => {
     setCommentsOpen(false)
@@ -2035,6 +2044,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
               commentThreads={commentThreadsForEditor}
               onAnchorClick={isViewer ? undefined : handleAnchorClick}
               onAnchorsResolved={isViewer ? undefined : handleAnchorsResolved}
+              onCommentSelection={isViewer ? undefined : commentOnSelection}
               showResolvedAnchors={showResolvedComments}
               pageId={page.id}
             />
@@ -2091,6 +2101,7 @@ function PageEditor({ page, spaceId, draftRevId, onDeleted, isDeck, isSheet, scr
           hasSelection={!selectionEmpty}
           captureAnchor={captureCurrentAnchor}
           anchorPreview={selectionEmpty ? null : selectionPreview}
+          composeFocusSignal={composeFocus}
           me={{ id: me.data.id, username: me.data.username }}
           isSpaceOwner={isSpaceOwner}
           orphanIds={orphanIds}
