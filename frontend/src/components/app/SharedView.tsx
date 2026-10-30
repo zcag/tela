@@ -7,6 +7,7 @@ import { Button } from '../ui/button'
 import { VisibilityBadge } from '../ui/visibility-badge'
 import { formatExpiry } from './ShareManagerSheet-utils'
 import { cn } from '../../lib/utils'
+import { useDocumentTitle } from '../../lib/useHeadMeta'
 
 // SharedView — the cross-space audit screen (docs/visibility-model.md). One
 // list answering "what is reachable by link right now", instead of opening each
@@ -14,6 +15,7 @@ import { cn } from '../../lib/utils'
 // exposure state, the page it exposes, the URL, and expiry.
 
 export function SharedRoute() {
+  useDocumentTitle('Shared')
   const shares = useAllShares()
   // Ticks every 60s so the "expires in …" labels stay fresh while the page is
   // open (mirrors ShareManagerSheet-row's clock).

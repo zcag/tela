@@ -19,8 +19,10 @@ import { Input } from '../components/ui/input'
 import { AuthShell, AuthField, AuthFooterLink } from '../components/app/AuthShell'
 import { SSOButtons } from '../components/app/SSOButtons'
 import { MaintenanceBanner } from '../components/app/MaintenanceBanner'
+import { useDocumentTitle } from '../lib/useHeadMeta'
 
 export function LoginPage() {
+  useDocumentTitle('Log in')
   const navigate = useNavigate()
   const search = useSearch({ from: '/login' }) as {
     next?: string

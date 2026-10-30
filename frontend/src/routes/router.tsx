@@ -52,6 +52,7 @@ import { writeLastPage } from '../lib/lastPage'
 import { prefetchPage, useCreatePage, usePages } from '../lib/queries/pages'
 import { prefetchPublicSpacePage } from '../lib/queries/public'
 import type { Page, PageTreeNode, Space } from '../lib/types'
+import { useDocumentTitle } from '../lib/useHeadMeta'
 
 // Resolve the session once and cache it; both AppLayout and LoginRoute reuse
 // the same cached result so a quick login → redirect doesn't trigger two
@@ -537,6 +538,7 @@ const spaceIndexRoute = createRoute({
     const createPage = useCreatePage()
     const spaces = queryClient.getQueryData<Space[]>(spaceKeys.list()) ?? []
     const spaceName = spaces.find((s) => s.id === spaceId)?.name ?? ''
+    useDocumentTitle(spaceName || undefined)
     const nodes = (tree.data as PageTreeNode[] | undefined) ?? []
 
     async function handleCreate() {

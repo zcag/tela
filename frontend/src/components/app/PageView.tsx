@@ -150,6 +150,7 @@ import { SheetExportMenu } from './sheet-export-menu'
 import { prefetchMilkdownEditor } from '../../lib/prefetchEditor'
 import { useFileDownload } from './use-file-download'
 import { toast, updateToast } from '../ui/toast'
+import { useDocumentTitle } from '../../lib/useHeadMeta'
 
 // Milkdown is the largest dependency in the app (~700 KB raw). Lazy-load it so
 // non-editor routes (sidebar, spaces list, command palette) don't pay for it
@@ -232,6 +233,7 @@ export function PageView({ spaceId, pageId }: PageViewProps) {
   // param change on the SAME route, so it never remounts the editor.
   const persistedTitle = page.data?.title ?? ''
   const inThisSpace = page.data?.space_id === spaceId
+  useDocumentTitle(page.data ? persistedTitle || 'Untitled' : undefined)
   useEffect(() => {
     if (!page.data || !inThisSpace) return
     const desired = pageSlug(persistedTitle)

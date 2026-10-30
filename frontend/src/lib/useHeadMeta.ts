@@ -8,6 +8,23 @@ import { useEffect } from 'react'
 // bot-gate (backend api/public_og.go). Tags are created on mount and removed on
 // unmount so navigating away restores the prior head.
 
+// The tab title for any surface: "{title} - tela", or bare "tela" with no title.
+export function brandedTitle(title?: string): string {
+  return title ? `${title} - tela` : 'tela'
+}
+
+// Tab title for the signed-in app, restored on unmount. Public surfaces set it
+// through useHeadMeta along with the rest of their head.
+export function useDocumentTitle(title?: string) {
+  useEffect(() => {
+    const prev = document.title
+    document.title = brandedTitle(title)
+    return () => {
+      document.title = prev
+    }
+  }, [title])
+}
+
 export interface HeadMeta {
   title: string
   description?: string

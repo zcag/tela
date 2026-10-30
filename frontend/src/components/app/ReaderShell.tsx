@@ -11,7 +11,7 @@ import {
   relativeTimeFromSqlite,
   postDateFromSqlite,
 } from '../../lib/relativeTime'
-import { useHeadMeta } from '../../lib/useHeadMeta'
+import { brandedTitle, useHeadMeta } from '../../lib/useHeadMeta'
 import { internalRoutePath } from '../../lib/markdown/link-target'
 import {
   stampHeadingIds,
@@ -237,7 +237,7 @@ export function ReaderShell({
   // Document title (+ full SEO/social meta on the public reader, when headMeta
   // is supplied) while in the reader.
   useHeadMeta({
-    title: `${title || 'Untitled'} — tela`,
+    title: brandedTitle(title || 'Untitled'),
     description: headMeta?.description,
     canonicalPath: headMeta?.canonicalPath,
     image: headMeta?.image,

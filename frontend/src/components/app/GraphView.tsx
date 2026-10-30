@@ -12,6 +12,7 @@ import {
 import { navigateToPage } from '../../lib/pageHitItem'
 import { Button } from '../ui/button'
 import { PageGraph } from './PageGraph'
+import { useDocumentTitle } from '../../lib/useHeadMeta'
 
 interface GraphSearchParams {
   focus?: number
@@ -19,6 +20,7 @@ interface GraphSearchParams {
 }
 
 export function GraphRoute() {
+  useDocumentTitle('Graph')
   const { focus, space } = useSearch({ from: '/_app/graph' }) as GraphSearchParams
   const navigate = useNavigate()
   const [showSemantic, setShowSemantic] = useState(false)

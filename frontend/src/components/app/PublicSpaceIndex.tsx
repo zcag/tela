@@ -5,7 +5,7 @@ import {
   type PublicPageNode,
   type PublicSpacePayload,
 } from '../../lib/queries/public'
-import { useHeadMeta } from '../../lib/useHeadMeta'
+import { brandedTitle, useHeadMeta } from '../../lib/useHeadMeta'
 import { blogChip, sectionLabel, sortByNewest, topLevelPosts } from '../../lib/blog'
 import { Input } from '../ui/input'
 import { PublicPageShell } from './blog/PublicPageShell'
@@ -59,7 +59,7 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
   const feedUrl = `/api/public/spaces/${space.id}/feed.xml`
 
   useHeadMeta({
-    title: `${space.name}${activeTag ? ` · ${activeTag}` : ''} — tela`,
+    title: brandedTitle(`${space.name}${activeTag ? ` · ${activeTag}` : ''}`),
     description: space.description || `Posts from ${space.name}.`,
     canonicalPath:
       space.owner_handle && space.slug
