@@ -135,10 +135,7 @@ help:
 	@echo "  make plugin-validate  # validate the Claude Code plugin manifests in plugin/"
 	@echo "  make plugin-publish   # mirror plugin/ to the public tela-claude-plugin repo"
 
-# `up` builds the marketing landing first so the proxy's /srv/landing mount is
-# populated (Caddy serves it at the apex). All images — including the proxy,
-# which now bakes the landing build (deploy/proxy/Dockerfile) — build via
-# compose, so `make up` needs only Docker, no host Node.
+# `up` builds every image via compose, so it needs only Docker, no host Node.
 #
 # The Caddyfile is still a single-file bind mount; compose won't recreate the
 # proxy on a Caddyfile-only change, and the mount pins the OLD inode after a

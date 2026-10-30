@@ -7,10 +7,11 @@
 # its own Caddyfile, which supplies the matching global block.
 #
 # Upstreams + the landing root are env placeholders so the same file works both
-# in the all-in-one compose (container DNS: backend:8080 / frontend:80, landing
-# baked at /srv/landing — the defaults below) AND imported into a host-network
-# edge that reaches the published host ports and a host-mounted landing dist.
-# Leave the env unset → identical to the original hardcoded behavior.
+# in the all-in-one compose (container DNS: backend:8080 / frontend:80, the
+# defaults below) AND imported into a host-network edge that reaches the
+# published host ports. The marketing landing is telawiki.com's alone: its edge
+# points TELA_LANDING_ROOT at a host-mounted landing dist. The self-host proxy
+# image ships none, so /srv/landing is empty there and "/" is the app.
 
 # Site address. Defaults to :80 — the right value behind an external TLS
 # terminator (Cloudflare, a load balancer). For DIRECT TLS with no terminator,
@@ -337,15 +338,17 @@
 	}
 
 	# ── Marketing landing (standalone Astro static) + app SPA ───────────────
-	# The landing build (landing/dist, mounted read-only at /srv/landing) owns
-	# the apex "/", its /_astro/* assets, AND the SEO/root files it ships
+	# Where a landing is mounted (telawiki.com only; see the header), its build
+	# owns the apex "/", its /_astro/* assets, AND the SEO/root files it ships
 	# (robots.txt, sitemap.xml, llms.txt, llms-full.txt, og-image.png,
 	# manifest.webmanifest, apple-touch-icon.png, icon-*.png, favicon.svg).
 	# Any path that exists as a file in /srv/landing is served from the landing
 	# and stays indexable; everything else (/login, /spaces/*, /settings, the
 	# app's Vite /assets/*, …) falls through to the app SPA and is noindex'd.
 	# A cookieless (logged-out) hard load of "/" lands here; a session-bearing
-	# one is captured by @root_app above and routed to the app instead.
+	# one is captured by @root_app above and routed to the app instead. With no
+	# landing mounted, nothing matches @landing_file and "/" reaches the SPA,
+	# whose "/" resolves to the user's space or /login.
 	handle {
 		root * {$TELA_LANDING_ROOT:/srv/landing}
 

@@ -2,8 +2,9 @@
 
 tela self-hosts as a Docker Compose stack: Postgres, the Go backend, the static
 frontend, an optional embedder, and a Caddy reverse proxy. You need **Docker
-with Compose** — and nothing else on the host (the marketing landing is built
-inside the proxy image, so no Node toolchain is required).
+with Compose**, and nothing else on the host. The instance's root URL is the app
+itself (signed-out visitors land on the login page); telawiki.com's marketing
+page is not part of a self-hosted install.
 
 > tela is AGPL-3.0. You may run, modify, and redistribute it under those terms;
 > see [`../LICENSE`](../LICENSE) and [`../TRADEMARK.md`](../TRADEMARK.md).

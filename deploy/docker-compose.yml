@@ -195,11 +195,9 @@ services:
     restart: unless-stopped
 
   proxy:
-    # Built from deploy/proxy/Dockerfile (repo-root context) which bakes the
-    # static marketing landing into the image — so `make up` needs only Docker,
-    # not a host Node toolchain. Caddy serves the landing at the apex from the
-    # baked /srv/landing; the Caddyfile stays bind-mounted so config tweaks don't
-    # need an image rebuild.
+    # Built from deploy/proxy/Dockerfile (repo-root context): Caddy with tela's
+    # routing and no marketing landing, so "/" is the app. The Caddyfile stays
+    # bind-mounted so config tweaks don't need an image rebuild.
     build:
       context: ..
       dockerfile: deploy/proxy/Dockerfile
