@@ -1,5 +1,5 @@
 # tela deck render sidecar — Slidev + headless Chromium for export.
-FROM node:20-slim
+FROM node:24-slim
 
 ENV PORT=3344 \
     DECK_CACHE=/data \
