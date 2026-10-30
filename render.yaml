@@ -17,7 +17,7 @@ services:
     name: tela
     runtime: image
     image:
-      url: ghcr.io/zcag/tela-proxy:0.11.0
+      url: ghcr.io/zcag/tela-proxy:0.11.1
     plan: starter
     envVars:
       - key: TELA_SITE_ADDRESS
@@ -31,7 +31,7 @@ services:
     name: tela-backend
     runtime: image
     image:
-      url: ghcr.io/zcag/tela-backend:0.11.0
+      url: ghcr.io/zcag/tela-backend:0.11.1
     plan: starter
     envVars:
       - key: TELA_PUBLIC_BASE_URL
@@ -55,14 +55,14 @@ services:
     name: tela-frontend
     runtime: image
     image:
-      url: ghcr.io/zcag/tela-frontend:0.11.0
+      url: ghcr.io/zcag/tela-frontend:0.11.1
     plan: starter
 
   - type: pserv
     name: tela-deck
     runtime: image
     image:
-      url: ghcr.io/zcag/tela-deck:0.11.0
+      url: ghcr.io/zcag/tela-deck:0.11.1
     plan: starter
     disk:
       name: tela-deckcache
