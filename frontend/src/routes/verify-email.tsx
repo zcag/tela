@@ -10,10 +10,12 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { AuthShell } from '../components/app/AuthShell'
+import { useBrand } from '../lib/queries/host-context'
 
 type Phase = 'verifying' | 'done' | 'error' | 'missing'
 
 export function VerifyEmailPage() {
+  const brandName = useBrand().name
   const search = useSearch({ from: '/verify-email' }) as { token?: string }
   const verify = useVerifyEmail()
   const navigate = useNavigate()
@@ -43,7 +45,7 @@ export function VerifyEmailPage() {
               Email confirmed
             </CardTitle>
             <CardDescription>
-              Your account is active. Welcome to tela.
+              Your account is active. Welcome to {brandName}.
             </CardDescription>
           </CardHeader>
           <CardBody>
@@ -52,7 +54,7 @@ export function VerifyEmailPage() {
               size="lg"
               onClick={() => void navigate({ to: '/' })}
             >
-              Go to tela
+              Go to {brandName}
             </Button>
           </CardBody>
         </Card>

@@ -184,6 +184,12 @@ func (s *Server) ServeOrgLogo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "load logo failed")
 		return
 	}
+	serveLogo(w, r, data, mime, hash)
+}
+
+// serveLogo writes stored logo bytes with a content-hash ETag. Shared by the org
+// and instance logo routes.
+func serveLogo(w http.ResponseWriter, r *http.Request, data []byte, mime, hash string) {
 	etag := `"` + hash + `"`
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
@@ -196,47 +202,65 @@ func (s *Server) ServeOrgLogo(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// importOrgLogo fetches a URL once (SSRF-guarded, no redirects — the same dial
-// guard as the unfurl title fetch) and stores the bytes as the org logo.
+// importOrgLogo fetches a URL once and stores the bytes as the org logo.
 func (s *Server) importOrgLogo(ctx context.Context, orgID int64, raw string) *apiErr {
+	data, ae := fetchLogo(ctx, raw)
+	if ae != nil {
+		return ae
+	}
+	return s.storeOrgLogo(ctx, orgID, data)
+}
+
+// fetchLogo fetches a logo URL once (SSRF-guarded, no redirects: the same dial
+// guard as the unfurl title fetch).
+func fetchLogo(ctx context.Context, raw string) ([]byte, *apiErr) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return &apiErr{http.StatusBadRequest, "bad_request", "logo URL must be an http(s):// URL"}
+		return nil, &apiErr{http.StatusBadRequest, "bad_request", "logo URL must be an http(s):// URL"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return &apiErr{http.StatusBadRequest, "bad_request", "invalid logo URL"}
+		return nil, &apiErr{http.StatusBadRequest, "bad_request", "invalid logo URL"}
 	}
 	resp, err := newUnfurlClient().Do(req)
 	if err != nil {
-		return &apiErr{http.StatusBadGateway, "fetch_failed", "could not fetch the logo URL: " + err.Error()}
+		return nil, &apiErr{http.StatusBadGateway, "fetch_failed", "could not fetch the logo URL: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return &apiErr{http.StatusBadGateway, "fetch_failed", fmt.Sprintf("logo URL returned %d", resp.StatusCode)}
+		return nil, &apiErr{http.StatusBadGateway, "fetch_failed", fmt.Sprintf("logo URL returned %d", resp.StatusCode)}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, orgLogoMaxBytes+1))
 	if err != nil {
-		return &apiErr{http.StatusBadGateway, "fetch_failed", "could not read the logo"}
+		return nil, &apiErr{http.StatusBadGateway, "fetch_failed", "could not read the logo"}
 	}
-	return s.storeOrgLogo(ctx, orgID, data)
+	return data, nil
+}
+
+// validateLogo checks raster image bytes and returns their sniffed MIME type and
+// a short content hash for cache-busting.
+func validateLogo(data []byte) (mime, hash string, ae *apiErr) {
+	if len(data) == 0 {
+		return "", "", &apiErr{http.StatusBadRequest, "bad_request", "logo is empty"}
+	}
+	if len(data) > orgLogoMaxBytes {
+		return "", "", &apiErr{http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("logo exceeds %d MB", orgLogoMaxBytes>>20)}
+	}
+	mime = http.DetectContentType(data)
+	if !allowedLogoMime[mime] {
+		return "", "", &apiErr{http.StatusBadRequest, "bad_request", "logo must be a PNG, JPEG, WebP or GIF image"}
+	}
+	sum := sha256.Sum256(data)
+	return mime, hex.EncodeToString(sum[:])[:16], nil
 }
 
 // storeOrgLogo validates raster image bytes, content-addresses them, and writes
 // them to org_branding with logo_url pointing at the tela serve route.
 func (s *Server) storeOrgLogo(ctx context.Context, orgID int64, data []byte) *apiErr {
-	if len(data) == 0 {
-		return &apiErr{http.StatusBadRequest, "bad_request", "logo is empty"}
+	mime, hash, ae := validateLogo(data)
+	if ae != nil {
+		return ae
 	}
-	if len(data) > orgLogoMaxBytes {
-		return &apiErr{http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("logo exceeds %d MB", orgLogoMaxBytes>>20)}
-	}
-	mime := http.DetectContentType(data)
-	if !allowedLogoMime[mime] {
-		return &apiErr{http.StatusBadRequest, "bad_request", "logo must be a PNG, JPEG, WebP or GIF image"}
-	}
-	sum := sha256.Sum256(data)
-	hash := hex.EncodeToString(sum[:])[:16]
 	serveURL := fmt.Sprintf("/api/public/orgs/%d/logo?v=%s", orgID, hash)
 	if _, err := s.DB.ExecContext(ctx, `
 		INSERT INTO org_branding (org_id, logo_url, logo_data, logo_mime, logo_hash)

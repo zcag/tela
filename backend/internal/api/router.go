@@ -432,6 +432,10 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/admin/feedback/{id}", srv.UpdateFeedbackStatus)
 	mux.HandleFunc("GET /api/admin/settings", srv.GetInstanceSettings)
 	mux.HandleFunc("PATCH /api/admin/settings", srv.PatchInstanceSettings)
+	mux.HandleFunc("GET /api/admin/branding", srv.GetInstanceBranding)
+	mux.HandleFunc("PUT /api/admin/branding", srv.PutInstanceBranding)
+	mux.HandleFunc("POST /api/admin/branding/logo", srv.UploadInstanceLogo)
+	mux.HandleFunc("DELETE /api/admin/branding/logo", srv.DeleteInstanceLogo)
 	mux.HandleFunc("GET /api/admin/updates", srv.GetUpdateStatus)
 	mux.HandleFunc("POST /api/admin/updates/check", srv.CheckForUpdate)
 	mux.HandleFunc("GET /api/admin/license", srv.GetLicense)
@@ -567,6 +571,8 @@ func registerRoutes(srv *Server, mux *http.ServeMux) {
 	// white-label login screen, and fetched by the server-side deck renderer). Under
 	// /api/public/ so it's on IsPublicPath; content-addressed (?v=<hash>), GET-only.
 	mux.HandleFunc("GET /api/public/orgs/{id}/logo", srv.ServeOrgLogo)
+	mux.HandleFunc("GET /api/public/instance/logo", srv.ServeInstanceLogo)
+	mux.HandleFunc("GET /api/public/brand/head", srv.BrandHead)
 	// Host context: org branding + enabled sign-in methods for the request's
 	// host. Public (host-derived, pre-login) — see IsPublicPath.
 	mux.HandleFunc("GET /api/host-context", srv.HostContext)

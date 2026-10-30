@@ -2,6 +2,7 @@ package mailer
 
 import (
 	"bytes"
+	"cmp"
 	"html/template"
 	"strings"
 )
@@ -48,11 +49,11 @@ type DigestAttention struct {
 type DigestData struct {
 	Greeting  string
 	DateRange string
-	Gist      string          // one-line summary of what MATTERS (not volume)
-	ForYou    []DigestForYou  // personal + actionable — the lead
-	Updates   []DigestUpdate  // notable human-authored changes
-	MoreCount int             // "+N more" human updates
-	AtlasLine string          // one-line rollup of bulk Atlas generation ("" hides)
+	Gist      string            // one-line summary of what MATTERS (not volume)
+	ForYou    []DigestForYou    // personal + actionable — the lead
+	Updates   []DigestUpdate    // notable human-authored changes
+	MoreCount int               // "+N more" human updates
+	AtlasLine string            // one-line rollup of bulk Atlas generation ("" hides)
 	Attention []DigestAttention // housekeeping: open questions, then stale docs
 	AppURL    string
 	PrefsURL  string
@@ -141,7 +142,7 @@ func renderDigestText(d DigestData) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("Open tela: " + d.AppURL + "\n")
+	b.WriteString("Open " + cmp.Or(strings.TrimSpace(d.Brand.Name), "tela") + ": " + d.AppURL + "\n")
 	return b.String()
 }
 

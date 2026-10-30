@@ -1,15 +1,15 @@
-import { useHostContext } from '../lib/queries/host-context'
+import { useBrand } from '../lib/queries/host-context'
 import { cn } from '../lib/utils'
 
-// A discreet product credit shown ONLY on an org's custom domain — on the
-// canonical host the app is already tela-branded, so this renders nothing.
+// A discreet product credit shown whenever the host wears another brand (an
+// org's custom domain, or a rebranded instance); a tela-branded host renders
+// nothing. Always on: there is deliberately no setting to hide it.
 // Links to the tela product site, so every white-labeled org domain quietly
 // credits (and markets) tela. Deliberately small/muted: present, not loud.
 const TELA_HOME = 'https://telawiki.com'
 
 export function PoweredByTela({ className }: { className?: string }) {
-  const org = useHostContext().data?.org ?? null
-  if (!org) return null
+  if (!useBrand().custom) return null
   return (
     <a
       href={TELA_HOME}

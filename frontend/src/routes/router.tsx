@@ -104,7 +104,7 @@ const rootRoute = createRootRoute({
         description="That page doesn’t exist or you don’t have access to it."
         actions={
           <Button asChild variant="primary" size="lg">
-            <Link to="/">Back to tela</Link>
+            <Link to="/">Back to home</Link>
           </Button>
         }
       />
@@ -197,7 +197,7 @@ const appLayoutRoute = createRoute({
               </button>
               <Link
                 to="/"
-                aria-label="tela home"
+                aria-label="Home"
                 className="inline-flex rounded-[var(--radius-xs)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 <BrandLogo size={20} />

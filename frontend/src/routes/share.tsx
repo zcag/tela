@@ -7,6 +7,7 @@ import { ShareReaderView } from '../components/app/ShareReader'
 import { SharePasswordScreen } from '../components/app/SharePasswordScreen'
 import { ThemeSwitcher } from '../components/ThemeSwitcher'
 import { Card, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { useBrand } from '../lib/queries/host-context'
 
 // Public share routes — attached to `rootRoute` (NOT appLayoutRoute) because
 // share-mode is unauthenticated. The router config wires both routes through
@@ -14,6 +15,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from '../components/ui/c
 // chunk for logged-in users isn't bloated.
 
 function ShareShell({ children }: { children: React.ReactNode }) {
+  const brandName = useBrand().name
   // Bare shell for error / loading states (no Sidebar / Header chrome from
   // the in-scope share metadata yet).
   return (
@@ -24,10 +26,10 @@ function ShareShell({ children }: { children: React.ReactNode }) {
               wordmark escapes the SPA rather than client-routing into the app. */}
           <a
             href="/"
-            aria-label="tela home"
+            aria-label={`${brandName} home`}
             className="inline-block rounded-[var(--radius-xs)] text-[var(--text-primary)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
-            tela
+            {brandName}
           </a>
         </h1>
         <ThemeSwitcher />

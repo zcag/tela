@@ -6,7 +6,7 @@ import {
   useLogin,
   useResendVerification,
 } from '../lib/queries/auth'
-import { useHostContext } from '../lib/queries/host-context'
+import { useHostContext, useBrand } from '../lib/queries/host-context'
 import { Button } from '../components/ui/button'
 import {
   Card,
@@ -23,6 +23,7 @@ import { useDocumentTitle } from '../lib/useHeadMeta'
 
 export function LoginPage() {
   useDocumentTitle('Log in')
+  const brandName = useBrand().name
   const navigate = useNavigate()
   const search = useSearch({ from: '/login' }) as {
     next?: string
@@ -106,8 +107,8 @@ export function LoginPage() {
           </CardTitle>
           <CardDescription>
             {org
-              ? `Welcome back — sign in to ${org.name}.`
-              : 'Welcome back — sign in to your tela workspace.'}
+              ? `Welcome back, sign in to ${org.name}.`
+              : `Welcome back, sign in to your ${brandName} workspace.`}
           </CardDescription>
         </CardHeader>
         <CardBody className="gap-[var(--space-5)] px-[var(--space-7)] pb-[var(--space-7)] pt-[var(--space-2)]">
@@ -237,7 +238,7 @@ export function LoginPage() {
             }
           />
           <AuthFooterLink>
-            New to tela?{' '}
+            New to {brandName}?{' '}
             <Link
               to="/register"
               className="text-[var(--accent)] no-underline hover:underline"

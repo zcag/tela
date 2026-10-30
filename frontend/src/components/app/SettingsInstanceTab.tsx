@@ -11,6 +11,8 @@ import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import { Button } from '../ui/button'
+import { BrandingEditor } from './BrandingEditor'
+import { instanceBrandingBase } from '../../lib/queries/branding'
 
 // Instance-admin runtime configuration, backed by the instance_settings store.
 // Changes apply immediately with no redeploy.
@@ -85,6 +87,8 @@ export function SettingsInstanceTab() {
               </span>
             </label>
           </div>
+
+          <BrandingBlock />
 
           <MaintenanceNoticeEditor
             initialNotice={settings.data?.['maintenance.notice'] ?? ''}
@@ -197,6 +201,29 @@ function UpdatesSection() {
           </span>
         </span>
       </label>
+    </div>
+  )
+}
+
+// The instance's own name, logo and accent: what this wiki calls itself on its
+// main address (an org's custom domain keeps the org's brand).
+function BrandingBlock() {
+  return (
+    <div className="flex flex-col gap-[var(--space-3)] rounded-[var(--radius-md)] border border-[var(--border-subtle)] px-[var(--space-4)] py-[var(--space-3)]">
+      <span className="text-[length:var(--text-sm)] text-[var(--text-primary)] font-medium">Branding</span>
+      <BrandingEditor
+        base={instanceBrandingBase}
+        withName
+        idPrefix="instance-brand"
+        intro={
+          <>
+            Your wiki's name, logo and accent color, shown in the sidebar, sign-in screens, tab
+            titles, link previews and emails, and as the favicon and loading screen. Leave a field
+            blank to use the tela default. A small "Powered by tela" credit shows whenever a name or
+            logo is set.
+          </>
+        }
+      />
     </div>
   )
 }

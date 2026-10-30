@@ -3,8 +3,8 @@ import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import type { HostContext } from '../lib/types'
 import { PoweredByTela } from './PoweredByTela'
 
-// PoweredByTela reads host-context via TanStack Query and renders ONLY on an
-// org custom domain. Each story seeds a fixed ['host-context'] so it renders
+// PoweredByTela reads host-context via TanStack Query and renders only where
+// the host wears another brand (an org custom domain or a rebranded instance). Each story seeds a fixed ['host-context'] so it renders
 // deterministically (no network).
 function withHostContext(ctx: HostContext) {
   const client = new QueryClient()
@@ -31,6 +31,11 @@ const onOrgDomain: HostContext = {
   ai_available: true,
 }
 
+const rebrandedInstance: HostContext = {
+  ...canonical,
+  brand: { name: 'Boustead Wiki', logo_url: '', accent: '' },
+}
+
 const meta: Meta<typeof PoweredByTela> = {
   title: 'Brand/PoweredByTela',
   component: PoweredByTela,
@@ -43,3 +48,5 @@ type Story = StoryObj<typeof PoweredByTela>
 export const Canonical: Story = { decorators: [withHostContext(canonical)] }
 // The discreet credit, shown on an org's custom domain.
 export const OnCustomDomain: Story = { decorators: [withHostContext(onOrgDomain)] }
+// Also shown on a rebranded instance's own address.
+export const OnRebrandedInstance: Story = { decorators: [withHostContext(rebrandedInstance)] }

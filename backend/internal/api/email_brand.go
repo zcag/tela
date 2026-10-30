@@ -23,7 +23,7 @@ import (
 func (s *Server) emailBrandForRequest(r *http.Request) mailer.Brand {
 	oc, ok := auth.OrgContextFromContext(r.Context())
 	if !ok || oc.OrgID <= 0 {
-		return mailer.Brand{}
+		return s.instanceEmailBrand(s.linkOrigin(r))
 	}
 	return s.emailBrand(r.Context(), oc.OrgID, s.linkOrigin(r))
 }
@@ -33,11 +33,11 @@ func (s *Server) emailBrandForRequest(r *http.Request) mailer.Brand {
 // The logo loads from that domain's origin.
 func (s *Server) emailBrandForSpace(ctx context.Context, spaceID *int64) mailer.Brand {
 	if spaceID == nil {
-		return mailer.Brand{}
+		return s.instanceEmailBrand(canonicalBaseURL())
 	}
 	host, ok := s.spaceOrgPrimaryHost(ctx, *spaceID)
 	if !ok {
-		return mailer.Brand{}
+		return s.instanceEmailBrand(canonicalBaseURL())
 	}
 	return s.emailBrand(ctx, s.spaceOwnerOrg(ctx, *spaceID), "https://"+host)
 }
@@ -62,6 +62,24 @@ func (s *Server) emailBrand(ctx context.Context, orgID int64, origin string) mai
 		b.Accent = hexColor(c)
 	}
 	return b
+}
+
+// instanceEmailBrand is the email brand where no org applies: the instance's
+// own brand when it is customized, else zero (tela). The logo is absolutized
+// against origin so it loads in an inbox.
+func (s *Server) instanceEmailBrand(origin string) mailer.Brand {
+	b := s.instanceBrand()
+	if !b.custom() {
+		return mailer.Brand{}
+	}
+	out := mailer.Brand{Name: b.Name}
+	if u := b.logoURL(); u != "" && origin != "" {
+		out.LogoURL = absEmailURL(origin, u)
+	}
+	if c, ok := parseAccentRGBA(b.Accent); ok {
+		out.Accent = hexColor(c)
+	}
+	return out
 }
 
 // absEmailURL makes the stored logo URL absolute: the in-tela serve route is a

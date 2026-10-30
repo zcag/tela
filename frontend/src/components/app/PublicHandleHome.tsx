@@ -4,7 +4,7 @@ import {
   type ByHandleResponse,
   type ByHandleSpace,
 } from '../../lib/queries/public'
-import { brandedTitle, useHeadMeta } from '../../lib/useHeadMeta'
+import { useHeadMeta } from '../../lib/useHeadMeta'
 import { PublicPageShell } from './blog/PublicPageShell'
 import { PublicMasthead, MetaDot } from './blog/PublicMasthead'
 import { SpaceCard } from './blog/SpaceCard'
@@ -21,7 +21,7 @@ export function PublicHandleHome({ data }: { data: ByHandleResponse }) {
   const posts = data.posts ?? []
 
   useHeadMeta({
-    title: brandedTitle(name),
+    title: name,
     description: bio || `${name} (@${handle}) on tela.`,
     canonicalPath: `/${handle}`,
     ogType: kind === 'org' ? 'website' : 'profile',

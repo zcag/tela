@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useHostContext } from './queries/host-context'
+import { useBrand } from './queries/host-context'
 
 // Apply the org's white-label accent app-wide. The theme stylesheets define
 // --accent inside @layer; an inline style on <html> wins over any @layer value
@@ -15,7 +15,7 @@ import { useHostContext } from './queries/host-context'
 // is no org accent, so the canonical host / a cleared override falls straight
 // back to the theme stylesheet value.
 export function useOrgAccent(): void {
-  const accent = useHostContext().data?.org?.accent ?? ''
+  const accent = useBrand().accent
   useEffect(() => {
     const root = document.documentElement
     if (accent) {

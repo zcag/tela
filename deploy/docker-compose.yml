@@ -80,6 +80,12 @@ services:
       # Set to 1 when a failover proxy fronts AI (auto-set by the relief overlay)
       # so the admin reliability card shows "relief pool" vs "single endpoint".
       TELA_AI_RELIEF: ${TELA_AI_RELIEF:-}
+      # First-boot seeds and switches documented in .env.example.
+      TELA_REGISTRATION_OPEN: ${TELA_REGISTRATION_OPEN:-}
+      TELA_UPDATE_CHECK:      ${TELA_UPDATE_CHECK:-}
+      TELA_BRAND_NAME:        ${TELA_BRAND_NAME:-}
+      TELA_BRAND_ACCENT:      ${TELA_BRAND_ACCENT:-}
+      TELA_BRAND_LOGO_URL:    ${TELA_BRAND_LOGO_URL:-}
       # Deck image generation (MCP generate_deck_image). OpenAI-compatible Images
       # endpoint incl. /v1 (e.g. an mflux/FLUX box). Unset → the tool 503s. From a
       # Docker backend use the host's overlay IP, not its name (RAG-embed gotcha).

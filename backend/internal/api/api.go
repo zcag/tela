@@ -142,6 +142,10 @@ type Server struct {
 	// entrypoint via StartAIHealthProbe; tests never run it. See ai_health.go.
 	aiHealth aiHealthState
 
+	// brand caches the instance's own brand (instance_branding), read on every
+	// host-context, shell and OG render. See instance_branding.go.
+	brand atomic.Pointer[instanceBrand]
+
 	// seedWelcome controls whether POST /api/spaces seeds a starter "Welcome"
 	// page into a freshly created space (so a new team doesn't land in an empty
 	// void). On by default; the test package disables it via
@@ -337,6 +341,7 @@ func New(db *sql.DB) *Server {
 	// Freshness scheduler: 1-minute poll firing change-gated delta re-ingests for
 	// auto_update sources whose cadence has elapsed (no-op while AI is off/paused).
 	s.atlas.startScheduler(context.Background(), aiPaused)
+	s.initInstanceBrand(context.Background())
 	return s
 }
 

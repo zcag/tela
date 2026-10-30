@@ -2,11 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>tela</title>
     <style>
       /* Boot splash — the tela mark, shown until React mounts and replaces
          #root's children. Pure inline CSS so it paints with zero JS/bundle. */
@@ -20,13 +16,25 @@
       @media (prefers-color-scheme: light) {
         #boot { background: #f6f6fb; }
       }
-      #boot svg { width: 72px; height: 72px; animation: boot-pulse 1.4s ease-in-out infinite; }
+      #boot svg, #boot .boot-logo { width: 72px; height: 72px; animation: boot-pulse 1.4s ease-in-out infinite; }
+      #boot .boot-logo { display: none; background: center / contain no-repeat; }
       @keyframes boot-pulse {
         0%, 100% { opacity: 0.6; transform: scale(0.98); }
         50% { opacity: 1; transform: scale(1); }
       }
-      @media (prefers-reduced-motion: reduce) { #boot svg { animation: none; } }
+      @media (prefers-reduced-motion: reduce) { #boot svg, #boot .boot-logo { animation: none; } }
     </style>
+    <!-- Brand: nginx replaces this block with the host's brand (title, favicon,
+         splash logo) via an SSI include of /api/public/brand/head; an empty
+         answer, an error or no nginx at all (vite dev) keeps the tela defaults.
+         It comes after the splash styles so the brand's splash rules win. -->
+    <!--# block name="brand_head" -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>tela</title>
+    <!--# endblock -->
+    <!--# include virtual="/_brand/head" stub="brand_head" -->
   </head>
   <body>
     <div id="root">
@@ -39,6 +47,7 @@
             <path fill="#1e1b4b" fill-opacity="0.4" d="M250 250 H312 Q325 250 332 240 L304 270 Q297 278 297 290 V324 Z" />
           </g>
         </svg>
+        <div class="boot-logo"></div>
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

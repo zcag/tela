@@ -68,6 +68,25 @@ Let Caddy provision a Let's Encrypt certificate itself:
 > users actually connect. The boot log prints `cookie_secure=true|false` so you
 > can verify.
 
+## Branding
+
+A self-hosted instance can carry its own name, logo and accent color instead of
+tela's: Settings > Instance > Branding, or seeded on first boot from
+`TELA_BRAND_NAME`, `TELA_BRAND_ACCENT` and `TELA_BRAND_LOGO_URL` (fetched once and
+stored; PNG, JPEG, WebP or GIF up to 2 MB). After first boot Settings wins. The
+brand shows in the sidebar, sign-in screens, tab titles, favicon, loading screen,
+link previews and emails, with a small "Powered by tela" credit whenever a name or
+logo is set. An org's custom domain keeps that org's own branding.
+
+The favicon, title and loading screen are in the page shell before the app loads,
+so the frontend's nginx pulls them from the backend (an SSI include of
+`/api/public/brand/head`, cached 30s). It finds the backend at `backend:8080`
+through Docker's DNS, which both compose files provide. On a host without
+Docker's DNS (ECS, Kubernetes, a bare VM) set `TELA_BACKEND` on the **frontend**
+container to an address it can reach (e.g. `127.0.0.1:8080` in a shared ECS task)
+and `TELA_RESOLVER` to a DNS server if that address is a name. Without it the
+shell keeps tela's defaults and each page load waits 0.3s for the lookup to fail.
+
 ## Email (SMTP)
 
 With `TELA_SMTP_HOST` unset, tela **logs** verification/reset links to stdout

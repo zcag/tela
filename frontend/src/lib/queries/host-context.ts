@@ -52,6 +52,30 @@ export function useHostContext() {
   })
 }
 
+// The brand this host wears: the org's on its custom domain, else the
+// instance's own brand, else tela. `custom` is true whenever it isn't tela, which
+// is also when the "Powered by tela" credit shows.
+export interface Brand {
+  name: string
+  logoUrl: string
+  accent: string
+  custom: boolean
+}
+
+export function useBrand(): Brand {
+  const ctx = useHostContext().data
+  if (ctx?.org) {
+    return { name: ctx.org.name, logoUrl: ctx.org.logo_url, accent: ctx.org.accent, custom: true }
+  }
+  const b = ctx?.brand
+  return {
+    name: b?.name || 'tela',
+    logoUrl: b?.logo_url ?? '',
+    accent: b?.accent ?? '',
+    custom: Boolean(b?.name || b?.logo_url),
+  }
+}
+
 // Brand-link target for the "tela" wordmark: the instance's canonical origin
 // when the page is being served from some other host (an org custom domain —
 // a relative "/" there lands on the org domain's root), else the local root.

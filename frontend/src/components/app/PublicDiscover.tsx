@@ -37,7 +37,7 @@ export function PublicDiscover({
   const hasPrev = offset > 0
 
   useHeadMeta({
-    title: 'Discover — tela',
+    title: 'Discover',
     description: 'Browse public spaces published on tela.',
     canonicalPath: '/discover',
     ogType: 'website',
