@@ -547,7 +547,13 @@ function AIReliabilitySection() {
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-[var(--space-3)]">
         {configured.map((s) => (
-          <EndpointCard key={s.service} s={s} probed={d.probed} relief={d.relief_proxy} />
+          <EndpointCard
+            key={s.service}
+            s={s}
+            probed={d.probed}
+            unmonitored={d.probe_disabled}
+            relief={d.relief_proxy}
+          />
         ))}
       </div>
       {d.gate ? <GateStrip g={d.gate} /> : null}
@@ -566,10 +572,20 @@ function AIReliabilitySection() {
   )
 }
 
-function EndpointCard({ s, probed, relief }: { s: AIEndpointHealth; probed: boolean; relief: boolean }) {
+function EndpointCard({
+  s,
+  probed,
+  unmonitored,
+  relief,
+}: {
+  s: AIEndpointHealth
+  probed: boolean
+  unmonitored: boolean
+  relief: boolean
+}) {
   const label = s.service === 'embed' ? 'Embeddings' : 'Chat & generation'
   const tone = !probed ? 'neutral' : s.healthy ? 'positive' : 'negative'
-  const statusText = !probed ? 'Checking…' : s.healthy ? 'Up' : 'Down'
+  const statusText = unmonitored ? 'Not monitored' : !probed ? 'Checking…' : s.healthy ? 'Up' : 'Down'
   return (
     <div className="flex flex-col gap-[var(--space-2)] rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-1)] p-[var(--space-3)]">
       <div className="flex items-center justify-between gap-[var(--space-2)]">
@@ -595,7 +611,7 @@ function EndpointCard({ s, probed, relief }: { s: AIEndpointHealth; probed: bool
           label={s.healthy ? 'Up for' : 'Down for'}
           value={s.since ? relativeTimeFromSqlite(s.since) : '—'}
         />
-        <EndpointField label="Last reachable" value={s.last_ok ? relativeTimeFromSqlite(s.last_ok) : 'never'} />
+        <EndpointField label="Last reachable" value={s.last_ok ? relativeTimeFromSqlite(s.last_ok) : probed ? 'never' : 'not checked'} />
       </dl>
       {probed && !s.healthy && s.reason ? (
         <p className="m-0 text-[length:var(--text-xs)] text-[var(--danger)] break-words">{s.reason}</p>

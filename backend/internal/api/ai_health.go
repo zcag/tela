@@ -43,7 +43,8 @@ const (
 )
 
 // aiProbeInterval reads TELA_AI_PROBE_INTERVAL (a Go duration). 0 turns the
-// prober off; unset or invalid keeps the 30s default.
+// prober off; unset or invalid keeps the 30s default; anything shorter than
+// aiProbeTimeout is raised to it, so a typo like 1ms can't probe back to back.
 func aiProbeInterval() time.Duration {
 	v := strings.TrimSpace(os.Getenv("TELA_AI_PROBE_INTERVAL"))
 	if v == "" {
@@ -53,6 +54,10 @@ func aiProbeInterval() time.Duration {
 	if err != nil || d < 0 {
 		slog.Warn("ai health: ignoring invalid TELA_AI_PROBE_INTERVAL, probing every 30s", "value", v)
 		return aiProbeIntervalDefault
+	}
+	if d > 0 && d < aiProbeTimeout {
+		slog.Warn("ai health: TELA_AI_PROBE_INTERVAL below the minimum, probing every 5s", "value", v)
+		return aiProbeTimeout
 	}
 	return d
 }
@@ -72,10 +77,11 @@ type aiServiceHealth struct {
 // until the first probe completes, so aiHealthy() can report optimistically at
 // boot (and in tests, which never start the prober) instead of flapping off.
 type aiHealthState struct {
-	mu      sync.RWMutex
-	checked bool
-	embed   aiServiceHealth
-	chat    aiServiceHealth
+	mu       sync.RWMutex
+	checked  bool
+	disabled bool // TELA_AI_PROBE_INTERVAL=0: no prober, so checked never turns true
+	embed    aiServiceHealth
+	chat     aiServiceHealth
 }
 
 // aiHealthy reports whether AI should be advertised as available to clients: AI
@@ -121,11 +127,12 @@ func (s *Server) aiHealthReason() string {
 }
 
 // aiHealthSnapshot returns a copy of the per-service health for the admin
-// breakdown, without exposing the lock. checked is false before the first probe.
-func (s *Server) aiHealthSnapshot() (checked bool, embed, chat aiServiceHealth) {
+// breakdown, without exposing the lock. checked is false before the first probe;
+// disabled is true when the prober is off, so checked never will be.
+func (s *Server) aiHealthSnapshot() (checked, disabled bool, embed, chat aiServiceHealth) {
 	s.aiHealth.mu.RLock()
 	defer s.aiHealth.mu.RUnlock()
-	return s.aiHealth.checked, s.aiHealth.embed, s.aiHealth.chat
+	return s.aiHealth.checked, s.aiHealth.disabled, s.aiHealth.embed, s.aiHealth.chat
 }
 
 // StartAIHealthProbe launches the background prober. Called once from the real
@@ -134,6 +141,9 @@ func (s *Server) aiHealthSnapshot() (checked bool, embed, chat aiServiceHealth) 
 func (s *Server) StartAIHealthProbe(ctx context.Context) {
 	interval := aiProbeInterval()
 	if interval == 0 {
+		s.aiHealth.mu.Lock()
+		s.aiHealth.disabled = true
+		s.aiHealth.mu.Unlock()
 		slog.Info("ai health: prober disabled (TELA_AI_PROBE_INTERVAL=0) — AI availability follows configuration only")
 		return
 	}
