@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"html"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -208,9 +210,27 @@ func (s *Server) probeOne(ctx context.Context, service string, configured bool, 
 
 	h := aiServiceHealth{configured: configured, healthy: err == nil, latency: lat, probedAt: start}
 	if err != nil {
-		h.reason = err.Error()
+		h.reason = probeReason(err)
 	}
 	return h
+}
+
+var (
+	reHTMLPage    = regexp.MustCompile(`(?i)<!doctype html|<html`)
+	reHTMLNonText = regexp.MustCompile(`(?is)<style\b.*?</style>|<script\b.*?</script>`)
+)
+
+// probeReason makes a probe error fit the admin card: the embed/chat clients
+// put the upstream response body in their errors, and a proxy or web server
+// in front of the endpoint often answers with a full HTML page.
+func probeReason(err error) string {
+	s := err.Error()
+	if reHTMLPage.MatchString(s) {
+		s = reHTMLNonText.ReplaceAllString(s, " ")
+		s = reHTMLTag.ReplaceAllString(s, " ")
+		s = html.UnescapeString(s)
+	}
+	return clip(strings.TrimSpace(reWhitespace.ReplaceAllString(s, " ")), 300)
 }
 
 // mergeAIHealth installs the new per-service outcomes, carrying lastOK/since
