@@ -12,11 +12,13 @@ import {
 } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { AuthShell, AuthField } from '../components/app/AuthShell'
+import { useBrand } from '../lib/queries/host-context'
 
 // First-run setup wizard. Mirrors register.tsx's owned-component styling. The
 // route's beforeLoad has already decided this instance needs setup (no users
 // yet); this screen creates the first admin and lands straight in the app.
 export function SetupPage() {
+  const brandName = useBrand().name
   const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
@@ -58,7 +60,7 @@ export function SetupPage() {
       <Card className="tela-auth-card w-full bg-[var(--surface-1)] shadow-[var(--shadow-lg)]">
         <CardHeader>
           <CardTitle className="text-[length:var(--text-2xl)]">
-            Welcome to tela
+            Welcome to {brandName}
           </CardTitle>
           <CardDescription>
             Create the first admin account to set up this instance.

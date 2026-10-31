@@ -237,7 +237,7 @@ export function ReaderShell({
   // Document title (+ full SEO/social meta on the public reader, when headMeta
   // is supplied) while in the reader.
   useHeadMeta({
-    title: `${title || 'Untitled'} — tela`,
+    title: title || 'Untitled',
     description: headMeta?.description,
     canonicalPath: headMeta?.canonicalPath,
     image: headMeta?.image,

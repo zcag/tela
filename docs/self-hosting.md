@@ -2,8 +2,9 @@
 
 tela self-hosts as a Docker Compose stack: Postgres, the Go backend, the static
 frontend, an optional embedder, and a Caddy reverse proxy. You need **Docker
-with Compose** — and nothing else on the host (the marketing landing is built
-inside the proxy image, so no Node toolchain is required).
+with Compose**, and nothing else on the host. The instance's root URL is the app
+itself (signed-out visitors land on the login page); telawiki.com's marketing
+page is not part of a self-hosted install.
 
 > tela is AGPL-3.0. You may run, modify, and redistribute it under those terms;
 > see [`../LICENSE`](../LICENSE) and [`../TRADEMARK.md`](../TRADEMARK.md).
@@ -66,6 +67,25 @@ Let Caddy provision a Let's Encrypt certificate itself:
 > **login appears to do nothing**. Keep the base URL's scheme matched to how
 > users actually connect. The boot log prints `cookie_secure=true|false` so you
 > can verify.
+
+## Branding
+
+A self-hosted instance can carry its own name, logo and accent color instead of
+tela's: Settings > Instance > Branding, or seeded on first boot from
+`TELA_BRAND_NAME`, `TELA_BRAND_ACCENT` and `TELA_BRAND_LOGO_URL` (fetched once and
+stored; PNG, JPEG, WebP or GIF up to 2 MB). After first boot Settings wins. The
+brand shows in the sidebar, sign-in screens, tab titles, favicon, loading screen,
+link previews and emails, with a small "Powered by tela" credit whenever a name or
+logo is set. An org's custom domain keeps that org's own branding.
+
+The favicon, title and loading screen are in the page shell before the app loads,
+so the frontend's nginx pulls them from the backend (an SSI include of
+`/api/public/brand/head`, cached 30s). It finds the backend at `backend:8080`
+through Docker's DNS, which both compose files provide. On a host without
+Docker's DNS (ECS, Kubernetes, a bare VM) set `TELA_BACKEND` on the **frontend**
+container to an address it can reach (e.g. `127.0.0.1:8080` in a shared ECS task)
+and `TELA_RESOLVER` to a DNS server if that address is a name. Without it the
+shell keeps tela's defaults and each page load waits 0.3s for the lookup to fail.
 
 ## Email (SMTP)
 

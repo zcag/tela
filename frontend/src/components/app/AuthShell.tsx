@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { ThemeSwitcher } from '../ThemeSwitcher'
 import { BrandLogo } from '../BrandLogo'
 import { PoweredByTela } from '../PoweredByTela'
-import { useHostContext } from '../../lib/queries/host-context'
+import { useBrand } from '../../lib/queries/host-context'
 
 // Shared chrome for the unauthenticated auth surfaces (login / register /
 // verify / forgot / reset). Mirrors the original login page layout so all the
@@ -11,13 +11,13 @@ export function AuthShell({ children }: { children: ReactNode }) {
   // On an org's custom domain BrandLogo white-labels the header (logo / org
   // name); on the canonical host it shows tela. Degrades to tela while loading
   // / on error (org null). Only the canonical-host mark links home.
-  const org = useHostContext().data?.org ?? null
+  const brand = useBrand()
   const brandClass =
     'm-0 text-[length:var(--text-lg)] leading-[var(--leading-tight)]'
   return (
     <div className="min-h-dvh flex flex-col bg-[var(--surface-1)] text-[var(--text-primary)]">
       <header className="flex items-center justify-between px-[var(--space-6)] py-[var(--space-3)] border-b border-[var(--border-subtle)] shrink-0">
-        {org ? (
+        {brand.custom ? (
           <BrandLogo size={22} className={brandClass} />
         ) : (
           /* The landing lives at "/" (served by Caddy, not an SPA route), so
@@ -35,7 +35,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
       </main>
       {/* On a custom domain, a discreet product credit (renders nothing on the
           canonical host, which is already tela-branded). */}
-      {org ? (
+      {brand.custom ? (
         <footer className="shrink-0 flex justify-center pb-[var(--space-6)]">
           <PoweredByTela />
         </footer>

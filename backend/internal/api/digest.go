@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -56,6 +57,7 @@ func (s *Server) buildDigest(ctx context.Context, u *auth.User, since time.Time)
 		Greeting:  firstName(s.digestGreeting(ctx, u.ID), u.Username),
 		DateRange: dateRange(since, now),
 		AppURL:    home,
+		Brand:     s.instanceEmailBrand(home),
 	}
 	d.PrefsURL = home + "/settings?tab=notifications"
 	d.UnsubURL = s.digestUnsubURL(home, u.ID)
@@ -279,7 +281,7 @@ func (s *Server) resolveUserByIdent(ctx context.Context, ident string) (*auth.Us
 // --- scheduled send --------------------------------------------------------
 
 func digestSubject(d mailer.DigestData) string {
-	return "Your week in tela · " + d.DateRange
+	return "Your week in " + cmp.Or(strings.TrimSpace(d.Brand.Name), "tela") + " · " + d.DateRange
 }
 
 // digestEmpty is true when there's nothing worth mailing: nothing personal, no

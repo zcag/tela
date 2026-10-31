@@ -27,6 +27,7 @@ import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 import { DOCS } from '../../lib/docs'
 import { ConnectAgentNudge } from './ConnectAgentNudge'
+import { useDocumentTitle } from '../../lib/useHeadMeta'
 
 // Home dashboard — the app's landing surface (mounted at `/`). A launchpad plus
 // lenses on the wiki: what changed, what your agents changed, what you starred /
@@ -46,6 +47,7 @@ function greetingFor(hour: number): string {
 }
 
 export function HomeRoute() {
+  useDocumentTitle('Home')
   const me = useMe()
   const spaces = useSpaces()
   const recent = useRecentChanges({ limit: DASH_LIMIT })

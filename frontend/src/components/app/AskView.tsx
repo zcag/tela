@@ -31,6 +31,7 @@ import { ApiError, ASK_UNAVAILABLE_CODES, type SemanticHit } from '../../lib/api
 import { SearchResult } from './SearchResult'
 import { usePageHoverPreview } from './wikilink-hover-preview'
 import { MarkdownView } from '../view/MarkdownView'
+import { useDocumentTitle } from '../../lib/useHeadMeta'
 
 interface AskSearchParams {
   space?: number
@@ -79,6 +80,7 @@ function askErrorMessage(err: unknown): string {
 //
 // Yjs scope (Hard Rule #6): zero Yjs imports here.
 export function AskRoute() {
+  useDocumentTitle('Ask')
   const params = useSearch({ from: '/_app/ask' }) as AskSearchParams
   const navigate = useNavigate()
   const spacesQuery = useSpaces()

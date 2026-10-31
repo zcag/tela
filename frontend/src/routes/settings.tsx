@@ -26,6 +26,7 @@ import { useMe } from '../lib/queries/auth'
 import { useMyLicenses } from '../lib/queries/billing'
 import { useOrgs } from '../lib/queries/orgs'
 import { cn } from '../lib/utils'
+import { useDocumentTitle } from '../lib/useHeadMeta'
 
 interface SettingsTab {
   id: string
@@ -198,6 +199,7 @@ const LICENSES_TAB: SettingsTab = {
 }
 
 export function SettingsPage() {
+  useDocumentTitle('Settings')
   const me = useMe()
   const orgs = useOrgs()
   // The Users + API Keys tabs are gated on instance-admin; the array itself

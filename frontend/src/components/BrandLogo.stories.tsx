@@ -48,6 +48,20 @@ const orgLogo: HostContext = {
   ai_available: true,
 }
 
+const instanceLogo =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" rx="6" fill="#0e7490"/><text x="12" y="17" font-family="sans-serif" font-size="14" font-weight="700" fill="white" text-anchor="middle">B</text></svg>',
+  )
+const instanceNamed: HostContext = {
+  ...canonical,
+  brand: { name: 'Boustead Wiki', logo_url: '', accent: '' },
+}
+const instanceLogoAndName: HostContext = {
+  ...canonical,
+  brand: { name: 'Boustead Wiki', logo_url: instanceLogo, accent: '#0e7490' },
+}
+
 const meta: Meta<typeof BrandLogo> = {
   title: 'Brand/BrandLogo',
   component: BrandLogo,
@@ -59,3 +73,5 @@ type Story = StoryObj<typeof BrandLogo>
 export const Canonical: Story = { decorators: [withHostContext(canonical)] }
 export const OrgName: Story = { decorators: [withHostContext(orgNamed)] }
 export const OrgLogo: Story = { decorators: [withHostContext(orgLogo)] }
+export const InstanceName: Story = { decorators: [withHostContext(instanceNamed)] }
+export const InstanceLogoAndName: Story = { decorators: [withHostContext(instanceLogoAndName)] }

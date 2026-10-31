@@ -99,6 +99,11 @@ social_enabled, org_sso_available } }`. On a custom domain the SPA:
   resolves the org from the request host (no email/domain prompt) when an
   `OrgContext` is present.
 
+On the canonical host the same surfaces fall back to the **instance brand**
+(`instance_branding`, migration `0086`, `instance_branding.go`): host-context
+returns it as `brand` when `org` is null, and the OG cards, emails and the shell
+fragment (`brand_head.go`) resolve org first, then instance, then tela.
+
 Branding (`org_branding`, migration `0027`) and login toggles (`org_login_settings`,
 `0026`) are validated (https logo; hex/oklch/rgb accent) and managed by org admins
 under **Settings → org → Custom domains** (`OrgManageView`). `GET

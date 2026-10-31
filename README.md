@@ -334,7 +334,7 @@ Atlas documents a repo and then audits its own coverage — 6/6 must-cover surfa
 - **Built-in MCP** — the tool/resource surface lives in the Go backend (`internal/api/mcp*.go`) and calls the same core functions the REST routes do, so there is one implementation. `mcp/` is a dumb stdio↔HTTP pipe published as `tela-mcp` on npm.
 - **Atlas** — the documentation engine that drafts and maintains wiki pages from your sources, sharing the configured LLM endpoint.
 - **Render sidecars** — Gotenberg for HTML→PDF export; a Slidev deck sidecar for presentation pages.
-- **Edge** — Caddy serves the SPA, the API, the marketing landing at the apex, and (in direct-TLS mode) on-demand certificates for org custom domains.
+- **Edge** — Caddy serves the SPA, the API, and (in direct-TLS mode) on-demand certificates for org custom domains.
 
 Deeper internals, ops, and gotchas live in [`docs/`](docs/) — start with [`docs/architecture.md`](docs/architecture.md), and [`docs/decisions.md`](docs/decisions.md) for the rationale (PostgreSQL, custom collab transport, MCP-as-thin-client).
 

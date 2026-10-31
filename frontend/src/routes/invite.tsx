@@ -6,6 +6,7 @@ import { ApiError } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { AuthShell } from '../components/app/AuthShell'
+import { useBrand } from '../lib/queries/host-context'
 
 function Shell({
   title,
@@ -34,6 +35,7 @@ function Shell({
 // wording; the flows (accept while signed in, sign up and auto-join on verify,
 // wrong-account) are identical.
 export function InvitePage() {
+  const brandName = useBrand().name
   const { token } = useParams({ from: '/invite/$token' })
   const invite = useInvite(token)
   const me = useMe()
@@ -52,7 +54,7 @@ export function InvitePage() {
         description="This invitation can't be used. Ask the team to send a fresh one."
       >
         <Button asChild variant="primary" size="lg">
-          <Link to="/login">Go to tela</Link>
+          <Link to="/login">Go to {brandName}</Link>
         </Button>
       </Shell>
     )
@@ -63,8 +65,8 @@ export function InvitePage() {
   const target = (isSpace ? data.space_name : data.org_name) ?? (isSpace ? 'a space' : 'the team')
   const what = isSpace ? `the "${target}" space` : target
   const invitedBy = data.inviter
-    ? `${data.inviter} invited you to ${what} on tela.`
-    : `You've been invited to ${what} on tela.`
+    ? `${data.inviter} invited you to ${what} on ${brandName}.`
+    : `You've been invited to ${what} on ${brandName}.`
   const invEmail = (data.email ?? '').toLowerCase()
   const user = me.data
   const myEmail = (user?.email ?? '').toLowerCase()
@@ -114,7 +116,7 @@ export function InvitePage() {
   // Logged out — sign up (auto-joins on email verify) or sign in.
   return (
     <Shell
-      title={`Join ${target} on tela`}
+      title={`Join ${target} on ${brandName}`}
       description={`${invitedBy} Create an account with ${data.email} or sign in to accept.`}
     >
       <div className="flex flex-col items-stretch gap-[var(--space-2)]">

@@ -68,6 +68,15 @@ type hostContextDTO struct {
 	// the background health prober found the embedder/chat model unreachable (so
 	// the client shows "AI unavailable" automatically during an outage).
 	AIAvailable bool `json:"ai_available"`
+	// The instance's own brand on the canonical host; nil when it isn't
+	// rebranded or an org custom-domain brand applies instead.
+	Brand *hostBrandDTO `json:"brand"`
+}
+
+type hostBrandDTO struct {
+	Name    string `json:"name"`
+	LogoURL string `json:"logo_url"`
+	Accent  string `json:"accent"`
 }
 
 // aiEnabled reports whether managed AI should serve. False when the embedder/LLM
@@ -111,6 +120,9 @@ func (s *Server) HostContext(w http.ResponseWriter, r *http.Request) {
 
 	oc, ok := auth.OrgContextFromContext(ctx)
 	if !ok {
+		if b := s.instanceBrand(); b.custom() || b.Accent != "" {
+			out.Brand = &hostBrandDTO{Name: b.Name, LogoURL: b.logoURL(), Accent: b.Accent}
+		}
 		writeJSON(w, http.StatusOK, out)
 		return
 	}

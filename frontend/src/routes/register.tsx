@@ -12,8 +12,12 @@ import {
 } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { AuthShell, AuthField, AuthFooterLink } from '../components/app/AuthShell'
+import { useDocumentTitle } from '../lib/useHeadMeta'
+import { useBrand } from '../lib/queries/host-context'
 
 export function RegisterPage() {
+  useDocumentTitle('Sign up')
+  const brandName = useBrand().name
   // Pre-fill the email when arriving from an invite link (/register?email=…).
   const { email: invitedEmail } = useSearch({ from: '/register' })
   const [email, setEmail] = useState(invitedEmail ?? '')
@@ -111,7 +115,7 @@ export function RegisterPage() {
             Create your account
           </CardTitle>
           <CardDescription>
-            Sign up to start writing in tela.
+            Sign up to start writing in {brandName}.
           </CardDescription>
         </CardHeader>
         <CardBody>

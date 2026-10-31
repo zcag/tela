@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -59,7 +60,7 @@ func (s *Server) resolveOGBrand(r *http.Request, ownerOrgID int64) ogBrand {
 
 func (s *Server) loadOGBrand(ctx context.Context, orgID int64) ogBrand {
 	if orgID <= 0 {
-		return ogBrand{}
+		return s.instanceOGBrand(ctx)
 	}
 	var (
 		name, accent, logoMime, logoHash string
@@ -88,12 +89,36 @@ func (s *Server) loadOGBrand(ctx context.Context, orgID int64) ogBrand {
 	return br
 }
 
+// instanceOGBrand is the card brand where no org applies: the instance's own
+// brand when it is customized, else the zero (tela) brand.
+func (s *Server) instanceOGBrand(ctx context.Context) ogBrand {
+	b := s.instanceBrand()
+	if !b.custom() && b.Accent == "" {
+		return ogBrand{}
+	}
+	br := ogBrand{name: b.Name}
+	if c, ok := parseAccentRGBA(b.Accent); ok {
+		br.accent, br.hasAccent = c, true
+	}
+	if b.LogoHash != "" {
+		var logoData []byte
+		if s.DB.QueryRowContext(ctx, `SELECT logo_data FROM instance_branding WHERE id = 1`).Scan(&logoData) == nil && len(logoData) > 0 {
+			if img, _, err := image.Decode(bytes.NewReader(logoData)); err == nil {
+				br.logo = img
+			}
+		}
+	}
+	sum := sha256.Sum256([]byte("instance|" + b.Name + "|" + b.Accent + "|" + b.LogoHash))
+	br.sig = hex.EncodeToString(sum[:])[:12]
+	return br
+}
+
 // ogSiteName resolves only the og:site_name for the HTML crawler envelope (no
 // logo decode). The org name on a branded surface, else "tela".
 func (s *Server) ogSiteName(r *http.Request, ownerOrgID int64) string {
 	orgID := s.ogBrandOrgID(r, ownerOrgID)
 	if orgID <= 0 {
-		return "tela"
+		return cmp.Or(s.instanceBrand().Name, "tela")
 	}
 	var name string
 	if s.DB.QueryRowContext(r.Context(),

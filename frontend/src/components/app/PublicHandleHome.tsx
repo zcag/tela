@@ -21,7 +21,7 @@ export function PublicHandleHome({ data }: { data: ByHandleResponse }) {
   const posts = data.posts ?? []
 
   useHeadMeta({
-    title: `${name} — tela`,
+    title: name,
     description: bio || `${name} (@${handle}) on tela.`,
     canonicalPath: `/${handle}`,
     ogType: kind === 'org' ? 'website' : 'profile',

@@ -52,6 +52,7 @@ import { writeLastPage } from '../lib/lastPage'
 import { prefetchPage, useCreatePage, usePages } from '../lib/queries/pages'
 import { prefetchPublicSpacePage } from '../lib/queries/public'
 import type { Page, PageTreeNode, Space } from '../lib/types'
+import { useDocumentTitle } from '../lib/useHeadMeta'
 
 // Resolve the session once and cache it; both AppLayout and LoginRoute reuse
 // the same cached result so a quick login → redirect doesn't trigger two
@@ -103,7 +104,7 @@ const rootRoute = createRootRoute({
         description="That page doesn’t exist or you don’t have access to it."
         actions={
           <Button asChild variant="primary" size="lg">
-            <Link to="/">Back to tela</Link>
+            <Link to="/">Back to home</Link>
           </Button>
         }
       />
@@ -196,7 +197,7 @@ const appLayoutRoute = createRoute({
               </button>
               <Link
                 to="/"
-                aria-label="tela home"
+                aria-label="Home"
                 className="inline-flex rounded-[var(--radius-xs)] no-underline transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 <BrandLogo size={20} />
@@ -537,6 +538,7 @@ const spaceIndexRoute = createRoute({
     const createPage = useCreatePage()
     const spaces = queryClient.getQueryData<Space[]>(spaceKeys.list()) ?? []
     const spaceName = spaces.find((s) => s.id === spaceId)?.name ?? ''
+    useDocumentTitle(spaceName || undefined)
     const nodes = (tree.data as PageTreeNode[] | undefined) ?? []
 
     async function handleCreate() {

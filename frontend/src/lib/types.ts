@@ -560,15 +560,19 @@ export interface HostContext {
   maintenance?: { notice: string; level: 'info' | 'warning' } | null
   // Whether managed AI (ask / semantic search) is serving right now.
   ai_available: boolean
+  // The instance's own brand on the canonical host; null when it isn't
+  // customized or an org brand applies (on its custom domain).
+  brand?: { name: string; logo_url: string; accent: string } | null
 }
 
-// GET/PUT /api/orgs/{id}/branding — an org's white-label overrides. Both '' to
-// clear. PUT validates: logo_url must be https://; accent must be a hex
-// (#rrggbb) or an oklch()/rgb()/rgba() color (400 bad_request otherwise).
-export interface OrgBranding {
-  /** Effective logo URL — a tela serve route when a logo is stored, else ''. */
+// GET/PUT /api/orgs/{id}/branding and /api/admin/branding: a logo stored in
+// tela, an accent ('' = default) and, for the instance only, a name. PUT
+// validates the accent as a hex or an oklch()/rgb()/rgba() color.
+export interface Branding {
+  /** Instance branding only; '' = tela. */
+  name?: string
+  /** Effective logo URL: a tela serve route when a logo is stored, else ''. */
   logo_url: string
-  /** A logo is stored in tela (vs. unset). */
   has_logo: boolean
   accent: string
 }

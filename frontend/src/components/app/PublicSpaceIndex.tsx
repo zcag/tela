@@ -59,7 +59,7 @@ export function PublicSpaceIndex({ space, pages }: PublicSpaceIndexProps) {
   const feedUrl = `/api/public/spaces/${space.id}/feed.xml`
 
   useHeadMeta({
-    title: `${space.name}${activeTag ? ` · ${activeTag}` : ''} — tela`,
+    title: `${space.name}${activeTag ? ` · ${activeTag}` : ''}`,
     description: space.description || `Posts from ${space.name}.`,
     canonicalPath:
       space.owner_handle && space.slug

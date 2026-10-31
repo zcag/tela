@@ -82,6 +82,12 @@ services:
       TELA_AI_RELIEF: ${TELA_AI_RELIEF:-}
       # AI health probe interval (Go duration, default 30s; 0 = off).
       TELA_AI_PROBE_INTERVAL: ${TELA_AI_PROBE_INTERVAL:-}
+      # First-boot seeds and switches documented in .env.example.
+      TELA_REGISTRATION_OPEN: ${TELA_REGISTRATION_OPEN:-}
+      TELA_UPDATE_CHECK:      ${TELA_UPDATE_CHECK:-}
+      TELA_BRAND_NAME:        ${TELA_BRAND_NAME:-}
+      TELA_BRAND_ACCENT:      ${TELA_BRAND_ACCENT:-}
+      TELA_BRAND_LOGO_URL:    ${TELA_BRAND_LOGO_URL:-}
       # Deck image generation (MCP generate_deck_image). OpenAI-compatible Images
       # endpoint incl. /v1 (e.g. an mflux/FLUX box). Unset → the tool 503s. From a
       # Docker backend use the host's overlay IP, not its name (RAG-embed gotcha).
@@ -197,11 +203,9 @@ services:
     restart: unless-stopped
 
   proxy:
-    # Built from deploy/proxy/Dockerfile (repo-root context) which bakes the
-    # static marketing landing into the image — so `make up` needs only Docker,
-    # not a host Node toolchain. Caddy serves the landing at the apex from the
-    # baked /srv/landing; the Caddyfile stays bind-mounted so config tweaks don't
-    # need an image rebuild.
+    # Built from deploy/proxy/Dockerfile (repo-root context): Caddy with tela's
+    # routing and no marketing landing, so "/" is the app. The Caddyfile stays
+    # bind-mounted so config tweaks don't need an image rebuild.
     build:
       context: ..
       dockerfile: deploy/proxy/Dockerfile

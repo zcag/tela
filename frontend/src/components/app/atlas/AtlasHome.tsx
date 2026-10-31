@@ -21,6 +21,7 @@ import { NewProjectDialog } from './NewProjectDialog'
 import { CredentialsDialog } from './CredentialsDialog'
 import { AtlasQuotaBar } from './AtlasQuotaBar'
 import { AtlasBudgetNotice } from './AtlasBudgetNotice'
+import { useDocumentTitle } from '../../../lib/useHeadMeta'
 
 function freshnessOf(p: AtlasProject): { f: Freshness; label: string } {
   const r = p.last_run
@@ -50,6 +51,7 @@ function freshnessOf(p: AtlasProject): { f: Freshness; label: string } {
 const ownerKey = (o: AtlasOwner) => `${o.kind}:${o.id}`
 
 export function AtlasHome() {
+  useDocumentTitle('Atlas')
   const me = useMe().data
   const projectsQ = useAtlasProjects()
   const projects = projectsQ.data?.projects ?? []

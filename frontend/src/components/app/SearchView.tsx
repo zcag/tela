@@ -17,6 +17,7 @@ import { navigateToPage } from '../../lib/pageHitItem'
 import type { Space } from '../../lib/types'
 import { SearchResult } from './SearchResult'
 import { usePageHoverPreview } from './wikilink-hover-preview'
+import { useDocumentTitle } from '../../lib/useHeadMeta'
 
 interface SearchSearchParams {
   q?: string
@@ -42,6 +43,7 @@ const EXCERPT_HALF_WIDTH = 100
 //
 // Yjs scope (Hard Rule #6): zero Yjs imports anywhere on this page.
 export function SearchRoute() {
+  useDocumentTitle('Search')
   const params = useSearch({ from: '/_app/search' }) as SearchSearchParams
   const navigate = useNavigate()
   const spacesQuery = useSpaces()
