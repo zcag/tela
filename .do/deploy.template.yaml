@@ -19,7 +19,7 @@ spec:
         registry_type: GHCR
         registry: zcag
         repository: tela-proxy
-        tag: "0.11.2"
+        tag: "0.11.3"
       http_port: 80
       instance_size_slug: basic-xs
       instance_count: 1
@@ -35,7 +35,7 @@ spec:
         registry_type: GHCR
         registry: zcag
         repository: tela-backend
-        tag: "0.11.2"
+        tag: "0.11.3"
       internal_ports: [8080]
       instance_size_slug: basic-xs
       instance_count: 1
@@ -53,7 +53,7 @@ spec:
         registry_type: GHCR
         registry: zcag
         repository: tela-frontend
-        tag: "0.11.2"
+        tag: "0.11.3"
       internal_ports: [80]
       instance_size_slug: basic-xxs
       instance_count: 1
@@ -63,7 +63,7 @@ spec:
         registry_type: GHCR
         registry: zcag
         repository: tela-deck
-        tag: "0.11.2"
+        tag: "0.11.3"
       internal_ports: [3344]
       instance_size_slug: basic-xs
       instance_count: 1
