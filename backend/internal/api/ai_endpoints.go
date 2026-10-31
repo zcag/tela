@@ -34,7 +34,9 @@ type aiEndpointHealth struct {
 type aiEndpointsOut struct {
 	Enabled bool `json:"enabled"` // configured + not admin-disabled
 	Probed  bool `json:"probed"`  // the background prober has a verdict yet
-	Healthy bool `json:"healthy"` // overall (every configured service up)
+	// ProbeDisabled: TELA_AI_PROBE_INTERVAL=0, so Probed stays false for good.
+	ProbeDisabled bool `json:"probe_disabled"`
+	Healthy       bool `json:"healthy"` // overall (every configured service up)
 	// ReliefProxy is true when a failover proxy fronts the endpoints — set
 	// explicitly by the relief overlay (TELA_AI_RELIEF), since a /v1 URL alone
 	// can't distinguish a LiteLLM pool from a single direct OpenAI endpoint.
@@ -61,17 +63,18 @@ func (s *Server) AdminAIEndpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	checked, embed, chat := s.aiHealthSnapshot()
+	checked, disabled, embed, chat := s.aiHealthSnapshot()
 
 	embedURL, embedModel, _ := s.rag.EmbedEndpoint()
 	chatURL, chatModel := s.llm.Endpoint()
 
 	out := aiEndpointsOut{
-		Enabled:     s.aiEnabled(),
-		Probed:      checked,
-		Healthy:     s.aiHealthy(),
-		ReliefProxy: envTrue("TELA_AI_RELIEF"),
-		GrafanaURL:  os.Getenv("TELA_GRAFANA_AI_URL"),
+		Enabled:       s.aiEnabled(),
+		Probed:        checked,
+		ProbeDisabled: disabled,
+		Healthy:       s.aiHealthy(),
+		ReliefProxy:   envTrue("TELA_AI_RELIEF"),
+		GrafanaURL:    os.Getenv("TELA_GRAFANA_AI_URL"),
 		Services: []aiEndpointHealth{
 			aiEndpointRow("embed", embedURL != "", embed, embedURL, embedModel, checked),
 			aiEndpointRow("chat", chatURL != "", chat, chatURL, chatModel, checked),

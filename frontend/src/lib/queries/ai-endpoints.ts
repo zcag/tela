@@ -31,6 +31,7 @@ export interface AIGate {
 export interface AIEndpoints {
   enabled: boolean
   probed: boolean
+  probe_disabled: boolean // TELA_AI_PROBE_INTERVAL=0: probed never turns true
   healthy: boolean
   relief_proxy: boolean // a failover proxy fronts the endpoints (TELA_AI_RELIEF)
   services: AIEndpointHealth[]

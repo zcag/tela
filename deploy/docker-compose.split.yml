@@ -86,6 +86,8 @@ services:
       # Set to 1 when a failover proxy fronts AI (auto-set by the relief overlay)
       # so the admin reliability card shows "relief pool" vs "single endpoint".
       TELA_AI_RELIEF: ${TELA_AI_RELIEF:-}
+      # AI health probe interval (Go duration, default 30s; 0 = off).
+      TELA_AI_PROBE_INTERVAL: ${TELA_AI_PROBE_INTERVAL:-}
       # First-boot seeds and switches documented in .env.example.
       TELA_REGISTRATION_OPEN: ${TELA_REGISTRATION_OPEN:-}
       TELA_UPDATE_CHECK:      ${TELA_UPDATE_CHECK:-}

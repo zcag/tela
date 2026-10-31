@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -10,9 +12,10 @@ import (
 // AI-health probing makes the host-context `ai_available` flag reflect the
 // backing AI services' ACTUAL reachability, not just whether they're configured.
 // A background prober pings the embedder and (when configured) the chat model on
-// a fixed interval and caches a PER-SERVICE verdict; the user-facing "AI
-// unavailable" header flips automatically when either is down and clears on its
-// own when it returns — no admin kill-switch toggle needed.
+// an interval (TELA_AI_PROBE_INTERVAL, default 30s) and caches a PER-SERVICE
+// verdict; the user-facing "AI unavailable" header flips automatically when
+// either is down and clears on its own when it returns — no admin kill-switch
+// toggle needed.
 //
 // Why a cached background probe and not a per-request or /health-time ping:
 // running it on a timer (not a hot path) keeps the cost to one probe per service
@@ -35,9 +38,29 @@ import (
 // over — lives in the LiteLLM proxy's own /metrics, not here.
 
 const (
-	aiProbeInterval = 30 * time.Second
-	aiProbeTimeout  = 5 * time.Second
+	aiProbeIntervalDefault = 30 * time.Second
+	aiProbeTimeout         = 5 * time.Second
 )
+
+// aiProbeInterval reads TELA_AI_PROBE_INTERVAL (a Go duration). 0 turns the
+// prober off; unset or invalid keeps the 30s default; anything shorter than
+// aiProbeTimeout is raised to it, so a typo like 1ms can't probe back to back.
+func aiProbeInterval() time.Duration {
+	v := strings.TrimSpace(os.Getenv("TELA_AI_PROBE_INTERVAL"))
+	if v == "" {
+		return aiProbeIntervalDefault
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		slog.Warn("ai health: ignoring invalid TELA_AI_PROBE_INTERVAL, probing every 30s", "value", v)
+		return aiProbeIntervalDefault
+	}
+	if d > 0 && d < aiProbeTimeout {
+		slog.Warn("ai health: TELA_AI_PROBE_INTERVAL below the minimum, probing every 5s", "value", v)
+		return aiProbeTimeout
+	}
+	return d
+}
 
 // aiServiceHealth is the cached probe outcome for one service (embed or chat).
 type aiServiceHealth struct {
@@ -54,10 +77,11 @@ type aiServiceHealth struct {
 // until the first probe completes, so aiHealthy() can report optimistically at
 // boot (and in tests, which never start the prober) instead of flapping off.
 type aiHealthState struct {
-	mu      sync.RWMutex
-	checked bool
-	embed   aiServiceHealth
-	chat    aiServiceHealth
+	mu       sync.RWMutex
+	checked  bool
+	disabled bool // TELA_AI_PROBE_INTERVAL=0: no prober, so checked never turns true
+	embed    aiServiceHealth
+	chat     aiServiceHealth
 }
 
 // aiHealthy reports whether AI should be advertised as available to clients: AI
@@ -103,19 +127,28 @@ func (s *Server) aiHealthReason() string {
 }
 
 // aiHealthSnapshot returns a copy of the per-service health for the admin
-// breakdown, without exposing the lock. checked is false before the first probe.
-func (s *Server) aiHealthSnapshot() (checked bool, embed, chat aiServiceHealth) {
+// breakdown, without exposing the lock. checked is false before the first probe;
+// disabled is true when the prober is off, so checked never will be.
+func (s *Server) aiHealthSnapshot() (checked, disabled bool, embed, chat aiServiceHealth) {
 	s.aiHealth.mu.RLock()
 	defer s.aiHealth.mu.RUnlock()
-	return s.aiHealth.checked, s.aiHealth.embed, s.aiHealth.chat
+	return s.aiHealth.checked, s.aiHealth.disabled, s.aiHealth.embed, s.aiHealth.chat
 }
 
 // StartAIHealthProbe launches the background prober. Called once from the real
 // entrypoint (cmd/tela), NOT from New(), so test servers never spawn it or hit
 // the network — they fall through to aiHealthy()'s optimistic default.
 func (s *Server) StartAIHealthProbe(ctx context.Context) {
+	interval := aiProbeInterval()
+	if interval == 0 {
+		s.aiHealth.mu.Lock()
+		s.aiHealth.disabled = true
+		s.aiHealth.mu.Unlock()
+		slog.Info("ai health: prober disabled (TELA_AI_PROBE_INTERVAL=0) — AI availability follows configuration only")
+		return
+	}
 	go func() {
-		t := time.NewTicker(aiProbeInterval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		s.probeAI(ctx)
 		for {
