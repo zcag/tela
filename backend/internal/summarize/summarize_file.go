@@ -86,7 +86,7 @@ func (s *Service) SummarizeFile(ctx context.Context, fileID int64, force bool) (
 		}
 	}
 	if err != nil {
-		s.recordFileFailure(ctx, fileID, err)
+		s.recordFileFailure(ctx, fileID, contentHash, err)
 		return "", fmt.Errorf("summarize file %d: %w", fileID, err)
 	}
 	if err := s.persistFileSummary(ctx, fileID, out, contentHash); err != nil {
@@ -124,7 +124,7 @@ func (s *Service) persistFileSummary(ctx context.Context, fileID int64, summary,
 		VALUES ($1, $2, $3, tela_now(), '', 0)
 		ON CONFLICT (space_file_id) DO UPDATE
 		   SET src_hash = EXCLUDED.src_hash, model = EXCLUDED.model,
-		       generated_at = tela_now(), last_error = '', attempts = 0`,
+		       generated_at = tela_now(), last_error = '', attempts = 0, failed_at = '', failed_hash = ''`,
 		fileID, contentHash, s.llm.Model()); err != nil {
 		return fmt.Errorf("summarize: upsert file_summaries: %w", err)
 	}
@@ -133,15 +133,17 @@ func (s *Service) persistFileSummary(ctx context.Context, fileID int64, summary,
 
 // recordFileFailure mirrors recordFailure for files: upsert the failure state so
 // the stale sweep keeps retrying. Best-effort — bookkeeping errors are logged.
-func (s *Service) recordFileFailure(ctx context.Context, fileID int64, cause error) {
+func (s *Service) recordFileFailure(ctx context.Context, fileID int64, contentHash string, cause error) {
 	ctx, cancel := bookkeepingContext(ctx)
 	defer cancel()
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO file_summaries (space_file_id, src_hash, model, last_error, attempts)
-		VALUES ($1, '', '', $2, 1)
+		INSERT INTO file_summaries (space_file_id, src_hash, model, last_error, attempts, failed_at, failed_hash)
+		VALUES ($1, '', '', $2, 1, tela_now(), $3)
 		ON CONFLICT (space_file_id) DO UPDATE
-		   SET last_error = EXCLUDED.last_error, attempts = file_summaries.attempts + 1`,
-		fileID, cause.Error()); err != nil {
+		   SET last_error = EXCLUDED.last_error, failed_at = EXCLUDED.failed_at, failed_hash = EXCLUDED.failed_hash,
+		       attempts = CASE WHEN file_summaries.failed_hash = EXCLUDED.failed_hash
+		                       THEN file_summaries.attempts + 1 ELSE 1 END`,
+		fileID, cause.Error(), contentHash); err != nil {
 		slog.Error("summarize: record file failure", "file_id", fileID, "err", err)
 	}
 }
@@ -157,7 +159,9 @@ func (s *Service) staleFileIDs(ctx context.Context, limit int) ([]fileRef, error
 		  FROM space_files sf
 		  LEFT JOIN file_summaries fs ON fs.space_file_id = sf.id
 		 WHERE sf.deleted_at IS NULL
-		   AND (fs.space_file_id IS NULL OR fs.src_hash <> sf.content_hash OR coalesce(fs.last_error, '') <> '')
+		   AND (fs.space_file_id IS NULL
+		        OR (fs.last_error = '' AND fs.src_hash <> sf.content_hash)
+		        OR (fs.last_error <> '' AND `+retryDueExpr("fs", "sf.content_hash")+`))
 		 ORDER BY sf.updated_at DESC
 		 LIMIT $1`, limit)
 	if err != nil {

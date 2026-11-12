@@ -1,6 +1,9 @@
 package summarize
 
-import "context"
+import (
+	"context"
+	"strconv"
+)
 
 // SpaceSummaries summarizes one space's summary coverage, for the admin
 // status view (the summaries sibling of rag.SpaceFreshness). All counts are
@@ -203,6 +206,7 @@ func (s *Service) stalePageIDs(ctx context.Context, limit int) ([]int64, error) 
 		  FROM pages p
 		  LEFT JOIN page_summaries ps ON ps.page_id = p.id
 		 WHERE p.deleted_at IS NULL AND `+needsWorkExpr+`
+		   AND (coalesce(ps.last_error, '') = '' OR `+retryDueExpr("ps", bodyHashExpr)+`)
 		 ORDER BY p.updated_at DESC
 		 LIMIT $1`, limit)
 	if err != nil {
@@ -218,4 +222,17 @@ func (s *Service) stalePageIDs(ctx context.Context, limit int) ([]int64, error) 
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// retryDueExpr is the stale sweep's retry policy for a failed summary row
+// (alias t): the source changed since the failure, so an edit retries at once;
+// or fewer than summarizeMaxAttempts failures and the backoff
+// (summarizeRetryBase * 2^attempts, capped) has passed since failed_at. The
+// manual "summarize stale" action does not apply it, so it can always retry.
+func retryDueExpr(t, currentHash string) string {
+	return `(` + t + `.failed_hash <> ` + currentHash + `
+	OR (` + t + `.attempts < ` + strconv.Itoa(summarizeMaxAttempts) + `
+	    AND ` + t + `.failed_at <= to_char((now() AT TIME ZONE 'UTC') - make_interval(secs => least(` +
+		strconv.Itoa(int(summarizeRetryBase.Seconds())) + ` * 2 ^ ` + t + `.attempts, ` +
+		strconv.Itoa(int(summarizeRetryMax.Seconds())) + `)), 'YYYY-MM-DD HH24:MI:SS')))`
 }

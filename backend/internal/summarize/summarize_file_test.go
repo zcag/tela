@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -178,4 +179,52 @@ func TestWorker_QueueFileGenerates(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("worker did not summarize file %d (summary=%q)", fileID, fileSummary(t, d, fileID))
+}
+
+func TestFileSweep_BacksOffGivesUpAndChangeResets(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	u := newUser(t, d, "frank")
+	sp := newSpace(t, d, "foxtrot", u)
+	fileID := newSpaceFile(t, d, sp, "doc.md", "text/markdown", []byte("# Doc\n\nThe model keeps failing on this."))
+	svc := newSvc(d, &fakeLLM{failures: 100})
+	sweptFile := func() bool {
+		files, err := svc.staleFileIDs(ctx, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slices.ContainsFunc(files, func(f fileRef) bool { return f.id == fileID })
+	}
+	age := func(ago time.Duration) {
+		if _, err := d.Exec(`UPDATE file_summaries SET failed_at = $2 WHERE space_file_id = $1`,
+			fileID, time.Now().UTC().Add(-ago).Format(time.DateTime)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := svc.SummarizeFile(ctx, fileID, false); err == nil {
+		t.Fatal("expected failure")
+	}
+	if sweptFile() {
+		t.Error("a just-failed file was swept before its backoff")
+	}
+	age(time.Hour)
+	if !sweptFile() {
+		t.Error("not swept after its backoff elapsed")
+	}
+	for i := 2; i <= summarizeMaxAttempts; i++ {
+		if _, err := svc.SummarizeFile(ctx, fileID, false); err == nil {
+			t.Fatal("expected failure")
+		}
+	}
+	age(24 * time.Hour)
+	if sweptFile() {
+		t.Error("swept after reaching the attempt limit")
+	}
+	if _, err := d.Exec(`UPDATE space_files SET content_hash = 'changed' WHERE id = $1`, fileID); err != nil {
+		t.Fatal(err)
+	}
+	if !sweptFile() {
+		t.Error("new content did not make a given-up file eligible again")
+	}
 }

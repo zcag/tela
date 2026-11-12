@@ -15,11 +15,12 @@ import (
 // summarizes each page once its edits settle, so an editing burst collapses to
 // one generation.
 //
-// Self-healing by design, mirroring rag/autoreindex.go: a failed generation is
-// re-enqueued with exponential backoff (and recorded in page_summaries so the
-// status view reads failed), and an independent stale sweep periodically
-// re-queues pages whose summary is missing or out of date — recovering both
-// LLM outages and edits made while the process was down.
+// Self-healing by design: a failed generation is recorded in page_summaries (so
+// the status view reads failed), and an independent stale sweep periodically
+// re-queues pages whose summary is missing, out of date, or failed and due a
+// retry (retryDueExpr), recovering both LLM outages and edits made while the
+// process was down. Retries live in the database, not in this queue, so a
+// restart neither loses nor resets them.
 
 // Tunable (var, not const) so tests can shrink the windows. Production values:
 var (
@@ -31,10 +32,13 @@ var (
 	// summarizeTimeout caps a single page's generation round-trip.
 	summarizeTimeout     = 2 * time.Minute
 	recordFailureTimeout = 10 * time.Second
-	// summarizeRetryBase / summarizeRetryMax bound the exponential backoff applied
-	// to a page whose generation just failed: base * 2^(attempts-1), capped at max.
-	summarizeRetryBase = 30 * time.Second
-	summarizeRetryMax  = 10 * time.Minute
+	// summarizeRetryBase / summarizeRetryMax / summarizeMaxAttempts are the stale
+	// sweep's retry policy for a failed summary (retryDueExpr): wait
+	// base * 2^attempts (capped at max) after the failure, and stop after
+	// summarizeMaxAttempts failures of the same source until it changes.
+	summarizeRetryBase   = 30 * time.Second
+	summarizeRetryMax    = 6 * time.Hour
+	summarizeMaxAttempts = 5
 	// staleSweepInterval is how often the background sweep re-queues stale/missing
 	// summaries. staleSweepInitialDelay defers the first sweep past boot;
 	// staleSweepBatch caps how many pages one sweep enqueues.
@@ -45,8 +49,7 @@ var (
 
 // Queue schedules pageID to be summarized after the debounce window. Safe to
 // call on every write; repeated calls for the same page coalesce and push the
-// deadline forward. A fresh edit clears any accumulated retry backoff. No-op
-// when the LLM is unconfigured or the worker isn't running.
+// deadline forward. No-op when the LLM is unconfigured or the worker isn't running.
 func (s *Service) Queue(pageID int64) {
 	if !s.Enabled() {
 		return
@@ -57,7 +60,6 @@ func (s *Service) Queue(pageID int64) {
 		return // worker not started
 	}
 	s.pending[pageID] = time.Now().Add(summarizeDebounce)
-	delete(s.attempts, pageID)
 }
 
 // Start launches the background summarize worker plus the stale-sweep loop.
@@ -73,9 +75,7 @@ func (s *Service) Start(ctx context.Context) {
 		return // already started
 	}
 	s.pending = make(map[int64]time.Time)
-	s.attempts = make(map[int64]int)
 	s.pendingFiles = make(map[int64]time.Time)
-	s.fileAttempts = make(map[int64]int)
 	s.queueMu.Unlock()
 	go s.summarizeLoop(ctx)
 	go s.staleSweepLoop(ctx)
@@ -83,7 +83,7 @@ func (s *Service) Start(ctx context.Context) {
 
 // QueueFile is Queue for a space_file (the file half of auto-summary) — the
 // trigger every upload path fires after a content change, alongside
-// rag.QueueReindexFile. Same debounce/coalesce/backoff machinery, keyed on file id.
+// rag.QueueReindexFile. Same debounce/coalesce machinery, keyed on file id.
 func (s *Service) QueueFile(fileID int64) {
 	if !s.Enabled() {
 		return
@@ -94,7 +94,6 @@ func (s *Service) QueueFile(fileID int64) {
 		return // worker not started
 	}
 	s.pendingFiles[fileID] = time.Now().Add(summarizeDebounce)
-	delete(s.fileAttempts, fileID)
 }
 
 func (s *Service) summarizeLoop(ctx context.Context) {
@@ -110,60 +109,23 @@ func (s *Service) summarizeLoop(ctx context.Context) {
 			}
 			for _, id := range s.dueSummaries() {
 				sctx, cancel := context.WithTimeout(ctx, summarizeTimeout)
-				_, err := s.SummarizePage(sctx, id, false)
-				cancel()
-				if err != nil {
-					s.requeueAfterFailure(id)
-				} else {
-					s.clearAttempts(id)
+				if _, err := s.SummarizePage(sctx, id, false); err != nil {
+					slog.Warn("summarize: generation failed", "page_id", id, "err", err)
 				}
+				cancel()
 			}
 			for _, id := range s.dueFileSummaries() {
 				sctx, cancel := context.WithTimeout(ctx, summarizeTimeout)
-				_, err := s.SummarizeFile(sctx, id, false)
-				cancel()
-				if err != nil {
-					s.requeueFileAfterFailure(id)
-				} else {
-					s.clearFileAttempts(id)
+				if _, err := s.SummarizeFile(sctx, id, false); err != nil {
+					slog.Warn("summarize: file generation failed", "file_id", id, "err", err)
 				}
+				cancel()
 			}
 		}
 	}
 }
 
-// requeueAfterFailure re-enqueues a page whose generation failed, with
-// exponential backoff keyed on its consecutive-failure count.
-func (s *Service) requeueAfterFailure(pageID int64) {
-	s.queueMu.Lock()
-	if s.pending == nil { // worker stopped
-		s.queueMu.Unlock()
-		return
-	}
-	s.attempts[pageID]++
-	n := s.attempts[pageID]
-	shift := n - 1
-	if shift > 16 { // cap before the shift so summarizeRetryBase<<shift can't overflow int64
-		shift = 16
-	}
-	backoff := summarizeRetryBase << uint(shift)
-	if backoff > summarizeRetryMax || backoff <= 0 { // clamp to the ceiling (and belt-and-braces on overflow)
-		backoff = summarizeRetryMax
-	}
-	s.pending[pageID] = time.Now().Add(backoff)
-	s.queueMu.Unlock()
-	slog.Warn("summarize: generation failed, will retry", "page_id", pageID, "attempt", n, "retry_in", backoff)
-}
-
-func (s *Service) clearAttempts(pageID int64) {
-	s.queueMu.Lock()
-	delete(s.attempts, pageID)
-	s.queueMu.Unlock()
-}
-
-// dueFileSummaries / requeueFileAfterFailure / clearFileAttempts mirror the page
-// trio for the file queue — same debounce + exponential backoff, keyed on file id.
-
+// dueFileSummaries is dueSummaries for the file queue.
 func (s *Service) dueFileSummaries() []int64 {
 	now := time.Now()
 	s.queueMu.Lock()
@@ -176,33 +138,6 @@ func (s *Service) dueFileSummaries() []int64 {
 		}
 	}
 	return due
-}
-
-func (s *Service) requeueFileAfterFailure(fileID int64) {
-	s.queueMu.Lock()
-	if s.pendingFiles == nil {
-		s.queueMu.Unlock()
-		return
-	}
-	s.fileAttempts[fileID]++
-	n := s.fileAttempts[fileID]
-	shift := n - 1
-	if shift > 16 {
-		shift = 16
-	}
-	backoff := summarizeRetryBase << uint(shift)
-	if backoff > summarizeRetryMax || backoff <= 0 {
-		backoff = summarizeRetryMax
-	}
-	s.pendingFiles[fileID] = time.Now().Add(backoff)
-	s.queueMu.Unlock()
-	slog.Warn("summarize: file generation failed, will retry", "file_id", fileID, "attempt", n, "retry_in", backoff)
-}
-
-func (s *Service) clearFileAttempts(fileID int64) {
-	s.queueMu.Lock()
-	delete(s.fileAttempts, fileID)
-	s.queueMu.Unlock()
 }
 
 // dueSummaries removes and returns the page IDs whose debounce window has
