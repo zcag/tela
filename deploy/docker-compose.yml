@@ -2,6 +2,7 @@ name: tela
 
 services:
   backend:
+    init: true
     build:
       context: ../backend
       args:

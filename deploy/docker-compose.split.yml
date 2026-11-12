@@ -25,6 +25,7 @@ name: tela
 
 services:
   backend:
+    init: true
     image: ${TELA_BACKEND_IMAGE:-127.0.0.1:5000/tela-backend:latest}
     pull_policy: ${TELA_PULL_POLICY:-always}
     environment:
