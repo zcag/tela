@@ -29,7 +29,8 @@ var (
 	// summarizeTick is how often the worker checks for pages whose debounce elapsed.
 	summarizeTick = 1 * time.Second
 	// summarizeTimeout caps a single page's generation round-trip.
-	summarizeTimeout = 2 * time.Minute
+	summarizeTimeout     = 2 * time.Minute
+	recordFailureTimeout = 10 * time.Second
 	// summarizeRetryBase / summarizeRetryMax bound the exponential backoff applied
 	// to a page whose generation just failed: base * 2^(attempts-1), capped at max.
 	summarizeRetryBase = 30 * time.Second

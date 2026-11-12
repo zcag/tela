@@ -134,6 +134,8 @@ func (s *Service) persistFileSummary(ctx context.Context, fileID int64, summary,
 // recordFileFailure mirrors recordFailure for files: upsert the failure state so
 // the stale sweep keeps retrying. Best-effort — bookkeeping errors are logged.
 func (s *Service) recordFileFailure(ctx context.Context, fileID int64, cause error) {
+	ctx, cancel := bookkeepingContext(ctx)
+	defer cancel()
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO file_summaries (space_file_id, src_hash, model, last_error, attempts)
 		VALUES ($1, '', '', $2, 1)

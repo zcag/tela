@@ -20,13 +20,21 @@ type fakeLLM struct {
 	out      string
 	failures int
 	calls    int
+	hang     bool
 }
 
 func (f *fakeLLM) Model() string { return "fake-llm" }
-func (f *fakeLLM) Complete(_ context.Context, _, _ string) (string, error) {
+func (f *fakeLLM) Complete(ctx context.Context, _, _ string) (string, error) {
+	f.mu.Lock()
+	f.calls++
+	hang := f.hang
+	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls++
 	if f.failures > 0 {
 		f.failures--
 		return "", errors.New("llm boom")
@@ -269,6 +277,28 @@ func TestSummarizePage_BodyChangeGoesStaleThenRegenerates(t *testing.T) {
 	}
 	if st := pageStatus(t, svc, u, sp, page); st != "fresh" {
 		t.Errorf("status after regenerate = %q, want fresh", st)
+	}
+}
+
+func TestSummarizePage_TimeoutRecordsFailure(t *testing.T) {
+	d := testdb.New(t)
+	u := newUser(t, d, "alice")
+	sp := newSpace(t, d, "eng", u)
+	page := newPage(t, d, sp, "Slow", "A body the model never finishes.")
+	svc := newSvc(d, &fakeLLM{hang: true})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := svc.SummarizePage(ctx, page, false); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want deadline exceeded", err)
+	}
+	var lastErr string
+	var attempts int
+	if err := d.QueryRow(`SELECT last_error, attempts FROM page_summaries WHERE page_id = $1`, page).Scan(&lastErr, &attempts); err != nil {
+		t.Fatalf("no failure row: %v", err)
+	}
+	if attempts != 1 || !strings.Contains(lastErr, "deadline exceeded") {
+		t.Errorf("last_error=%q attempts=%d, want the deadline recorded once", lastErr, attempts)
 	}
 }
 

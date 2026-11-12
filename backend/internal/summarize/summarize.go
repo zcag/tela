@@ -276,6 +276,8 @@ func (s *Service) clearSummary(ctx context.Context, pageID int64, hash string) e
 // failure after a success keeps the last good hash/model/generated_at.
 // Best-effort: a bookkeeping error is logged, never surfaced over the LLM one.
 func (s *Service) recordFailure(ctx context.Context, pageID int64, cause error) {
+	ctx, cancel := bookkeepingContext(ctx)
+	defer cancel()
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO page_summaries (page_id, src_hash, model, last_error, attempts)
 		VALUES ($1, '', '', $2, 1)
@@ -284,6 +286,14 @@ func (s *Service) recordFailure(ctx context.Context, pageID int64, cause error) 
 		pageID, cause.Error()); err != nil {
 		slog.Error("summarize: record failure", "page_id", pageID, "err", err)
 	}
+}
+
+// bookkeepingContext detaches failure bookkeeping from the generation's
+// deadline: the failure being recorded is often that deadline expiring, and a
+// write on the expired context fails too, leaving the page unmarked and retried
+// forever by the stale sweep.
+func bookkeepingContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordFailureTimeout)
 }
 
 // truncate clips s to at most n bytes without splitting a UTF-8 rune.

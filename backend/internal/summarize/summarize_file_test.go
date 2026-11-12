@@ -3,6 +3,8 @@ package summarize
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +93,28 @@ func TestSummarizeFile_NonTextRecordsEmptyAndDoesntRetry(t *testing.T) {
 		if f.id == imgID {
 			t.Errorf("non-text file still appears stale (would re-queue forever)")
 		}
+	}
+}
+
+func TestSummarizeFile_TimeoutRecordsFailure(t *testing.T) {
+	d := testdb.New(t)
+	u := newUser(t, d, "alice")
+	sp := newSpace(t, d, "eng", u)
+	file := newSpaceFile(t, d, sp, "notes.md", "text/markdown", []byte("# Notes\n\nA document the model never finishes."))
+	svc := newSvc(d, &fakeLLM{hang: true})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := svc.SummarizeFile(ctx, file, false); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want deadline exceeded", err)
+	}
+	var lastErr string
+	var attempts int
+	if err := d.QueryRow(`SELECT last_error, attempts FROM file_summaries WHERE space_file_id = $1`, file).Scan(&lastErr, &attempts); err != nil {
+		t.Fatalf("no failure row: %v", err)
+	}
+	if attempts != 1 || !strings.Contains(lastErr, "deadline exceeded") {
+		t.Errorf("last_error=%q attempts=%d, want the deadline recorded once", lastErr, attempts)
 	}
 }
 
