@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -453,6 +452,7 @@ func TestStatus_RollupAndPerPage(t *testing.T) {
 
 	// QueueStaleSpace targets exactly the needs-work set (stale+missing+failed).
 	svc.pending = map[int64]time.Time{} // arm the queue without starting goroutines
+	svc.attempts = map[int64]int{}
 	n, err := svc.QueueStaleSpace(ctx, sp)
 	if err != nil {
 		t.Fatalf("queue stale: %v", err)
@@ -462,10 +462,11 @@ func TestStatus_RollupAndPerPage(t *testing.T) {
 	}
 }
 
-func TestWorker_FailureIsRetriedByTheSweep(t *testing.T) {
-	origDebounce, origTick := summarizeDebounce, summarizeTick
-	summarizeDebounce, summarizeTick = 15*time.Millisecond, 5*time.Millisecond
-	t.Cleanup(func() { summarizeDebounce, summarizeTick = origDebounce, origTick })
+func TestWorker_DebouncedGenerationAndRetry(t *testing.T) {
+	// Shrink the windows so the worker fires in milliseconds, not seconds.
+	origDebounce, origTick, origRetry := summarizeDebounce, summarizeTick, summarizeRetryBase
+	summarizeDebounce, summarizeTick, summarizeRetryBase = 15*time.Millisecond, 5*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { summarizeDebounce, summarizeTick, summarizeRetryBase = origDebounce, origTick, origRetry })
 
 	d := testdb.New(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -474,106 +475,18 @@ func TestWorker_FailureIsRetriedByTheSweep(t *testing.T) {
 	sp := newSpace(t, d, "charlie", u)
 	page := newPage(t, d, sp, "Doc", "## A\ncontent to be auto-summarized")
 
-	fake := &fakeLLM{out: "Auto-generated summary.", failures: 1}
-	svc := newSvc(d, fake)
+	// First attempt fails → the worker must back off and retry to success.
+	svc := newSvc(d, &fakeLLM{out: "Auto-generated summary.", failures: 1})
 	svc.Start(ctx)
 	svc.Queue(page)
 
-	waitFor(t, "the failure to be recorded", func() bool { return failedAttempts(t, d, page) == 1 })
-	time.Sleep(100 * time.Millisecond)
-	if n := fake.callCount(); n != 1 {
-		t.Fatalf("worker retried on its own: %d calls, want 1", n)
-	}
-
-	ageFailure(t, d, page, time.Hour)
-	svc.sweepStale(ctx)
-	waitFor(t, "the sweep's retry to succeed", func() bool { return pageSummary(t, d, page) == "Auto-generated summary." })
-}
-
-func TestSweep_BacksOffGivesUpAndEditResets(t *testing.T) {
-	d := testdb.New(t)
-	ctx := context.Background()
-	u := newUser(t, d, "erin")
-	sp := newSpace(t, d, "echo", u)
-	page := newPage(t, d, sp, "Doc", "a body the model keeps failing on")
-	svc := newSvc(d, &fakeLLM{failures: 100})
-
-	if _, err := svc.SummarizePage(ctx, page, false); err == nil {
-		t.Fatal("expected failure")
-	}
-	if swept(t, svc, page) {
-		t.Error("a just-failed page was swept before its backoff")
-	}
-	ageFailure(t, d, page, 59*time.Second)
-	if swept(t, svc, page) {
-		t.Error("swept before 30s * 2^1 had passed")
-	}
-	ageFailure(t, d, page, 61*time.Second)
-	if !swept(t, svc, page) {
-		t.Error("not swept after its backoff elapsed")
-	}
-
-	for i := 2; i <= summarizeMaxAttempts; i++ {
-		if _, err := svc.SummarizePage(ctx, page, false); err == nil {
-			t.Fatal("expected failure")
-		}
-	}
-	if got := failedAttempts(t, d, page); got != summarizeMaxAttempts {
-		t.Fatalf("attempts = %d, want %d", got, summarizeMaxAttempts)
-	}
-	ageFailure(t, d, page, 24*time.Hour)
-	if swept(t, svc, page) {
-		t.Error("swept after reaching the attempt limit")
-	}
-
-	if _, err := d.Exec(`UPDATE pages SET body = 'an edited body' WHERE id = $1`, page); err != nil {
-		t.Fatal(err)
-	}
-	if !swept(t, svc, page) {
-		t.Error("an edit did not make a given-up page eligible again")
-	}
-	if _, err := svc.SummarizePage(ctx, page, false); err == nil {
-		t.Fatal("expected failure")
-	}
-	if got := failedAttempts(t, d, page); got != 1 {
-		t.Errorf("attempts after an edit = %d, want 1", got)
-	}
-}
-
-func waitFor(t *testing.T, what string, ok func() bool) {
-	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if ok() {
+		if pageSummary(t, d, page) == "Auto-generated summary." {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", what)
-}
-
-func failedAttempts(t *testing.T, d *sql.DB, page int64) int {
-	t.Helper()
-	var n int
-	if err := d.QueryRow(`SELECT coalesce((SELECT attempts FROM page_summaries WHERE page_id = $1 AND last_error <> ''), 0)`, page).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
-func ageFailure(t *testing.T, d *sql.DB, page int64, ago time.Duration) {
-	t.Helper()
-	if _, err := d.Exec(`UPDATE page_summaries SET failed_at = $2 WHERE page_id = $1`,
-		page, time.Now().UTC().Add(-ago).Format(time.DateTime)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func swept(t *testing.T, svc *Service, page int64) bool {
-	t.Helper()
-	ids, err := svc.stalePageIDs(context.Background(), 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return slices.Contains(ids, page)
+	t.Fatalf("worker did not produce a summary for page %d within deadline (summary=%q)",
+		page, pageSummary(t, d, page))
 }

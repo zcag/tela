@@ -41,12 +41,15 @@ type Service struct {
 	llm *llm.Service
 
 	// Debounce queue (see worker.go). pending maps page id → debounce deadline;
-	// nil until Start runs. pendingFiles is the same for space_file ids. A
-	// failure is not retried from here: the stale sweep owns retries, backing
-	// off on the recorded failure. All under queueMu.
+	// nil until Start runs. attempts tracks consecutive failures per page to
+	// drive exponential retry backoff (cleared on success). pendingFiles/
+	// fileAttempts are the identical machinery for space_file ids (the file half
+	// of auto-summary). All under queueMu.
 	queueMu      sync.Mutex
 	pending      map[int64]time.Time
+	attempts     map[int64]int
 	pendingFiles map[int64]time.Time
+	fileAttempts map[int64]int
 
 	// paused, when set and true, halts background generation — wired to the admin
 	// AI kill-switch so it doesn't call the LLM while it's under maintenance.
@@ -191,7 +194,7 @@ func (s *Service) SummarizePage(ctx context.Context, pageID int64, force bool) (
 		}
 	}
 	if err != nil {
-		s.recordFailure(ctx, pageID, hash, err)
+		s.recordFailure(ctx, pageID, err)
 		return "", fmt.Errorf("summarize page %d: %w", pageID, err)
 	}
 
@@ -229,7 +232,7 @@ func (s *Service) SummarizePage(ctx context.Context, pageID int64, force bool) (
 		VALUES ($1, $2, $3, tela_now(), '', 0)
 		ON CONFLICT (page_id) DO UPDATE
 		   SET src_hash = EXCLUDED.src_hash, model = EXCLUDED.model,
-		       generated_at = tela_now(), last_error = '', attempts = 0, failed_at = '', failed_hash = ''`,
+		       generated_at = tela_now(), last_error = '', attempts = 0`,
 		pageID, hash, s.llm.Model()); err != nil {
 		return "", fmt.Errorf("summarize: upsert page_summaries: %w", err)
 	}
@@ -261,7 +264,7 @@ func (s *Service) clearSummary(ctx context.Context, pageID int64, hash string) e
 		VALUES ($1, $2, $3, tela_now(), '', 0)
 		ON CONFLICT (page_id) DO UPDATE
 		   SET src_hash = EXCLUDED.src_hash, model = EXCLUDED.model,
-		       generated_at = tela_now(), last_error = '', attempts = 0, failed_at = '', failed_hash = ''`,
+		       generated_at = tela_now(), last_error = '', attempts = 0`,
 		pageID, hash, s.llm.Model()); err != nil {
 		return fmt.Errorf("summarize: upsert page_summaries (none): %w", err)
 	}
@@ -271,19 +274,16 @@ func (s *Service) clearSummary(ctx context.Context, pageID int64, hash string) e
 // recordFailure upserts the failure state so the status view reads failed. A
 // first-ever failure keeps src_hash/model ” (failed-never-generated); a
 // failure after a success keeps the last good hash/model/generated_at.
-// attempts counts failures of the same body (hash); a new body starts at 1.
 // Best-effort: a bookkeeping error is logged, never surfaced over the LLM one.
-func (s *Service) recordFailure(ctx context.Context, pageID int64, hash string, cause error) {
+func (s *Service) recordFailure(ctx context.Context, pageID int64, cause error) {
 	ctx, cancel := bookkeepingContext(ctx)
 	defer cancel()
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO page_summaries (page_id, src_hash, model, last_error, attempts, failed_at, failed_hash)
-		VALUES ($1, '', '', $2, 1, tela_now(), $3)
+		INSERT INTO page_summaries (page_id, src_hash, model, last_error, attempts)
+		VALUES ($1, '', '', $2, 1)
 		ON CONFLICT (page_id) DO UPDATE
-		   SET last_error = EXCLUDED.last_error, failed_at = EXCLUDED.failed_at, failed_hash = EXCLUDED.failed_hash,
-		       attempts = CASE WHEN page_summaries.failed_hash = EXCLUDED.failed_hash
-		                       THEN page_summaries.attempts + 1 ELSE 1 END`,
-		pageID, cause.Error(), hash); err != nil {
+		   SET last_error = EXCLUDED.last_error, attempts = page_summaries.attempts + 1`,
+		pageID, cause.Error()); err != nil {
 		slog.Error("summarize: record failure", "page_id", pageID, "err", err)
 	}
 }
