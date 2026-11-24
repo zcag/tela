@@ -32,6 +32,7 @@ const (
 	evtPagePurge       = "page.purge"
 	evtAsk             = "ask"
 	evtAPIRequest      = "api.request"
+	evtMCPTool         = "mcp.tool"
 	evtClientError     = "client.error"
 )
 

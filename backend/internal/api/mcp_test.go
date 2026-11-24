@@ -148,6 +148,16 @@ func TestMCP_SpikeListSpaces(t *testing.T) {
 	if out.Spaces[0].Name != "Alice Space" || out.Spaces[0].Slug != "alice-space" {
 		t.Errorf("unexpected space: %+v", out.Spaces[0])
 	}
+
+	var actor int64
+	var tool, detail string
+	if err := d.QueryRowContext(ctx, `SELECT actor_user_id, target_label, detail FROM events WHERE type = 'mcp.tool'`).
+		Scan(&actor, &tool, &detail); err != nil {
+		t.Fatalf("mcp.tool event: %v", err)
+	}
+	if actor != alice || tool != "list_spaces" || !strings.HasPrefix(detail, "ok ") {
+		t.Errorf("mcp.tool event = (%d, %q, %q), want (%d, list_spaces, ok …)", actor, tool, detail, alice)
+	}
 	_ = bob
 }
 

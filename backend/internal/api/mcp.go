@@ -120,10 +120,46 @@ func (s *Server) newMCPServer() *mcp.Server {
 	// authoring guide, so every connected host learns the rich block palette on
 	// initialize (generated from the editor's block manifest — see mcp_authoring.go).
 	server := mcp.NewServer(impl, &mcp.ServerOptions{Instructions: retrievalGuideMarkdown() + authoringGuideMarkdown(false) + importInstructionsSnippet()})
+	server.AddReceivingMiddleware(s.mcpToolEvents)
 	s.registerMCPTools(server)
 	s.registerMCPResources(server)
 	s.registerMCPWidgets(server)
 	return server
+}
+
+// mcpToolEvents records one mcp.tool event per tools/call: tool name, caller,
+// outcome and duration. Never the arguments or the result, which carry page
+// content.
+func (s *Server) mcpToolEvents(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		call, ok := req.(*mcp.CallToolRequest)
+		if !ok {
+			return next(ctx, method, req)
+		}
+		start := time.Now()
+		res, err := next(ctx, method, req)
+		status := "ok"
+		if err != nil {
+			status = "failed"
+		} else if r, ok := res.(*mcp.CallToolResult); ok && r.IsError {
+			status = "error"
+		}
+		e := eventInput{
+			Type:        evtMCPTool,
+			TargetKind:  "mcp_tool",
+			TargetLabel: safePrefix(call.Params.Name, 80),
+			Detail:      fmt.Sprintf("%s %dms", status, time.Since(start).Milliseconds()),
+		}
+		if u, _ := mcpIdentity(call); u != nil {
+			id := u.ID
+			e.ActorUserID, e.ActorLabel = &id, u.Username
+		}
+		if ex := call.GetExtra(); ex != nil && ex.Header != nil {
+			e.UserAgent = ex.Header.Get("User-Agent")
+		}
+		recordEvent(context.WithoutCancel(ctx), s.DB, e)
+		return res, err
+	}
 }
 
 // mcpVerifier is the dual-mode bearer verifier for /api/mcp: a `tela_pat_*`

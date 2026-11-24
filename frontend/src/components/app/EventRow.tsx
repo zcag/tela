@@ -50,6 +50,8 @@ function describe(type: string): Descriptor {
       return { Icon: Sparkles, group: 'ask', tone: 'accent', verb: 'asked' }
     case 'api.request':
       return { Icon: Terminal, group: 'api', tone: 'muted', verb: 'API request' }
+    case 'mcp.tool':
+      return { Icon: Terminal, group: 'api', tone: 'muted', verb: 'called MCP tool' }
     case 'client.error':
       return { Icon: Bug, group: 'error', tone: 'danger', verb: 'hit a client error' }
     // billing.* — the money path, in order: saw the prices, pressed the button,

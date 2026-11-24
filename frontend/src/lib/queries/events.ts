@@ -35,7 +35,7 @@ export const EVENT_TYPE_GROUPS: { label: string; types: string[] }[] = [
   { label: 'Pages', types: ['page.view', 'page.create', 'page.edit'] },
   { label: 'Access', types: ['access.'] },
   { label: 'Ask', types: ['ask'] },
-  { label: 'API', types: ['api.request'] },
+  { label: 'API', types: ['api.request', 'mcp.tool'] },
   { label: 'Errors', types: ['client.error'] },
   { label: 'Billing', types: ['billing.'] },
 ]
