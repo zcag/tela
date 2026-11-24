@@ -92,8 +92,9 @@ func (s *Server) recordRequestEvent(r *http.Request, e eventInput) {
 }
 
 // adminActorFilter returns a SQL boolean fragment (no leading AND) that is TRUE
-// for rows whose actor is NOT a current instance admin — and "" when admins
-// should be included. `col` is the actor-user-id column expression (e.g.
+// for rows whose actor is NOT a current instance admin or an is_internal
+// account (operator/test users, migration 0089), and "" when admins should be
+// included. `col` is the actor-user-id column expression (e.g.
 // "actor_user_id" or "a.actor_user_id"). NULL actors (anonymous / system) are
 // always kept: they can't be an admin. The admin set is a tiny subquery, cheap to
 // inline on these admin-only screens. `users.id` is never NULL, so the NOT IN is
@@ -106,7 +107,7 @@ func adminActorFilter(col string, includeAdmins bool) string {
 	if includeAdmins {
 		return ""
 	}
-	return "(" + col + " IS NULL OR " + col + " NOT IN (SELECT id FROM users WHERE is_instance_admin = 1))"
+	return "(" + col + " IS NULL OR " + col + " NOT IN (SELECT id FROM users WHERE is_instance_admin = 1 OR is_internal = 1))"
 }
 
 // wantIncludeAdmins parses the ?include_admins query flag (default false → admin
