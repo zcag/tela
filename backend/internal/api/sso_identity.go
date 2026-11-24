@@ -52,7 +52,7 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 	}
 	defer tx.Rollback()
 
-	userID, username, created, err := resolveSSOUser(ctx, tx, id)
+	userID, username, created, err := resolveSSOUser(ctx, tx, id, readSignupAttribution(r))
 	if err != nil {
 		return 0, err
 	}
@@ -104,7 +104,10 @@ func (s *Server) signInSSO(w http.ResponseWriter, r *http.Request, id ssoIdentit
 // (3) otherwise create a fresh account. Returns (userID, username, created),
 // where created is true only for outcome (3) — the caller needs to tell a
 // signup from a sign-in once the tx has committed.
-func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, string, bool, error) {
+// attr is stored only on (3): the landing's first-touch cookie rides the
+// provider's top-level GET callback (SameSite=Lax), so a social signup keeps
+// its source like a password one.
+func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity, attr signupAttribution) (int64, string, bool, error) {
 	// (1) Known identity — the common returning-user path.
 	var (
 		userID   int64
@@ -183,6 +186,7 @@ func resolveSSOUser(ctx context.Context, tx *sql.Tx, id ssoIdentity) (int64, str
 		Verified:     true,
 		PasswordHash: hash,
 		Trial:        trial,
+		Attribution:  &attr,
 	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {

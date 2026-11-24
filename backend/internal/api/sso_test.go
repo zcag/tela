@@ -348,7 +348,7 @@ func TestSSO_CapturesDisplayName(t *testing.T) {
 		displayName: "Ekrem Mert Esen",
 		linkTrusted: true,
 	}
-	userID, username, created, err := resolveSSOUser(ctx, tx, id)
+	userID, username, created, err := resolveSSOUser(ctx, tx, id, signupAttribution{Source: "hn"})
 	if err != nil {
 		t.Fatalf("resolveSSOUser: %v", err)
 	}
@@ -363,6 +363,11 @@ func TestSSO_CapturesDisplayName(t *testing.T) {
 	}
 	if got := displayNameOf(t, d, userID); got != "Ekrem Mert Esen" {
 		t.Fatalf("display_name = %q, want %q", got, "Ekrem Mert Esen")
+	}
+	var src string
+	mustQueryRow(t, d, `SELECT signup_utm_source FROM users WHERE id = $1`, &src, userID)
+	if src != "hn" {
+		t.Fatalf("signup_utm_source = %q, want hn", src)
 	}
 }
 
@@ -401,7 +406,7 @@ func resolveInTx(t *testing.T, d *sql.DB, id ssoIdentity) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, _, _, err := resolveSSOUser(context.Background(), tx, id); err != nil {
+	if _, _, _, err := resolveSSOUser(context.Background(), tx, id, signupAttribution{}); err != nil {
 		t.Fatalf("resolveSSOUser: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
