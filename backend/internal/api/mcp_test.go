@@ -158,6 +158,16 @@ func TestMCP_SpikeListSpaces(t *testing.T) {
 	if actor != alice || tool != "list_spaces" || !strings.HasPrefix(detail, "ok ") {
 		t.Errorf("mcp.tool event = (%d, %q, %q), want (%d, list_spaces, ok …)", actor, tool, detail, alice)
 	}
+
+	if res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_page", Arguments: map[string]any{"id": 999999}}); err != nil || !res.IsError {
+		t.Fatalf("get_page on a missing page: res=%v err=%v, want a tool error", res, err)
+	}
+	if err := d.QueryRowContext(ctx, `SELECT detail FROM events WHERE type = 'mcp.tool' AND target_label = 'get_page'`).Scan(&detail); err != nil {
+		t.Fatalf("get_page mcp.tool event: %v", err)
+	}
+	if !strings.HasPrefix(detail, "error ") || !strings.HasSuffix(detail, "ms: forbidden: not a member") {
+		t.Errorf("get_page error detail = %q, want \"error Nms: forbidden: not a member\"", detail)
+	}
 	_ = bob
 }
 

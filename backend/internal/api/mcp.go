@@ -128,8 +128,8 @@ func (s *Server) newMCPServer() *mcp.Server {
 }
 
 // mcpToolEvents records one mcp.tool event per tools/call: tool name, caller,
-// outcome and duration. Never the arguments or the result, which carry page
-// content.
+// outcome and duration, plus the server-written error message on failure.
+// Never the arguments or the result, which carry page content.
 func (s *Server) mcpToolEvents(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		call, ok := req.(*mcp.CallToolRequest)
@@ -138,17 +138,18 @@ func (s *Server) mcpToolEvents(next mcp.MethodHandler) mcp.MethodHandler {
 		}
 		start := time.Now()
 		res, err := next(ctx, method, req)
-		status := "ok"
+		ms := time.Since(start).Milliseconds()
+		detail := fmt.Sprintf("ok %dms", ms)
 		if err != nil {
-			status = "failed"
+			detail = fmt.Sprintf("failed %dms: %s", ms, clip(oneLine(err.Error()), 200))
 		} else if r, ok := res.(*mcp.CallToolResult); ok && r.IsError {
-			status = "error"
+			detail = fmt.Sprintf("error %dms: %s", ms, clip(mcpErrorSummary(r), 200))
 		}
 		e := eventInput{
 			Type:        evtMCPTool,
 			TargetKind:  "mcp_tool",
 			TargetLabel: safePrefix(call.Params.Name, 80),
-			Detail:      fmt.Sprintf("%s %dms", status, time.Since(start).Milliseconds()),
+			Detail:      detail,
 		}
 		if u, _ := mcpIdentity(call); u != nil {
 			id := u.ID
@@ -160,6 +161,22 @@ func (s *Server) mcpToolEvents(next mcp.MethodHandler) mcp.MethodHandler {
 		recordEvent(context.WithoutCancel(ctx), s.DB, e)
 		return res, err
 	}
+}
+
+// mcpErrorSummary is a tool error's text for the event log: "code: message"
+// for an mcpErr envelope, else the raw text content on one line.
+func mcpErrorSummary(r *mcp.CallToolResult) string {
+	var b strings.Builder
+	for _, c := range r.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	var env struct{ Error, Code string }
+	if json.Unmarshal([]byte(b.String()), &env) == nil && env.Error != "" {
+		return oneLine(env.Code + ": " + env.Error)
+	}
+	return oneLine(b.String())
 }
 
 // mcpVerifier is the dual-mode bearer verifier for /api/mcp: a `tela_pat_*`
